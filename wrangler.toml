@@ -1,0 +1,11 @@
+name = "agent-labbook-auth"
+main = "worker/src/index.js"
+compatibility_date = "2025-04-01"
+
+[vars]
+PUBLIC_BASE_URL = "https://labbook.superplanner.net"
+NOTION_VERSION = "2026-03-11"
+
+[[routes]]
+pattern = "labbook.superplanner.net"
+custom_domain = true
