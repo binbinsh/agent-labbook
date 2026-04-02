@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "agent_labbook": {
+    "labbook": {
       "command": "python3",
       "args": [
         "./scripts/run_mcp_server.py"

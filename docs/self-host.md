@@ -1,6 +1,6 @@
 # Self-Hosting Agent Labbook
 
-This repository ships with a default hosted backend at `https://labbook.superplanner.net`, but the Worker can also be self-hosted on your own Cloudflare account and domain.
+This repository ships with a default hosted backend at `https://labbook.superplanner.net`, which is privacy-friendly and keeps long-lived tokens out of server-side storage. You can also self-host the Worker on your own Cloudflare account and domain.
 
 ## What you are hosting
 
@@ -14,7 +14,7 @@ It does not require KV, D1, R2, Durable Objects, or any user database.
 
 ## What stays local
 
-The following stay on the user's machine under `.agent-labbook/`:
+The following stay on the user's machine under `.labbook/`:
 
 - `access_token`
 - `refresh_token`

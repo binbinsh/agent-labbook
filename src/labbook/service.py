@@ -203,10 +203,9 @@ def _build_setup_guide() -> str:
             "3. Deploy the Cloudflare Worker with Wrangler.",
             "4. Set the Worker secrets `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET`.",
             "",
-            "Privacy model:",
-            f"- The Worker at {backend_url} only exchanges and refreshes tokens.",
-            "- No KV, D1, R2, Durable Objects, or server-side per-user storage are required.",
-            "- The project-local access token and refresh token are stored under `.agent-labbook/session.json` and should never be committed.",
+            "Privacy:",
+            f"- The hosted service at {backend_url} is privacy-friendly. It only handles OAuth and token refresh.",
+            "- Long-lived tokens and project bindings stay in `.labbook/` inside the current project.",
         ]
     )
 

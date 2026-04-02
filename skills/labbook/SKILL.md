@@ -13,6 +13,7 @@ This plugin is only responsible for:
 - storing the resulting access token and refresh token only in the local project
 - binding one or more Notion pages or data sources to the current project
 - returning direct API context such as the access token, headers, and bound resource IDs
+- relying on a privacy-friendly hosted service that only handles OAuth and token refresh
 
 It is not a note-taking or task-management wrapper.
 
@@ -35,7 +36,7 @@ It is not a note-taking or task-management wrapper.
 - Treat this plugin as auth and binding infrastructure, not as a content API.
 - Use `notion_refresh_session` when a saved token needs to be rotated.
 - Reuse aliases from `notion_list_bindings` so later sessions stay consistent.
-- Project-local auth state lives under `.agent-labbook/` and should never be committed.
+- Project-local auth state lives under `.labbook/` and should never be committed.
 
 ## Common Pattern
 

@@ -9,7 +9,7 @@ from uuid import UUID
 
 DEFAULT_BACKEND_URL = "https://labbook.superplanner.net"
 DEFAULT_NOTION_VERSION = "2026-03-11"
-PROJECT_STATE_DIRNAME = ".agent-labbook"
+PROJECT_STATE_DIRNAME = ".labbook"
 SESSION_FILENAME = "session.json"
 BINDINGS_FILENAME = "bindings.json"
 PENDING_AUTH_FILENAME = "pending-auth.json"

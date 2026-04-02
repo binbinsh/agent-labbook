@@ -1,4 +1,4 @@
-.agent-labbook/
+.labbook/
 __pycache__/
 node_modules/
 .wrangler/

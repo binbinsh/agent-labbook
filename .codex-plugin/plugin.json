@@ -1,7 +1,7 @@
 {
   "name": "agent-labbook",
   "version": "0.8.0",
-  "description": "Agent-first Notion public integration helper for Codex, Claude Code, and other MCP-capable clients, backed by a stateless Cloudflare Worker handoff.",
+  "description": "Bind a Codex or Claude Code project to selected Notion pages and data sources through the official Notion API.",
   "author": {
     "name": "Binbin Shen",
     "email": "binbinsh@gmail.com",
@@ -21,8 +21,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Agent Labbook",
-    "shortDescription": "Authorize a hosted Notion public integration, bind project resources locally, and then use the official Notion API directly.",
-    "longDescription": "This plugin does not wrap Notion reads and writes. It uses a stateless Cloudflare Worker at labbook.superplanner.net to complete Notion public-integration OAuth and token refresh, while storing access tokens and project bindings only in the local project. After auth it returns direct API context so Codex, Claude Code, and other MCP-capable clients can use the original Notion REST API directly.",
+    "shortDescription": "Connect a project to selected Notion pages and data sources, keep tokens local, and use the official Notion API directly.",
+    "longDescription": "Agent Labbook handles Notion auth and project binding for Codex, Claude Code, and other MCP clients. The default hosted backend at labbook.superplanner.net is privacy-friendly: it only handles OAuth and token refresh, while long-lived tokens and bindings stay local in `.labbook/`.",
     "developerName": "Binbin Shen",
     "category": "Productivity",
     "capabilities": [
