@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agent_labbook": {
+      "command": "python3",
+      "args": [
+        "./scripts/run_mcp_server.py"
+      ]
+    }
+  }
+}

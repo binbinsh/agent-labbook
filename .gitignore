@@ -1,0 +1,7 @@
+.agent-labbook/
+__pycache__/
+node_modules/
+.wrangler/
+.dev.vars
+.env
+.codex

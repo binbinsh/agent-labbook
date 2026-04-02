@@ -1,0 +1,44 @@
+{
+  "name": "agent-labbook",
+  "version": "0.8.0",
+  "description": "Codex-first Notion public integration helper with a stateless Cloudflare Worker handoff for direct official API usage in Codex and other MCP-capable clients.",
+  "author": {
+    "name": "Binbin Shen",
+    "email": "binbinsh@gmail.com",
+    "url": "https://github.com/binbinsh/"
+  },
+  "homepage": "https://github.com/binbinsh/agent-labbook/",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "notion",
+    "public-integration",
+    "oauth",
+    "cloudflare-worker",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Agent Labbook",
+    "shortDescription": "Authorize a hosted Notion public integration, bind project resources locally, and then use the official Notion API directly.",
+    "longDescription": "This plugin does not wrap Notion reads and writes. It uses a stateless Cloudflare Worker at labbook.superplanner.net to complete Notion public-integration OAuth and token refresh, while storing access tokens and project bindings only in the local project. After auth it returns direct API context so Codex and other MCP-capable clients can use the original Notion REST API directly.",
+    "developerName": "Binbin Shen",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/binbinsh/agent-labbook/",
+    "privacyPolicyURL": "https://www.notion.so/policies/privacy-policy",
+    "termsOfServiceURL": "https://www.notion.so/policies/terms-of-use",
+    "defaultPrompt": [
+      "Check whether this project already has a saved Notion public-integration session and bound Notion resources.",
+      "Use the browser auth flow when this project is not authorized yet, or start a headless auth flow if opening a browser locally is not possible.",
+      "Bind one or more existing Notion pages or data sources to this project.",
+      "Return the Notion access token, headers, and bound resource IDs so the official Notion REST API can be used directly."
+    ],
+    "brandColor": "#0f766e"
+  }
+}
