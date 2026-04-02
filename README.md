@@ -1,244 +1,102 @@
 # agent-labbook
 
-`agent-labbook` is an Agent-first MCP integration for Codex, Claude Code, and similar agent runtimes that gives an agent real Notion access without turning this repository into a Notion SDK.
+Bind a Codex or Claude Code project to selected Notion pages and data sources for direct agent access through the official Notion API.
 
-Its job is intentionally narrow:
+The point of this repo is simple: let an agent use real Notion access in a project without turning this project into yet another Notion SDK.
 
-- it starts the official Notion Public integration OAuth flow
-- it completes OAuth through a very small Cloudflare Worker backend
-- it lets the user choose which pages or data sources belong to the current project
-- it stores tokens and bindings only in the local project
-- it returns direct API context so the agent can call the official Notion REST API itself
+It handles the part that is usually annoying:
 
-This repository is not a standalone CLI, not a Python package meant for end users to install directly, and not a generic wrapper around every Notion API endpoint.
+- starting the official Notion authorization flow
+- letting you choose which Notion pages or data sources belong to this project
+- saving the auth session and bindings inside the local project
+- giving the agent the real Notion API token, headers, and bound resource IDs
 
-It ships with Codex plugin metadata out of the box, and the same MCP server can also be wired into Claude Code or other MCP-capable clients manually.
+After that, the agent can call the official Notion REST API directly.
 
-## What It Is For
+## What This Is For
 
-Use this when you want Codex to:
+Use this when you want an agent to work with Notion from inside a repo or project folder, for example:
 
-- connect a repo or workspace to Notion
-- keep the authorized scope tied to project-local bindings
-- reuse the real Notion REST API instead of a custom abstraction layer
-- avoid keeping user tokens in a long-lived backend database
+- read a product spec, roadmap, or notes page from Notion
+- write updates back to a Notion page or data source
+- keep each repo connected to its own Notion resources
+- avoid building a custom Notion wrapper just to get auth working
 
-The default hosted backend is:
+This project is intentionally not a full Notion SDK and not a full CRUD wrapper for every Notion endpoint. It is the connection layer that gets your agent into Notion cleanly, then gets out of the way.
 
-- `https://labbook.superplanner.net`
+## What The Agent Can Do With It
 
-That backend only handles OAuth exchange, refresh, and the browser-based resource selection handoff.
+Once installed, the agent gets MCP tools for the whole project lifecycle:
 
-## How It Works
+- check whether this project is already connected to Notion
+- start a normal browser auth flow
+- start a headless auth flow if the browser is on another machine or cannot be opened locally
+- choose and save the pages or data sources that should belong to this project
+- bind more resources later from a Notion URL or resource ID
+- list the resources already bound to the project
+- refresh the saved session
+- clear the saved auth if you want to disconnect the project
+- return API context for direct Notion API calls
 
-The architecture is split cleanly:
+Project state is stored locally in `.agent-labbook/`, so the saved tokens and bindings stay with the current project instead of being shared globally across every repo.
 
-- the MCP server runs locally inside an agent runtime such as Codex or Claude Code
-- the Cloudflare Worker handles the Notion OAuth redirect flow
-- the user chooses accessible Notion resources in the browser
-- the Worker sends the selected result back to the local project or generates a handoff bundle
-- the project stores `access_token`, `refresh_token`, and bindings under `.agent-labbook/`
+## Install
 
-No KV, D1, R2, Durable Objects, or per-user backend storage are required.
-
-## Install In Codex
-
-The easiest install path is to give Codex this repository URL:
+The easiest install path is to give this repository URL to your coding agent:
 
 - `https://github.com/binbinsh/agent-labbook`
 
-This repo already includes:
+### Codex
 
-- [`plugin.json`](./.codex-plugin/plugin.json)
-- [`.mcp.json`](./.mcp.json)
-- [`scripts/run_mcp_server.py`](./scripts/run_mcp_server.py)
+Tell Codex to install or add this repository as a plugin/MCP repo:
 
-So Codex can install it directly from GitHub as a plugin repository.
+- `https://github.com/binbinsh/agent-labbook`
 
-After install, the agent should use these tools:
+This repo already includes the metadata and MCP config Codex needs.
 
-- `notion_status`
-- `notion_setup_guide`
-- `notion_auth_browser`
-- `notion_start_headless_auth`
-- `notion_complete_headless_auth`
-- `notion_refresh_session`
-- `notion_clear_project_auth`
-- `notion_bind_resources`
-- `notion_list_bindings`
-- `notion_get_api_context`
+### Claude Code
 
-## Typical User Flow
+Tell Claude Code to use this repository as the MCP server source for the project:
 
-1. Call `notion_status`.
-2. If the project is not authorized yet, call `notion_auth_browser`.
-3. If a local browser is not available, call `notion_start_headless_auth`, finish the flow in any browser, and then call `notion_complete_headless_auth`.
-4. Choose which pages or data sources should be bound to the project on the Worker handoff page. When a selected root page has discoverable child pages, the Worker can include them in the final bundle automatically.
-5. Call `notion_get_api_context`.
-6. Use the returned headers and resource IDs with the official Notion REST API.
+- `https://github.com/binbinsh/agent-labbook`
 
-## Requirements
+If you need manual setup, the server command is already defined in [`.mcp.json`](./.mcp.json) and starts [`scripts/run_mcp_server.py`](./scripts/run_mcp_server.py).
 
-For normal plugin use:
+### Requirements
 
 - Python 3.10 or newer
-- a Codex environment that can run a local MCP server
+- a Codex, Claude Code, or other MCP-capable environment that can run a local MCP server
 
-For self-hosting the Worker:
+## Typical Flow
 
-- Node.js 20 or newer
-- Wrangler and a Cloudflare account
-- a Notion Public integration
+1. Ask the agent to run `notion_status`.
+2. If the project is not connected yet, run `notion_auth_browser`.
+3. If a local browser is not available, use `notion_start_headless_auth` and later `notion_complete_headless_auth`.
+4. In the browser, choose which Notion pages or data sources should be bound to this project.
+5. Run `notion_get_api_context`.
+6. Use the returned token, headers, and resource IDs with the official Notion API.
 
-## Local State
+## Main MCP Tools
 
-Project-local files:
+- `notion_status`: check whether the current project already has a saved Notion session and bindings
+- `notion_auth_browser`: start the browser-based authorization flow
+- `notion_start_headless_auth`: create an auth link for a headless or remote-browser flow
+- `notion_complete_headless_auth`: finish the headless flow with the returned handoff bundle
+- `notion_bind_resources`: bind more Notion pages or data sources to the project
+- `notion_list_bindings`: list the resources currently bound to the project
+- `notion_get_api_context`: return the saved access token, API headers, and bound resource IDs
+- `notion_refresh_session`: refresh the saved Notion session
+- `notion_clear_project_auth`: remove the saved session, and optionally the bindings too
+- `notion_setup_guide`: return the short setup guide from inside the MCP server
 
-- `<project>/.agent-labbook/session.json`
-- `<project>/.agent-labbook/bindings.json`
-- `<project>/.agent-labbook/pending-auth.json`
+## Default Backend
 
-`session.json` contains:
+By default, the auth flow goes through the hosted backend at `https://labbook.superplanner.net`.
 
-- `access_token`
-- `refresh_token`
-- `workspace_id`
-- `workspace_name`
-- `bot_id`
+Most users can just use that default. If you want to self-host it on your own Cloudflare account and domain, there is a short guide in [`docs/self-host.md`](./docs/self-host.md).
 
-`bindings.json` contains:
+## Notes
 
-- `default_resource_alias`
-- `resources[]`
-
-Each bound resource entry contains:
-
-- `resource_id`
-- `resource_type`
-- `resource_url`
-- `alias`
-- `title`
-- `bound_at`
-- `source`
-
-`.gitignore` already excludes `.agent-labbook/` because those files are sensitive.
-
-On Unix-like systems, Agent Labbook now saves that directory with private permissions so `session.json` and `bindings.json` are not left world-readable by default.
-
-## Deploy The Hosted Worker
-
-The Worker config is already checked in at [`wrangler.toml`](./wrangler.toml) and defaults to:
-
-- `https://labbook.superplanner.net`
-
-### 1. Create the Notion public integration
-
-In the Notion developer portal:
-
-1. Create a Public integration named `Agent Labbook`.
-2. Add the redirect URI `https://labbook.superplanner.net/oauth/callback`.
-3. Keep the generated client ID and client secret.
-
-### 2. Install dependencies
-
-```bash
-npm install
-```
-
-### 3. Log into Cloudflare
-
-```bash
-npx wrangler login
-```
-
-### 4. Put production secrets into the Worker
-
-For deployed Workers, yes: the final place for the production Notion secrets is the Worker secret store via `wrangler secret put`.
-
-```bash
-npx wrangler secret put NOTION_CLIENT_ID
-npx wrangler secret put NOTION_CLIENT_SECRET
-```
-
-`.env` is useful as a local staging source for deployment automation, but the deployed Worker should read secrets from Cloudflare's secret store.
-
-### 5. Deploy
-
-```bash
-npm run worker:deploy
-```
-
-### 6. Verify
-
-```bash
-curl https://labbook.superplanner.net/health
-```
-
-The response should include:
-
-- `ok: true`
-- `configured: true`
-- `redirect_uri: https://labbook.superplanner.net/oauth/callback`
-
-## Self-Hosting
-
-If someone wants to host their own Worker and domain, the full guide lives here:
-
-- [`docs/self-host.md`](./docs/self-host.md)
-
-For self-hosting, they should:
-
-- deploy the Worker to their own Cloudflare account
-- set their own custom domain and redirect URI
-- put `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET` into that Worker
-- point the plugin at it with `AGENT_LABBOOK_BACKEND_URL`
-
-## Privacy Model
-
-The Worker is intentionally thin:
-
-- it does not persist user tokens in Cloudflare storage
-- it does not persist Notion content in Cloudflare storage
-- it only sees OAuth codes and tokens in memory while processing each request
-- long-lived tokens remain in the user's local project, not in a server-side database
-
-For the stateless browser handoff to work, the browser page also receives the token payload long enough to hand it back to the local project or to generate the headless handoff bundle. That means the browser session and copied handoff bundle should be treated as sensitive until the auth flow is finished.
-
-The handoff bundle itself is Worker-signed and is now validated by the Worker again before the local project accepts it. That reduces the risk of a pasted headless bundle silently swapping in attacker-controlled token data.
-
-To keep the Worker stateless while still protecting the OAuth `state` parameter, the Worker signs the state payload using the existing `NOTION_CLIENT_SECRET`. That removes the need for a separate `WORKER_STATE_SECRET`.
-
-## Resource Discovery Limits
-
-The chooser page is built from Notion's `search` API. In practice that means:
-
-- newly shared resources can take a little time to appear
-- the initial list may need `Refresh` once or twice after OAuth
-- the chooser is a discovery surface, not a guaranteed full workspace inventory
-
-If something is still missing, you can add it later with `notion_bind_resources` by passing a Notion page URL or resource ID directly.
-
-## What The Plugin Does Not Do
-
-This repository deliberately does not implement a full Notion CRUD wrapper, note sync layer, or task abstraction. Once the plugin returns API context, the agent should call the original Notion API directly.
-
-## Files
-
-The plugin entrypoints are:
-
-- [`.codex-plugin/plugin.json`](./.codex-plugin/plugin.json)
-- [`.mcp.json`](./.mcp.json)
-- [`skills/labbook/SKILL.md`](./skills/labbook/SKILL.md)
-- [`scripts/run_mcp_server.py`](./scripts/run_mcp_server.py)
-
-The MCP server implementation lives in:
-
-- [`src/agent_labbook/mcp_server.py`](./src/agent_labbook/mcp_server.py)
-- [`src/agent_labbook/service.py`](./src/agent_labbook/service.py)
-- [`src/agent_labbook/notion_api.py`](./src/agent_labbook/notion_api.py)
-- [`src/agent_labbook/state.py`](./src/agent_labbook/state.py)
-
-The Cloudflare Worker lives in:
-
-- [`worker/src/index.js`](./worker/src/index.js)
-- [`docs/self-host.md`](./docs/self-host.md)
+- `.agent-labbook/` should never be committed
+- this repo helps the agent get authorized and project-scoped; it does not replace the official Notion API
+- after auth, the intended path is: get API context here, then call Notion directly
