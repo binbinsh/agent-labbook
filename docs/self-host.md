@@ -98,13 +98,34 @@ The response should show:
 
 ## 7. Point the plugin at your Worker
 
-Set this environment variable before running the MCP server:
+Set this environment variable in the MCP server config:
 
-```bash
-export AGENT_LABBOOK_BACKEND_URL="https://YOUR_DOMAIN"
+```json
+{
+  "mcpServers": {
+    "labbook": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/binbinsh/agent-labbook@v0.11.0",
+        "agent-labbook",
+        "mcp"
+      ],
+      "env": {
+        "AGENT_LABBOOK_BACKEND_URL": "https://YOUR_DOMAIN"
+      }
+    }
+  }
+}
 ```
 
 Then the plugin will use your Worker instead of `https://labbook.superplanner.net`.
+
+You can verify the local setup with:
+
+```bash
+uvx --from git+https://github.com/binbinsh/agent-labbook@v0.11.0 agent-labbook doctor --probe-backend
+```
 
 ## 8. Understand the chooser limits
 

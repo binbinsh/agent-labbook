@@ -1,6 +1,6 @@
 {
   "name": "agent-labbook",
-  "version": "0.8.0",
+  "version": "0.11.0",
   "description": "Bind a Codex or Claude Code project to selected Notion pages and data sources through the official Notion API.",
   "author": {
     "name": "Binbin Shen",

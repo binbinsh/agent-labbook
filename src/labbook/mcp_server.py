@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import sys
 from typing import Any, Callable
+
+import mcp.types as types
+from mcp.server.lowlevel import NotificationOptions, Server
+from mcp.server.models import InitializationOptions
+from mcp.server.stdio import stdio_server
 
 from . import __version__
 from .service import (
@@ -22,8 +27,11 @@ from .state import LabbookError
 
 ToolHandler = Callable[[dict[str, Any]], dict[str, Any] | str]
 
+SERVER_NAME = "agent-labbook"
+server = Server(SERVER_NAME)
 
-def _tool_definitions() -> list[dict[str, Any]]:
+
+def _tool_definitions() -> list[types.Tool]:
     resource_ref_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -35,28 +43,28 @@ def _tool_definitions() -> list[dict[str, Any]]:
         },
     }
     return [
-        {
-            "name": "notion_status",
-            "description": "Check whether this project already has a saved Notion public-integration session and which Notion resources are bound locally.",
-            "inputSchema": {
+        types.Tool(
+            name="notion_status",
+            description="Check whether this project already has a saved Notion public-integration session and which Notion resources are bound locally.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
                 },
             },
-        },
-        {
-            "name": "notion_setup_guide",
-            "description": "Return the setup guide for the hosted public integration and its Cloudflare Worker backend.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_setup_guide",
+            description="Return the setup guide for the hosted public integration and its Cloudflare Worker backend.",
+            inputSchema={
                 "type": "object",
                 "properties": {},
             },
-        },
-        {
-            "name": "notion_auth_browser",
-            "description": "Open the official Notion public-integration consent flow in a browser and wait for the selected bindings to be saved into this project.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_auth_browser",
+            description="Open the official Notion public-integration consent flow in a browser and wait for the selected bindings to be saved into this project.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
@@ -65,22 +73,22 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "page_limit": {"type": "integer"},
                 },
             },
-        },
-        {
-            "name": "notion_start_headless_auth",
-            "description": "Create a headless public-integration auth URL. The user can finish auth in any browser and then paste the returned handoff bundle back into Codex.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_start_headless_auth",
+            description="Create a headless public-integration auth URL. The user can finish auth in any browser and then paste the returned handoff bundle back into Codex.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
                     "page_limit": {"type": "integer"},
                 },
             },
-        },
-        {
-            "name": "notion_complete_headless_auth",
-            "description": "Finish a headless public-integration auth flow using the handoff bundle shown by the Worker callback page.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_complete_headless_auth",
+            description="Finish a headless public-integration auth flow using the handoff bundle shown by the Worker callback page.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
@@ -88,32 +96,32 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 },
                 "required": ["handoff_bundle"],
             },
-        },
-        {
-            "name": "notion_refresh_session",
-            "description": "Refresh the saved Notion public-integration session for this project through the Worker backend.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_refresh_session",
+            description="Refresh the saved Notion public-integration session for this project through the Worker backend.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
                 },
             },
-        },
-        {
-            "name": "notion_clear_project_auth",
-            "description": "Remove the saved project-local Notion session, and optionally the bound resources too.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_clear_project_auth",
+            description="Remove the saved project-local Notion session, and optionally the bound resources too.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
                     "clear_bindings": {"type": "boolean"},
                 },
             },
-        },
-        {
-            "name": "notion_bind_resources",
-            "description": "Bind one or more existing Notion pages or data sources to the current project using the saved access token.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_bind_resources",
+            description="Bind one or more existing Notion pages or data sources to the current project using the saved access token.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
@@ -122,27 +130,27 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 },
                 "required": ["resource_refs"],
             },
-        },
-        {
-            "name": "notion_list_bindings",
-            "description": "List the Notion resources currently bound to this project.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_list_bindings",
+            description="List the Notion resources currently bound to this project.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
                 },
             },
-        },
-        {
-            "name": "notion_get_api_context",
-            "description": "Return the current public-integration access token, official API headers, and bound resource IDs so the agent can call the original Notion REST API directly.",
-            "inputSchema": {
+        ),
+        types.Tool(
+            name="notion_get_api_context",
+            description="Return the current public-integration access token, official API headers, and bound resource IDs so the agent can call the original Notion REST API directly.",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "project_root": {"type": "string"},
                 },
             },
-        },
+        ),
     ]
 
 
@@ -185,105 +193,59 @@ def _result_text(payload: dict[str, Any] | str) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
 
-def _tool_result(payload: dict[str, Any] | str, *, is_error: bool = False) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "content": [
-            {
-                "type": "text",
-                "text": _result_text(payload),
-            }
-        ]
-    }
-    if is_error:
-        result["isError"] = True
-    return result
+def _structured_payload(payload: dict[str, Any] | str) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    return {"result": payload}
 
 
-def _jsonrpc_success(message_id: Any, result: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "jsonrpc": "2.0",
-        "id": message_id,
-        "result": result,
-    }
+def _tool_result(payload: dict[str, Any] | str, *, is_error: bool = False) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=_result_text(payload))],
+        structuredContent=_structured_payload(payload),
+        isError=is_error,
+    )
 
 
-def _jsonrpc_error(message_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {
-        "jsonrpc": "2.0",
-        "id": message_id,
-        "error": {
-            "code": code,
-            "message": message,
-        },
-    }
+@server.list_tools()
+async def handle_list_tools() -> list[types.Tool]:
+    return _tool_definitions()
 
 
-def _handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
-    message_id = request.get("id")
-    method = request.get("method")
-    params = request.get("params") or {}
+@server.call_tool()
+async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> types.CallToolResult:
+    handler = _handlers().get(name)
+    if handler is None:
+        return _tool_result({"error": f"Unknown tool: {name}"}, is_error=True)
 
-    if method == "initialize":
-        client_version = str(params.get("protocolVersion") or "2024-11-05")
-        return _jsonrpc_success(
-            message_id,
-            {
-                "protocolVersion": client_version,
-                "capabilities": {
-                    "tools": {
-                        "listChanged": False,
-                    }
-                },
-                "serverInfo": {
-                    "name": "agent-labbook",
-                    "version": __version__,
-                },
-            },
+    try:
+        payload = handler(arguments or {})
+    except LabbookError as exc:
+        return _tool_result({"error": str(exc)}, is_error=True)
+    except Exception as exc:  # noqa: BLE001
+        return _tool_result({"error": f"Internal error: {exc}"}, is_error=True)
+
+    return _tool_result(payload)
+
+
+async def run() -> None:
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            InitializationOptions(
+                server_name=SERVER_NAME,
+                server_version=__version__,
+                capabilities=server.get_capabilities(
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={},
+                ),
+            ),
         )
-
-    if method == "ping":
-        return _jsonrpc_success(message_id, {})
-
-    if method == "tools/list":
-        return _jsonrpc_success(message_id, {"tools": _tool_definitions()})
-
-    if method == "tools/call":
-        name = str(params.get("name") or "")
-        arguments = params.get("arguments") or {}
-        handler = _handlers().get(name)
-        if handler is None:
-            return _jsonrpc_success(
-                message_id,
-                _tool_result({"error": f"Unknown tool: {name}"}, is_error=True),
-            )
-        try:
-            return _jsonrpc_success(message_id, _tool_result(handler(arguments)))
-        except LabbookError as exc:
-            return _jsonrpc_success(message_id, _tool_result({"error": str(exc)}, is_error=True))
-        except Exception as exc:  # noqa: BLE001
-            return _jsonrpc_success(message_id, _tool_result({"error": f"Internal error: {exc}"}, is_error=True))
-
-    if method == "notifications/initialized":
-        return None
-
-    return _jsonrpc_error(message_id, -32601, f"Method not found: {method}")
 
 
 def main() -> None:
-    for raw_line in sys.stdin:
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            response = _jsonrpc_error(None, -32700, "Parse error")
-        else:
-            response = _handle_request(request)
-        if response is None:
-            continue
-        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

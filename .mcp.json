@@ -1,9 +1,12 @@
 {
   "mcpServers": {
     "labbook": {
-      "command": "python3",
+      "command": "uvx",
       "args": [
-        "./scripts/run_mcp_server.py"
+        "--from",
+        ".",
+        "agent-labbook",
+        "mcp"
       ]
     }
   }

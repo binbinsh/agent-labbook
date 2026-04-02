@@ -1,5 +1,7 @@
 .labbook/
 __pycache__/
+*.egg-info/
+build/
 node_modules/
 .wrangler/
 .dev.vars
