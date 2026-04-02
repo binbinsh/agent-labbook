@@ -8,10 +8,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-
+LAUNCHER = ROOT / "scripts" / "run_labbook.py"
+RUNTIME_FLAG = "AGENT_LABBOOK_RUNTIME_ACTIVE"
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
 if MCP_AVAILABLE:
@@ -23,12 +21,10 @@ if MCP_AVAILABLE:
 class McpServerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join(
-            part for part in [env.get("PYTHONPATH"), str(SRC)] if part
-        )
+        env[RUNTIME_FLAG] = "1"
         self.server_params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "labbook", "mcp"],
+            args=[str(LAUNCHER), "mcp"],
             env=env,
         )
 

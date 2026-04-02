@@ -191,7 +191,7 @@ def _build_setup_guide() -> str:
         [
             "# Agent Labbook Public Integration Setup",
             "",
-            "For plugin users:",
+            "For MCP users:",
             "1. Call `notion_auth_browser` for a direct browser flow, or `notion_start_headless_auth` if the browser cannot be opened locally.",
             "2. Complete the official Notion public integration consent page.",
             "3. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",

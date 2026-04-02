@@ -1,6 +1,6 @@
 {
   "name": "agent-labbook",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Bind a Codex or Claude Code project to selected Notion pages and data sources through the official Notion API.",
   "author": {
     "name": "Binbin Shen",
@@ -34,10 +34,9 @@
     "privacyPolicyURL": "https://www.notion.so/policies/privacy-policy",
     "termsOfServiceURL": "https://www.notion.so/policies/terms-of-use",
     "defaultPrompt": [
-      "Check whether this project already has a saved Notion public-integration session and bound Notion resources.",
-      "Use the browser auth flow when this project is not authorized yet, or start a headless auth flow if opening a browser locally is not possible.",
-      "Bind one or more existing Notion pages or data sources to this project.",
-      "Return the Notion access token, headers, and bound resource IDs so the official Notion REST API can be used directly."
+      "Check the current project's saved Notion session and bound resources before assuming Notion is available.",
+      "If this project is not ready, start auth and bind the required Notion pages or data sources.",
+      "Return the official Notion API headers and bound resource IDs for direct API calls."
     ],
     "brandColor": "#0f766e"
   }

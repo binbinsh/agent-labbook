@@ -96,7 +96,7 @@ The response should show:
 - `configured: true`
 - `redirect_uri: https://YOUR_DOMAIN/oauth/callback`
 
-## 7. Point the plugin at your Worker
+## 7. Point the MCP server at your Worker
 
 Set this environment variable in the MCP server config:
 
@@ -104,11 +104,9 @@ Set this environment variable in the MCP server config:
 {
   "mcpServers": {
     "labbook": {
-      "command": "uvx",
+      "command": "python3",
       "args": [
-        "--from",
-        "git+https://github.com/binbinsh/agent-labbook@v0.11.0",
-        "agent-labbook",
+        "scripts/run_labbook.py",
         "mcp"
       ],
       "env": {
@@ -119,12 +117,14 @@ Set this environment variable in the MCP server config:
 }
 ```
 
-Then the plugin will use your Worker instead of `https://labbook.superplanner.net`.
+Then Agent Labbook will use your Worker instead of `https://labbook.superplanner.net`.
+
+Use this snippet in the repo's [`.mcp.json`](../.mcp.json) for a shared project setup, or pass the same command and environment through `codex mcp add` / `claude mcp add`.
 
 You can verify the local setup with:
 
 ```bash
-uvx --from git+https://github.com/binbinsh/agent-labbook@v0.11.0 agent-labbook doctor --probe-backend
+python3 scripts/run_labbook.py doctor --probe-backend
 ```
 
 ## 8. Understand the chooser limits
