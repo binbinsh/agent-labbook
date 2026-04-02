@@ -1,6 +1,6 @@
 # agent-labbook
 
-`agent-labbook` is a Codex-first MCP plugin repository that gives an agent real Notion access without turning this repository into a Notion SDK.
+`agent-labbook` is an Agent-first MCP integration for Codex, Claude Code, and similar agent runtimes that gives an agent real Notion access without turning this repository into a Notion SDK.
 
 Its job is intentionally narrow:
 
@@ -12,7 +12,7 @@ Its job is intentionally narrow:
 
 This repository is not a standalone CLI, not a Python package meant for end users to install directly, and not a generic wrapper around every Notion API endpoint.
 
-It ships with Codex plugin metadata out of the box, and the same MCP server can also be wired into other MCP-capable clients manually.
+It ships with Codex plugin metadata out of the box, and the same MCP server can also be wired into Claude Code or other MCP-capable clients manually.
 
 ## What It Is For
 
@@ -33,7 +33,7 @@ That backend only handles OAuth exchange, refresh, and the browser-based resourc
 
 The architecture is split cleanly:
 
-- the MCP plugin runs locally in Codex
+- the MCP server runs locally inside an agent runtime such as Codex or Claude Code
 - the Cloudflare Worker handles the Notion OAuth redirect flow
 - the user chooses accessible Notion resources in the browser
 - the Worker sends the selected result back to the local project or generates a handoff bundle
@@ -123,6 +123,8 @@ Each bound resource entry contains:
 
 `.gitignore` already excludes `.agent-labbook/` because those files are sensitive.
 
+On Unix-like systems, Agent Labbook now saves that directory with private permissions so `session.json` and `bindings.json` are not left world-readable by default.
+
 ## Deploy The Hosted Worker
 
 The Worker config is already checked in at [`wrangler.toml`](./wrangler.toml) and defaults to:
@@ -201,6 +203,8 @@ The Worker is intentionally thin:
 - long-lived tokens remain in the user's local project, not in a server-side database
 
 For the stateless browser handoff to work, the browser page also receives the token payload long enough to hand it back to the local project or to generate the headless handoff bundle. That means the browser session and copied handoff bundle should be treated as sensitive until the auth flow is finished.
+
+The handoff bundle itself is Worker-signed and is now validated by the Worker again before the local project accepts it. That reduces the risk of a pasted headless bundle silently swapping in attacker-controlled token data.
 
 To keep the Worker stateless while still protecting the OAuth `state` parameter, the Worker signs the state payload using the existing `NOTION_CLIENT_SECRET`. That removes the need for a separate `WORKER_STATE_SECRET`.
 

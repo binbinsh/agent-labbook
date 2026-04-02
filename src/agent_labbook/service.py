@@ -110,6 +110,27 @@ def _decode_handoff_bundle(handoff_bundle: str) -> dict[str, Any]:
     return payload
 
 
+def _resolve_handoff_bundle(
+    *,
+    backend_url: str,
+    expected_session_id: str,
+    handoff_bundle: str,
+) -> dict[str, Any]:
+    payload = _post_backend_json(
+        f"{backend_url}/api/consume-handoff",
+        {
+            "session_id": expected_session_id,
+            "handoff_bundle": handoff_bundle,
+        },
+    )
+    if not payload.get("ok"):
+        raise LabbookError(str(payload.get("error") or "Worker could not validate the handoff bundle."))
+    decoded = payload.get("payload")
+    if not isinstance(decoded, dict):
+        raise LabbookError("Worker handoff validation did not return a payload.")
+    return decoded
+
+
 def _endpoint_for_resource(resource_type: str | None, resource_id: str) -> str | None:
     normalized_type = str(resource_type or "").strip()
     if normalized_type == "page":
@@ -423,13 +444,16 @@ def _complete_auth_handoff(
     pending_auth: dict[str, Any],
     handoff_bundle: str,
 ) -> dict[str, Any]:
-    decoded = _decode_handoff_bundle(handoff_bundle)
-    session_id = str(decoded.get("session_id") or "").strip()
     expected_session_id = str(pending_auth.get("session_id") or "").strip()
+    backend_url = str(pending_auth.get("backend_url") or effective_backend_url()).strip()
+    decoded = _resolve_handoff_bundle(
+        backend_url=backend_url,
+        expected_session_id=expected_session_id,
+        handoff_bundle=handoff_bundle,
+    )
+    session_id = str(decoded.get("session_id") or "").strip()
     if not session_id or session_id != expected_session_id:
         raise LabbookError("The OAuth handoff session_id did not match the pending auth request.")
-
-    backend_url = str(decoded.get("backend_url") or pending_auth.get("backend_url") or effective_backend_url()).strip()
     token_payload = decoded.get("token")
     if not isinstance(token_payload, dict):
         raise LabbookError("The OAuth handoff did not contain token details.")

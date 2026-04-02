@@ -58,6 +58,7 @@ type TokenPayload = {
 type SelectionConfig = {
   baseUrl: string;
   state: SelectionState;
+  selectionToken: string;
   tokenPayload: TokenPayload;
   resources: Resource[];
   truncated: boolean;
@@ -181,15 +182,6 @@ function matchesQuery(resource: Resource, query: string) {
   return haystacks.some((value) => String(value || "").toLowerCase().includes(query));
 }
 
-function utf8Base64Url(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
 function copySet(nextValues?: Iterable<string>) {
   return new Set(nextValues ? Array.from(nextValues) : []);
 }
@@ -272,7 +264,7 @@ function ResourceRow({
   );
 }
 
-function SelectionApp({ baseUrl, state, tokenPayload, resources }: SelectionConfig) {
+function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources }: SelectionConfig) {
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
   const rootIndex = new Map(catalog.map((resource) => [resource.resource_id, resource]));
 
@@ -478,16 +470,26 @@ function SelectionApp({ baseUrl, state, tokenPayload, resources }: SelectionConf
     }
   }
 
-  function encodedBundle(chosen: BundledResource[]) {
-    const payload = {
-      version: 1,
-      session_id: state.session_id,
-      issued_at: new Date().toISOString(),
-      backend_url: baseUrl,
-      token: tokenPayload,
-      selected_resources: chosen,
-    };
-    return utf8Base64Url(JSON.stringify(payload));
+  async function requestHandoffBundle(chosen: BundledResource[]) {
+    const response = await fetch(`${baseUrl}/api/finalize-selection`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        selection_token: selectionToken,
+        selected_resources: chosen,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    const handoffBundle = String(payload.handoff_bundle || "").trim();
+    if (!handoffBundle) {
+      throw new Error("Worker did not return a handoff bundle.");
+    }
+    return handoffBundle;
   }
 
   function submitToLocalhost(bundle: string) {
@@ -506,7 +508,13 @@ function SelectionApp({ baseUrl, state, tokenPayload, resources }: SelectionConf
     if (!finalBundle.length || loadingRootIds.size) {
       return;
     }
-    const bundle = encodedBundle(finalBundle);
+    let bundle = "";
+    try {
+      bundle = await requestHandoffBundle(finalBundle);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+      return;
+    }
     if (state.mode === "local_browser") {
       submitToLocalhost(bundle);
       return;

@@ -4,6 +4,8 @@ const DEFAULT_NOTION_VERSION = "2026-03-11";
 const DEFAULT_PAGE_LIMIT = 500;
 const MAX_PAGE_LIMIT = 500;
 const STATE_TTL_SECONDS = 900;
+const SELECTION_TOKEN_TTL_SECONDS = 3600;
+const HANDOFF_BUNDLE_TTL_SECONDS = 3600;
 const DEFAULT_DISCOVERY_DEPTH = 4;
 const MAX_DISCOVERY_DEPTH = 6;
 const DEFAULT_DISCOVERY_NODE_LIMIT = 200;
@@ -90,26 +92,38 @@ async function hmacSha256(secret, value) {
   return new Uint8Array(signature);
 }
 
-async function signState(env, payload) {
+async function signSignedPayload(env, payload) {
   const body = encodeBase64Url(JSON.stringify(payload));
   const signature = encodeBase64Url(await hmacSha256(env.NOTION_CLIENT_SECRET, body));
   return `${body}.${signature}`;
 }
 
-async function verifyState(env, signedState) {
-  const [body, signature] = String(signedState || "").split(".");
+async function verifySignedPayload(env, signedValue) {
+  const [body, signature] = String(signedValue || "").split(".");
   if (!body || !signature) {
-    throw new Error("Missing or malformed state.");
+    throw new Error("Missing or malformed signed payload.");
   }
   const expectedSignature = encodeBase64Url(await hmacSha256(env.NOTION_CLIENT_SECRET, body));
   if (expectedSignature !== signature) {
-    throw new Error("State signature mismatch.");
+    throw new Error("Signed payload signature mismatch.");
   }
-  const payload = JSON.parse(decodeBase64Url(body));
+  return JSON.parse(decodeBase64Url(body));
+}
+
+function ensureRecentPayload(payload, ttlSeconds, errorMessage) {
   const now = Math.floor(Date.now() / 1000);
-  if (typeof payload.issued_at !== "number" || now - payload.issued_at > STATE_TTL_SECONDS) {
-    throw new Error("Authorization state expired.");
+  if (typeof payload?.issued_at !== "number" || now - payload.issued_at > ttlSeconds) {
+    throw new Error(errorMessage);
   }
+}
+
+async function signState(env, payload) {
+  return signSignedPayload(env, payload);
+}
+
+async function verifyState(env, signedState) {
+  const payload = await verifySignedPayload(env, signedState);
+  ensureRecentPayload(payload, STATE_TTL_SECONDS, "Authorization state expired.");
   return payload;
 }
 
@@ -1065,10 +1079,11 @@ function errorPage(title, message) {
   });
 }
 
-function selectionPage({ baseUrl, state, tokenPayload, resources, truncated }) {
+function selectionPage({ baseUrl, state, selectionToken, tokenPayload, resources, truncated }) {
   const bootstrap = {
     baseUrl,
     state,
+    selectionToken,
     tokenPayload,
     resources,
     truncated: Boolean(truncated),
@@ -1177,22 +1192,32 @@ async function handleCallback(request, env) {
   try {
     const state = await verifyState(env, rawState);
     const tokenPayload = await exchangeCode(env, redirectUri, code);
+    const sanitizedTokenPayload = {
+      access_token: tokenPayload.access_token,
+      refresh_token: tokenPayload.refresh_token,
+      token_type: tokenPayload.token_type,
+      bot_id: tokenPayload.bot_id,
+      workspace_id: tokenPayload.workspace_id,
+      workspace_name: tokenPayload.workspace_name,
+      workspace_icon: tokenPayload.workspace_icon,
+      duplicated_template_id: tokenPayload.duplicated_template_id,
+      owner: tokenPayload.owner || null,
+    };
+    const selectionToken = await signSignedPayload(env, {
+      version: 1,
+      purpose: "selection_session",
+      issued_at: Math.floor(Date.now() / 1000),
+      session_id: state.session_id,
+      backend_url: baseUrl,
+      token: sanitizedTokenPayload,
+    });
     const searchPayload = await fetchSelectableResources(env, tokenPayload.access_token, state.page_limit || DEFAULT_PAGE_LIMIT);
     return htmlResponse(
       selectionPage({
         baseUrl,
         state,
-        tokenPayload: {
-          access_token: tokenPayload.access_token,
-          refresh_token: tokenPayload.refresh_token,
-          token_type: tokenPayload.token_type,
-          bot_id: tokenPayload.bot_id,
-          workspace_id: tokenPayload.workspace_id,
-          workspace_name: tokenPayload.workspace_name,
-          workspace_icon: tokenPayload.workspace_icon,
-          duplicated_template_id: tokenPayload.duplicated_template_id,
-          owner: tokenPayload.owner || null,
-        },
+        selectionToken,
+        tokenPayload: sanitizedTokenPayload,
         resources: searchPayload.resources,
         truncated: searchPayload.truncated,
       }),
@@ -1266,6 +1291,90 @@ async function handleCatalog(request, env) {
   }
 }
 
+async function handleFinalizeSelection(request, env) {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
+  }
+
+  try {
+    const payload = await request.json();
+    const selectionToken = String(payload?.selection_token || "").trim();
+    if (!selectionToken) {
+      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
+    }
+
+    const signedSelection = await verifySignedPayload(env, selectionToken);
+    ensureRecentPayload(signedSelection, SELECTION_TOKEN_TTL_SECONDS, "Selection session expired.");
+    if (signedSelection?.purpose !== "selection_session") {
+      return jsonResponse({ ok: false, error: "Invalid selection token." }, { status: 400 });
+    }
+
+    const tokenPayload = signedSelection?.token;
+    if (!(tokenPayload && typeof tokenPayload === "object")) {
+      return jsonResponse({ ok: false, error: "Selection token did not contain a token payload." }, { status: 400 });
+    }
+
+    const selectedResources = Array.isArray(payload?.selected_resources)
+      ? payload.selected_resources.filter((item) => item && typeof item === "object")
+      : [];
+
+    const handoffBundle = await signSignedPayload(env, {
+      version: 1,
+      purpose: "handoff_bundle",
+      issued_at: Math.floor(Date.now() / 1000),
+      session_id: String(signedSelection.session_id || "").trim(),
+      backend_url: String(signedSelection.backend_url || getBaseUrl(request, env)).trim(),
+      token: tokenPayload,
+      selected_resources: selectedResources,
+    });
+
+    return jsonResponse({
+      ok: true,
+      handoff_bundle: handoffBundle,
+    });
+  } catch (exc) {
+    return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
+  }
+}
+
+async function handleConsumeHandoff(request, env) {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
+  }
+
+  try {
+    const payload = await request.json();
+    const handoffBundle = String(payload?.handoff_bundle || "").trim();
+    const sessionId = String(payload?.session_id || "").trim();
+    if (!handoffBundle) {
+      return jsonResponse({ ok: false, error: "handoff_bundle is required." }, { status: 400 });
+    }
+
+    const signedHandoff = await verifySignedPayload(env, handoffBundle);
+    ensureRecentPayload(signedHandoff, HANDOFF_BUNDLE_TTL_SECONDS, "Handoff bundle expired.");
+    if (signedHandoff?.purpose !== "handoff_bundle") {
+      return jsonResponse({ ok: false, error: "Invalid handoff bundle." }, { status: 400 });
+    }
+    if (sessionId && String(signedHandoff.session_id || "").trim() !== sessionId) {
+      return jsonResponse({ ok: false, error: "Handoff bundle session mismatch." }, { status: 400 });
+    }
+
+    return jsonResponse({
+      ok: true,
+      payload: {
+        session_id: String(signedHandoff.session_id || "").trim(),
+        backend_url: String(signedHandoff.backend_url || getBaseUrl(request, env)).trim(),
+        token: signedHandoff.token && typeof signedHandoff.token === "object" ? signedHandoff.token : {},
+        selected_resources: Array.isArray(signedHandoff.selected_resources)
+          ? signedHandoff.selected_resources.filter((item) => item && typeof item === "object")
+          : [],
+      },
+    });
+  } catch (exc) {
+    return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
+  }
+}
+
 async function handleRefresh(request, env) {
   if (request.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
@@ -1324,6 +1433,12 @@ export default {
     }
     if (url.pathname === "/api/catalog") {
       return handleCatalog(request, env);
+    }
+    if (url.pathname === "/api/finalize-selection") {
+      return handleFinalizeSelection(request, env);
+    }
+    if (url.pathname === "/api/consume-handoff") {
+      return handleConsumeHandoff(request, env);
     }
     if (url.pathname === "/api/refresh") {
       return handleRefresh(request, env);

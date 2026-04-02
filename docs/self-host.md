@@ -25,6 +25,8 @@ The Worker handles tokens in memory during requests, but does not persist them a
 
 For the browser-based handoff, the browser also temporarily receives the token payload so it can return it to the local project or package it into the headless handoff bundle. Treat the handoff page and copied bundle as sensitive until the flow is complete.
 
+The generated handoff bundle is signed by the Worker and validated by the Worker again before the local project accepts it. If you fork this design, keep that verification step in place.
+
 ## Requirements
 
 - a Cloudflare account with access to the target zone

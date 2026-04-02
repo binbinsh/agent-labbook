@@ -1,6 +1,6 @@
 ---
 name: agent-labbook
-description: Authorize the hosted Notion public integration, bind project-local resources, and then use the official Notion REST API directly. Use when the agent needs real Notion access through labbook.superplanner.net without a stateful backend.
+description: Authorize the hosted Notion public integration, bind project-local resources, and then use the official Notion REST API directly. Use when the agent needs real Notion access from Codex, Claude Code, or another MCP-capable runtime through labbook.superplanner.net without a stateful backend.
 ---
 
 # Agent Labbook
