@@ -70,9 +70,9 @@ def _tool_definitions() -> list[types.Tool]:
                 "Open the official Notion public-integration consent flow in a browser and wait for the selected "
                 f"bindings to be saved into this project. Browser auth can take several minutes; the default wait is "
                 f"{DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS} seconds, and the default page_limit is "
-                f"{DEFAULT_BROWSER_AUTH_PAGE_LIMIT}. When running over SSH or another remote shell session, this tool "
-                "automatically switches to the headless flow because the local browser handoff posts back to 127.0.0.1 "
-                "on the machine running the MCP server."
+                f"{DEFAULT_BROWSER_AUTH_PAGE_LIMIT}. When running over SSH or another likely headless shell session, "
+                "this tool automatically switches to the headless flow because the local browser handoff posts back to "
+                "127.0.0.1 on the machine running the MCP server."
             ),
             inputSchema={
                 "type": "object",

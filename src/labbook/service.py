@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import platform
 import queue
 import re
 import threading
@@ -55,6 +56,17 @@ def _remote_session_reason() -> str | None:
         return "ssh_client"
     if str(os.getenv("SSH_TTY") or "").strip():
         return "ssh_tty"
+    return None
+
+
+def _headless_session_reason() -> str | None:
+    remote_reason = _remote_session_reason()
+    if remote_reason:
+        return remote_reason
+    if platform.system() == "Linux":
+        has_display = bool(str(os.getenv("DISPLAY") or "").strip() or str(os.getenv("WAYLAND_DISPLAY") or "").strip())
+        if not has_display:
+            return "linux_no_display"
     return None
 
 
@@ -635,7 +647,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     resources = list(bindings.get("resources") or [])
     authenticated = bool(str(session_payload.get("access_token") or "").strip())
     bindings_ready = bool(resources)
-    remote_session_reason = _remote_session_reason()
+    remote_session_reason = _headless_session_reason()
 
     if pending_auth and str(pending_auth.get("mode") or "") == "headless" and not authenticated:
         recommended_action = "notion_complete_headless_auth"
@@ -660,7 +672,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
             f"to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
         ),
         "remote_auth_hint": (
-            "Detected an SSH or remote shell session. Prefer notion_start_headless_auth because the local-browser "
+            "Detected an SSH or likely headless shell session. Prefer notion_start_headless_auth because the local-browser "
             "handoff posts back to 127.0.0.1 on the machine running the MCP server."
             if remote_session_reason
             else None
@@ -701,7 +713,7 @@ def auth_browser(
     session_id = uuid4().hex
     wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
-    remote_session_reason = _remote_session_reason()
+    remote_session_reason = _headless_session_reason()
 
     if remote_session_reason:
         result = start_headless_auth(
@@ -711,7 +723,7 @@ def auth_browser(
         result["auth_mode"] = "headless"
         result["auto_switched_to_headless"] = True
         result["reason"] = (
-            "Detected an SSH or remote shell session. The browser handoff for notion_auth_browser posts back to "
+            "Detected an SSH or likely headless shell session. The browser handoff for notion_auth_browser posts back to "
             "127.0.0.1 on the machine running the MCP server, so this request was switched to headless auth."
         )
         return result
@@ -742,6 +754,19 @@ def auth_browser(
 
     try:
         opened = webbrowser.open(auth_url) if open_browser else False
+        if open_browser and not opened:
+            clear_pending_auth(root)
+            result = start_headless_auth(
+                project_root=root,
+                page_limit=normalized_page_limit,
+            )
+            result["auth_mode"] = "headless"
+            result["auto_switched_to_headless"] = True
+            result["reason"] = (
+                "A local browser could not be opened from the current environment, so this request was switched to "
+                "headless auth."
+            )
+            return result
         handoff_bundle = handoff_server.wait_for_bundle(wait_timeout_seconds)
         pending_auth = load_pending_auth(root) or {}
         result = _complete_auth_handoff(

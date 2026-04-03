@@ -74,6 +74,15 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(payload["remote_session_detected"])
         self.assertIn("127.0.0.1", payload["remote_auth_hint"])
 
+    def test_status_recommends_headless_when_linux_has_no_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict("os.environ", {"DISPLAY": "", "WAYLAND_DISPLAY": "", "SSH_CONNECTION": ""}, clear=False):
+                with mock.patch("labbook.service.platform.system", return_value="Linux"):
+                    payload = status(tmpdir)
+
+        self.assertEqual(payload["recommended_action"], "notion_start_headless_auth")
+        self.assertTrue(payload["remote_session_detected"])
+
     def test_start_headless_auth_persists_clamped_page_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             payload = start_headless_auth(project_root=tmpdir, page_limit=10)
@@ -109,6 +118,19 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(payload["auto_switched_to_headless"])
         self.assertIn("127.0.0.1", payload["reason"])
         self.assertEqual(payload["page_limit"], MIN_BROWSER_AUTH_PAGE_LIMIT)
+        self.assertIsNotNone(pending_auth)
+        self.assertEqual(pending_auth["mode"], "headless")
+
+    def test_auth_browser_auto_switches_to_headless_when_browser_cannot_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict("os.environ", {"SSH_CONNECTION": "", "DISPLAY": ":0"}, clear=False):
+                with mock.patch("labbook.service.webbrowser.open", return_value=False):
+                    payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
+                    pending_auth = load_pending_auth(tmpdir)
+
+        self.assertEqual(payload["auth_mode"], "headless")
+        self.assertTrue(payload["auto_switched_to_headless"])
+        self.assertIn("could not be opened", payload["reason"])
         self.assertIsNotNone(pending_auth)
         self.assertEqual(pending_auth["mode"], "headless")
 
