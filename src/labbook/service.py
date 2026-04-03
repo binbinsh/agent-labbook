@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import queue
+import os
 import re
-import threading
 from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
 from typing import Any
 from urllib import error, parse, request
 from uuid import uuid4
@@ -20,15 +22,21 @@ from .state import (
     backend_redirect_uri,
     bindings_path,
     clear_pending_auth,
+    clear_pending_handoff,
+    clear_local_handoff_server,
     clear_project_bindings,
     clear_project_session,
     effective_backend_url,
     LabbookError,
+    load_local_handoff_server,
+    load_pending_handoff,
     load_project_bindings,
     load_project_session,
     load_pending_auth,
+    local_handoff_server_path,
     normalize_notion_id,
     pending_auth_path,
+    pending_handoff_path,
     resolve_project_root,
     save_project_bindings,
     save_project_session,
@@ -37,14 +45,12 @@ from .state import (
 )
 
 
-LOCAL_CALLBACK_HOST = "127.0.0.1"
-LOCAL_CALLBACK_PORT = 8765
-LOCAL_CALLBACK_PATH = "/oauth/handoff"
 CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
 DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS = 1800
 MIN_BROWSER_AUTH_TIMEOUT_SECONDS = 30
 DEFAULT_BROWSER_AUTH_PAGE_LIMIT = 200
 MIN_BROWSER_AUTH_PAGE_LIMIT = 25
+LOCAL_HANDOFF_SERVER_STARTUP_TIMEOUT_SECONDS = 5
 
 
 def _utc_now() -> str:
@@ -264,8 +270,9 @@ def _build_setup_guide() -> str:
             "# Agent Labbook Public Integration Setup",
             "",
             "For MCP users:",
-            "1. Start with `notion_auth_browser` if you want the simplest flow. If the browser handoff cannot get back to the MCP server, use `notion_complete_headless_auth` with the handoff bundle shown on the page.",
-            f"   For browser auth, prefer a long wait and pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` because users may need several minutes to finish consent and resource selection.",
+            "1. Start with `notion_auth_browser` if you want the simplest flow. It starts a localhost handoff listener and returns immediately so the browser flow can finish asynchronously.",
+            f"   For browser auth, pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` or longer so the background localhost listener stays available while you finish consent and resource selection.",
+            "   After the browser says the project is connected, call `notion_status`. If the browser handoff cannot get back to the MCP server, use `notion_complete_headless_auth` with the handoff bundle shown on the page.",
             f"   `page_limit` now controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped, but remote search still searches the whole shared workspace.",
             "2. Complete the official Notion public integration consent page.",
             "3. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",
@@ -357,108 +364,115 @@ def _post_backend_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     return decoded
 
 
-class _LocalHandoffServer:
-    def __init__(self, *, expected_session_id: str) -> None:
-        self.expected_session_id = expected_session_id
-        self._queue: queue.Queue[str] = queue.Queue(maxsize=1)
-        self._server: ThreadingHTTPServer | None = None
-        self._thread: threading.Thread | None = None
+def _terminate_local_handoff_server(project_root: str | Path | None = None) -> bool:
+    payload = load_local_handoff_server(project_root) or {}
+    pid_raw = payload.get("pid")
+    try:
+        pid = int(pid_raw)
+    except (TypeError, ValueError):
+        pid = 0
+    if pid <= 0:
+        return clear_local_handoff_server(project_root)
 
-    @property
-    def return_to_url(self) -> str:
-        if self._server is None:
-            raise RuntimeError("Server has not started yet.")
-        host, port = self._server.server_address
-        return f"http://{host}:{port}{LOCAL_CALLBACK_PATH}"
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    return clear_local_handoff_server(project_root)
 
-    def start(self) -> None:
-        outer = self
 
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, format: str, *args: object) -> None:  # noqa: A003
-                return
+def _clear_local_browser_handoff_state(
+    project_root: str | Path | None = None,
+    *,
+    terminate_server: bool = False,
+) -> dict[str, bool]:
+    terminated_server = _terminate_local_handoff_server(project_root) if terminate_server else False
+    cleared_server = clear_local_handoff_server(project_root)
+    cleared_handoff = clear_pending_handoff(project_root)
+    return {
+        "terminated_local_handoff_server": terminated_server,
+        "cleared_local_handoff_server": cleared_server or terminated_server,
+        "cleared_pending_handoff": cleared_handoff,
+    }
 
-            def do_POST(self) -> None:  # noqa: N802
-                outer._handle_post(self)
 
-            def do_GET(self) -> None:  # noqa: N802
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(b"Agent Labbook local handoff endpoint.\n")
+def _spawn_persistent_local_handoff_server(
+    *,
+    project_root: Path,
+    session_id: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    _clear_local_browser_handoff_state(project_root, terminate_server=True)
 
-        try:
-            self._server = ThreadingHTTPServer((LOCAL_CALLBACK_HOST, LOCAL_CALLBACK_PORT), Handler)
-        except OSError:
-            self._server = ThreadingHTTPServer((LOCAL_CALLBACK_HOST, 0), Handler)
+    command = [
+        sys.executable,
+        "-m",
+        "labbook.local_handoff",
+        "--project-root",
+        str(project_root),
+        "--session-id",
+        session_id,
+        "--timeout-seconds",
+        str(timeout_seconds),
+    ]
+    popen_kwargs: dict[str, Any] = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "stdin": subprocess.DEVNULL,
+        "cwd": str(project_root),
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        creationflags = 0
+        creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        popen_kwargs["creationflags"] = creationflags
+    else:
+        popen_kwargs["start_new_session"] = True
 
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        self._thread.start()
+    process = subprocess.Popen(command, **popen_kwargs)
+    deadline = time.monotonic() + LOCAL_HANDOFF_SERVER_STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        payload = load_local_handoff_server(project_root) or {}
+        if (
+            str(payload.get("session_id") or "").strip() == session_id
+            and str(payload.get("return_to") or "").strip()
+        ):
+            return payload
+        if process.poll() is not None:
+            break
+        time.sleep(0.05)
 
-    def close(self) -> None:
-        if self._server is not None:
-            self._server.shutdown()
-            self._server.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=1)
+    raise LabbookError("Could not start the local browser handoff listener.")
 
-    def wait_for_bundle(self, timeout_seconds: int) -> str:
-        try:
-            return self._queue.get(timeout=timeout_seconds)
-        except queue.Empty as exc:
-            raise LabbookError(
-                "Timed out waiting for the local browser handoff to complete. "
-                f"Re-run notion_auth_browser with a larger timeout_seconds value, for example {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
-            ) from exc
 
-    def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
-        if parse.urlsplit(handler.path).path != LOCAL_CALLBACK_PATH:
-            handler.send_response(404)
-            handler.end_headers()
-            return
+def _maybe_complete_saved_local_browser_handoff(
+    *,
+    project_root: Path,
+    pending_auth: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    pending_handoff = load_pending_handoff(project_root) or {}
+    if not pending_handoff:
+        return None, None
 
-        length = int(handler.headers.get("Content-Length") or "0")
-        raw_body = handler.rfile.read(length).decode("utf-8", errors="replace")
-        content_type = str(handler.headers.get("Content-Type") or "")
+    expected_session_id = str(pending_auth.get("session_id") or "").strip()
+    handoff_session_id = str(pending_handoff.get("session_id") or "").strip()
+    if not expected_session_id or handoff_session_id != expected_session_id:
+        clear_pending_handoff(project_root)
+        return None, "Ignored a saved local handoff bundle because it did not match the active pending auth session."
 
-        if "application/json" in content_type:
-            decoded = json.loads(raw_body or "{}")
-            bundle = str(decoded.get("handoff_bundle") or "").strip()
-            session_id = str(decoded.get("session_id") or "").strip()
-        else:
-            form = parse.parse_qs(raw_body, keep_blank_values=False)
-            bundle = str((form.get("handoff_bundle") or [""])[0]).strip()
-            session_id = str((form.get("session_id") or [""])[0]).strip()
+    handoff_bundle = str(pending_handoff.get("handoff_bundle") or "").strip()
+    if not handoff_bundle:
+        clear_pending_handoff(project_root)
+        return None, "Saved local handoff state did not contain a handoff bundle."
 
-        if session_id and session_id != self.expected_session_id:
-            handler.send_response(400)
-            handler.send_header("Content-Type", "text/html; charset=utf-8")
-            handler.end_headers()
-            handler.wfile.write(b"<h1>Session mismatch</h1><p>Please restart the auth flow.</p>")
-            return
-        if not bundle:
-            handler.send_response(400)
-            handler.send_header("Content-Type", "text/html; charset=utf-8")
-            handler.end_headers()
-            handler.wfile.write(b"<h1>Missing bundle</h1><p>Please restart the auth flow.</p>")
-            return
-
-        try:
-            self._queue.put_nowait(bundle)
-        except queue.Full:
-            pass
-
-        handler.send_response(200)
-        handler.send_header("Content-Type", "text/html; charset=utf-8")
-        handler.end_headers()
-        handler.wfile.write(
-            (
-                "<!doctype html><html><body>"
-                "<h1>Agent Labbook is connected</h1>"
-                "<p>You can close this tab and return to Codex.</p>"
-                "</body></html>"
-            ).encode("utf-8")
-        )
+    result = _complete_auth_handoff(
+        project_root=project_root,
+        pending_auth=pending_auth,
+        handoff_bundle=handoff_bundle,
+    )
+    clear_pending_handoff(project_root)
+    return result, None
 
 
 def _save_session_payload(project_root: Path, *, backend_url: str, token_payload: dict[str, Any]) -> Path:
@@ -547,6 +561,8 @@ def _complete_auth_handoff(
     )
     binding_file = save_project_bindings(project_root, bindings_payload)
     clear_pending_auth(project_root)
+    clear_pending_handoff(project_root)
+    _terminate_local_handoff_server(project_root)
 
     return {
         "project_root": str(project_root),
@@ -615,17 +631,42 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     backend_url = effective_backend_url()
     session_payload = load_project_session(root) or {}
     pending_auth = load_pending_auth(root) or {}
+    pending_handoff_completion_error: str | None = None
+    pending_handoff_notice: str | None = None
+    auto_completed_from_pending_handoff = False
     stale_pending_auth_cleared = False
     if pending_auth_is_stale(pending_auth):
         clear_pending_auth(root)
+        _clear_local_browser_handoff_state(root, terminate_server=True)
         pending_auth = {}
         stale_pending_auth_cleared = True
+
+    authenticated = bool(str(session_payload.get("access_token") or "").strip())
+    if pending_auth and not authenticated:
+        try:
+            completion_result, pending_handoff_notice = _maybe_complete_saved_local_browser_handoff(
+                project_root=root,
+                pending_auth=pending_auth,
+            )
+        except LabbookError as exc:
+            pending_handoff_completion_error = str(exc)
+        else:
+            auto_completed_from_pending_handoff = completion_result is not None
+            if auto_completed_from_pending_handoff:
+                session_payload = load_project_session(root) or {}
+                pending_auth = load_pending_auth(root) or {}
+
+    pending_handoff = load_pending_handoff(root) or {}
+    local_handoff_server = load_local_handoff_server(root) or {}
     bindings = load_project_bindings(root) or {}
     resources = list(bindings.get("resources") or [])
     authenticated = bool(str(session_payload.get("access_token") or "").strip())
     bindings_ready = bool(resources)
 
-    if pending_auth and not authenticated:
+    pending_auth_mode = str(pending_auth.get("mode") or "").strip()
+    if pending_auth and not authenticated and pending_auth_mode == "local_browser":
+        recommended_action = "notion_status"
+    elif pending_auth and not authenticated:
         recommended_action = "notion_complete_headless_auth"
     elif not authenticated:
         recommended_action = "notion_auth_browser"
@@ -642,8 +683,9 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "recommended_browser_auth_timeout_seconds": DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         "recommended_browser_auth_page_limit": DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
         "browser_auth_hint": (
-            "Use notion_auth_browser only when the browser and MCP server are on the same machine. When you do use it, "
-            f"prefer a long timeout_seconds value and keep waiting for the browser handoff to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+            "Use notion_auth_browser only when the browser and MCP server are on the same machine. It now starts a "
+            "localhost handoff listener that can survive past the initial MCP tool call, so complete the browser flow "
+            f"and then call notion_status again. Recommended browser auth timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
         ),
         "headless_auth_hint": (
             "If the browser handoff cannot get back to the MCP server, finish the flow with notion_complete_headless_auth "
@@ -664,8 +706,21 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "session_path": str(session_path(root)),
         "binding_path": str(bindings_path(root)),
         "pending_auth_path": str(pending_auth_path(root)),
+        "pending_handoff_path": str(pending_handoff_path(root)),
+        "local_handoff_server_path": str(local_handoff_server_path(root)),
         "pending_auth": pending_auth or None,
+        "pending_handoff": {
+            "session_id": pending_handoff.get("session_id"),
+            "received_at": pending_handoff.get("received_at"),
+            "return_to": pending_handoff.get("return_to"),
+        }
+        if pending_handoff
+        else None,
+        "local_handoff_server": local_handoff_server or None,
         "stale_pending_auth_cleared": stale_pending_auth_cleared,
+        "auto_completed_from_pending_handoff": auto_completed_from_pending_handoff,
+        "pending_handoff_notice": pending_handoff_notice,
+        "pending_handoff_completion_error": pending_handoff_completion_error,
         "ready": authenticated and bindings_ready,
         "recommended_action": recommended_action,
         "setup_guide": None if authenticated else _build_setup_guide(),
@@ -697,14 +752,21 @@ def auth_browser(
         )
         return result
 
-    handoff_server = _LocalHandoffServer(expected_session_id=session_id)
-    handoff_server.start()
+    server_payload = _spawn_persistent_local_handoff_server(
+        project_root=root,
+        session_id=session_id,
+        timeout_seconds=wait_timeout_seconds,
+    )
+    return_to = str(server_payload.get("return_to") or "").strip()
+    if not return_to:
+        raise LabbookError("The local browser handoff listener did not report a return_to URL.")
+
     auth_url = _oauth_start_url(
         backend_url=backend_url,
         project_root=root,
         session_id=session_id,
         mode="local_browser",
-        return_to=handoff_server.return_to_url,
+        return_to=return_to,
         page_limit=normalized_page_limit,
     )
     save_pending_auth(
@@ -715,44 +777,47 @@ def auth_browser(
             mode="local_browser",
             session_id=session_id,
             auth_url=auth_url,
-            return_to=handoff_server.return_to_url,
+            return_to=return_to,
             timeout_seconds=wait_timeout_seconds,
             page_limit=normalized_page_limit,
         ),
     )
 
-    try:
-        opened = webbrowser.open(auth_url) if open_browser else False
-        if open_browser and not opened:
-            clear_pending_auth(root)
-            result = start_headless_auth(
-                project_root=root,
-                page_limit=normalized_page_limit,
-            )
-            result["auth_mode"] = "headless"
-            result["auto_switched_to_headless"] = True
-            result["reason"] = (
-                "A local browser could not be opened from the current environment, so this request was switched to "
-                "headless auth."
-            )
-            return result
-        handoff_bundle = handoff_server.wait_for_bundle(wait_timeout_seconds)
-        pending_auth = load_pending_auth(root) or {}
-        result = _complete_auth_handoff(
-            project_root=root,
-            pending_auth=pending_auth,
-            handoff_bundle=handoff_bundle,
-        )
-        result["auth_url"] = auth_url
-        result["browser_opened"] = bool(opened)
-        result["timeout_seconds"] = wait_timeout_seconds
-        result["page_limit"] = normalized_page_limit
-        return result
-    except Exception:
+    opened = webbrowser.open(auth_url) if open_browser else False
+    if open_browser and not opened:
         clear_pending_auth(root)
-        raise
-    finally:
-        handoff_server.close()
+        _clear_local_browser_handoff_state(root, terminate_server=True)
+        result = start_headless_auth(
+            project_root=root,
+            page_limit=normalized_page_limit,
+        )
+        result["auth_mode"] = "headless"
+        result["auto_switched_to_headless"] = True
+        result["reason"] = (
+            "A local browser could not be opened from the current environment, so this request was switched to "
+            "headless auth."
+        )
+        return result
+
+    return {
+        "project_root": str(root),
+        "backend_url": backend_url,
+        "auth_mode": "local_browser",
+        "auth_url": auth_url,
+        "session_id": session_id,
+        "return_to": return_to,
+        "timeout_seconds": wait_timeout_seconds,
+        "page_limit": normalized_page_limit,
+        "browser_opened": bool(opened),
+        "local_handoff_server": server_payload,
+        "recommended_next_action": "notion_status",
+        "instructions": (
+            "Finish the Notion consent and selection flow in the browser. The localhost handoff listener will keep "
+            "running in the background even if this MCP tool call returns early. After the browser says the project "
+            "is connected, call notion_status. If the browser shows a handoff bundle instead, finish with "
+            "notion_complete_headless_auth."
+        ),
+    }
 
 
 def start_headless_auth(
@@ -764,6 +829,7 @@ def start_headless_auth(
     backend_url = effective_backend_url()
     session_id = uuid4().hex
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
+    _clear_local_browser_handoff_state(root, terminate_server=True)
     auth_url = _oauth_start_url(
         backend_url=backend_url,
         project_root=root,
@@ -846,11 +912,14 @@ def clear_project_auth(
     root = resolve_project_root(project_root)
     cleared_session = clear_project_session(root)
     cleared_pending = clear_pending_auth(root)
+    handoff_cleanup = _clear_local_browser_handoff_state(root, terminate_server=True)
     cleared_bindings = clear_project_bindings(root) if clear_bindings else False
     return {
         "project_root": str(root),
         "cleared_session": cleared_session,
         "cleared_pending_auth": cleared_pending,
+        "cleared_pending_handoff": handoff_cleanup["cleared_pending_handoff"],
+        "cleared_local_handoff_server": handoff_cleanup["cleared_local_handoff_server"],
         "cleared_bindings": cleared_bindings,
     }
 

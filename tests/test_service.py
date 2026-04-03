@@ -26,7 +26,14 @@ from labbook.service import (
     start_headless_auth,
     status,
 )
-from labbook.state import load_pending_auth, save_project_bindings, save_project_session
+from labbook.state import (
+    clear_pending_auth,
+    load_pending_auth,
+    load_pending_handoff,
+    save_pending_handoff,
+    save_project_bindings,
+    save_project_session,
+)
 
 
 class ServiceTests(unittest.TestCase):
@@ -68,7 +75,7 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNone(payload["pending_auth"])
         self.assertTrue(payload["stale_pending_auth_cleared"])
 
-    def test_status_recommends_complete_headless_auth_for_any_pending_auth(self) -> None:
+    def test_status_recommends_status_for_pending_local_browser_auth(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir) / ".labbook"
             state_dir.mkdir(parents=True, exist_ok=True)
@@ -77,6 +84,26 @@ class ServiceTests(unittest.TestCase):
                 json.dumps(
                     {
                         "mode": "local_browser",
+                        "session_id": "pending-session",
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = status(tmpdir)
+
+        self.assertEqual(payload["recommended_action"], "notion_status")
+
+    def test_status_recommends_complete_headless_auth_for_pending_headless_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir) / ".labbook"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            pending_auth_path = state_dir / "pending-auth.json"
+            pending_auth_path.write_text(
+                json.dumps(
+                    {
+                        "mode": "headless",
                         "session_id": "pending-session",
                         "started_at": datetime.now(timezone.utc).isoformat(),
                     }
@@ -127,15 +154,115 @@ class ServiceTests(unittest.TestCase):
 
     def test_auth_browser_falls_back_to_headless_when_browser_cannot_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch("labbook.service.webbrowser.open", return_value=False):
-                payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
-                pending_auth = load_pending_auth(tmpdir)
+            with mock.patch(
+                "labbook.service._spawn_persistent_local_handoff_server",
+                return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "test-session"},
+            ):
+                with mock.patch("labbook.service.webbrowser.open", return_value=False):
+                    payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
+                    pending_auth = load_pending_auth(tmpdir)
 
         self.assertEqual(payload["auth_mode"], "headless")
         self.assertTrue(payload["auto_switched_to_headless"])
         self.assertIn("could not be opened", payload["reason"])
         self.assertIsNotNone(pending_auth)
         self.assertEqual(pending_auth["mode"], "headless")
+
+    def test_auth_browser_starts_async_local_browser_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "labbook.service._spawn_persistent_local_handoff_server",
+                return_value={
+                    "return_to": "http://127.0.0.1:8765/oauth/handoff",
+                    "session_id": "test-session",
+                    "pid": 12345,
+                },
+            ):
+                with mock.patch("labbook.service.webbrowser.open", return_value=True):
+                    payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
+                    pending_auth = load_pending_auth(tmpdir)
+
+        self.assertEqual(payload["auth_mode"], "local_browser")
+        self.assertEqual(payload["recommended_next_action"], "notion_status")
+        self.assertEqual(payload["page_limit"], MIN_BROWSER_AUTH_PAGE_LIMIT)
+        self.assertIsNotNone(pending_auth)
+        self.assertEqual(pending_auth["mode"], "local_browser")
+        self.assertEqual(pending_auth["return_to"], "http://127.0.0.1:8765/oauth/handoff")
+
+    def test_status_auto_completes_saved_local_browser_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resolved_root = root.resolve()
+            state_dir = root / ".labbook"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "pending-auth.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "local_browser",
+                        "session_id": "local-browser-session",
+                        "backend_url": "https://labbook.superplanner.net",
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            save_pending_handoff(
+                root,
+                {
+                    "version": 1,
+                    "project_root": str(root),
+                    "session_id": "local-browser-session",
+                    "handoff_bundle": "bundle",
+                    "received_at": datetime.now(timezone.utc).isoformat(),
+                    "return_to": "http://127.0.0.1:8765/oauth/handoff",
+                },
+            )
+
+            def complete_side_effect(*, project_root: Path, pending_auth: dict, handoff_bundle: str) -> dict:
+                self.assertEqual(project_root, resolved_root)
+                self.assertEqual(pending_auth["session_id"], "local-browser-session")
+                self.assertEqual(handoff_bundle, "bundle")
+                save_project_session(
+                    root,
+                    {
+                        "access_token": "test-access-token",
+                        "refresh_token": "test-refresh-token",
+                        "workspace_name": "Workspace",
+                        "workspace_id": "workspace-id",
+                    },
+                )
+                save_project_bindings(
+                    root,
+                    {
+                        "version": 1,
+                        "project_root": str(root),
+                        "default_resource_alias": "project-home",
+                        "resources": [
+                            {
+                                "alias": "project-home",
+                                "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
+                                "resource_type": "page",
+                                "title": "Project Home",
+                                "resource_url": "https://www.notion.so/example",
+                                "source": "oauth_selection",
+                                "bound_at": "2026-04-03T00:00:00+00:00",
+                                "selection_scope": "subtree",
+                            }
+                        ],
+                    },
+                )
+                clear_pending_auth(root)
+                return {"ok": True}
+
+            with mock.patch("labbook.service._complete_auth_handoff", side_effect=complete_side_effect):
+                payload = status(tmpdir)
+                remaining_handoff = load_pending_handoff(root)
+
+        self.assertTrue(payload["authenticated"])
+        self.assertTrue(payload["ready"])
+        self.assertTrue(payload["auto_completed_from_pending_handoff"])
+        self.assertIsNone(payload["pending_auth"])
+        self.assertIsNone(remaining_handoff)
 
     def test_complete_headless_auth_accepts_pending_local_browser_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

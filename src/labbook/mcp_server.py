@@ -67,8 +67,9 @@ def _tool_definitions() -> list[types.Tool]:
         types.Tool(
             name="notion_auth_browser",
             description=(
-                "Open the official Notion public-integration consent flow in a browser and wait for the selected "
-                f"bindings to be saved into this project. Browser auth can take several minutes; the default wait is "
+                "Open the official Notion public-integration consent flow in a browser and start a localhost handoff "
+                "listener for this project. The browser flow completes asynchronously, so call notion_status after "
+                "you finish consent and selection. The default localhost listener timeout is "
                 f"{DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS} seconds, and the default page_limit is "
                 f"{DEFAULT_BROWSER_AUTH_PAGE_LIMIT}. If called with open_browser=false, this tool switches to the "
                 "headless flow instead."

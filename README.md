@@ -33,10 +33,11 @@ claude mcp add --scope project labbook -- uvx agent-labbook mcp
 
 1. Run `notion_status`.
 2. Run `notion_auth_browser`, or `notion_start_headless_auth` if connecting through SSH or another headless environment.
-   For browser auth, prefer a long `timeout_seconds` such as `1800` so the agent keeps waiting while you finish Notion consent and resource selection.
+   For browser auth, pass a long `timeout_seconds` such as `1800` so the background localhost listener stays alive while you finish Notion consent and resource selection.
 3. Choose the Notion pages or data sources for this project.
-4. Run `notion_get_api_context`.
-5. Use the returned token, headers, and resource IDs with the official Notion API.
+4. Run `notion_status` again after the browser says the project is connected.
+5. Run `notion_get_api_context`.
+6. Use the returned token, headers, and resource IDs with the official Notion API.
 
 ## Hosted Backend
 

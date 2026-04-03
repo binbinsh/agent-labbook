@@ -13,6 +13,8 @@ PROJECT_STATE_DIRNAME = ".labbook"
 SESSION_FILENAME = "session.json"
 BINDINGS_FILENAME = "bindings.json"
 PENDING_AUTH_FILENAME = "pending-auth.json"
+PENDING_HANDOFF_FILENAME = "pending-handoff.json"
+LOCAL_HANDOFF_SERVER_FILENAME = "local-handoff-server.json"
 
 
 class LabbookError(RuntimeError):
@@ -57,6 +59,14 @@ def bindings_path(project_root: str | Path | None = None) -> Path:
 
 def pending_auth_path(project_root: str | Path | None = None) -> Path:
     return project_state_dir(project_root) / PENDING_AUTH_FILENAME
+
+
+def pending_handoff_path(project_root: str | Path | None = None) -> Path:
+    return project_state_dir(project_root) / PENDING_HANDOFF_FILENAME
+
+
+def local_handoff_server_path(project_root: str | Path | None = None) -> Path:
+    return project_state_dir(project_root) / LOCAL_HANDOFF_SERVER_FILENAME
 
 
 def _load_json(path: Path) -> dict | None:
@@ -114,8 +124,40 @@ def save_pending_auth(project_root: str | Path | None, payload: dict) -> Path:
     return _save_json(pending_auth_path(project_root), payload)
 
 
+def load_pending_handoff(project_root: str | Path | None = None) -> dict | None:
+    return _load_json(pending_handoff_path(project_root))
+
+
+def save_pending_handoff(project_root: str | Path | None, payload: dict) -> Path:
+    return _save_json(pending_handoff_path(project_root), payload)
+
+
+def load_local_handoff_server(project_root: str | Path | None = None) -> dict | None:
+    return _load_json(local_handoff_server_path(project_root))
+
+
+def save_local_handoff_server(project_root: str | Path | None, payload: dict) -> Path:
+    return _save_json(local_handoff_server_path(project_root), payload)
+
+
 def clear_pending_auth(project_root: str | Path | None = None) -> bool:
     path = pending_auth_path(project_root)
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def clear_pending_handoff(project_root: str | Path | None = None) -> bool:
+    path = pending_handoff_path(project_root)
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def clear_local_handoff_server(project_root: str | Path | None = None) -> bool:
+    path = local_handoff_server_path(project_root)
     if not path.exists():
         return False
     path.unlink()

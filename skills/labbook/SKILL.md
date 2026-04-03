@@ -20,7 +20,7 @@ It is not a note-taking or task-management wrapper.
 ## Default Workflow
 
 1. Call `notion_status` for the current project before assuming any Notion session or bindings exist.
-2. If the project is not authorized yet, call `notion_auth_browser`. If the browser cannot be opened locally, call `notion_start_headless_auth` and later `notion_complete_headless_auth`.
+2. If the project is not authorized yet, call `notion_auth_browser`. It starts a localhost handoff listener and the browser flow completes asynchronously, so call `notion_status` again after the browser says the project is connected. If the browser cannot be opened locally, call `notion_start_headless_auth` and later `notion_complete_headless_auth`.
 3. If the project still needs more bindings, call `notion_bind_resources`.
 4. Call `notion_get_api_context`.
 5. Use the official Notion REST API directly with the returned headers and resource IDs.
@@ -43,6 +43,7 @@ It is not a note-taking or task-management wrapper.
 
 1. `notion_status`
 2. `notion_auth_browser`
-3. `notion_bind_resources`
-4. `notion_get_api_context`
-5. direct Notion API read or write
+3. `notion_status`
+4. `notion_bind_resources`
+5. `notion_get_api_context`
+6. direct Notion API read or write

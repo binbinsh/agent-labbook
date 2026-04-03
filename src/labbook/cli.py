@@ -14,9 +14,11 @@ from .state import (
     DEFAULT_BACKEND_URL,
     bindings_path,
     effective_backend_url,
+    local_handoff_server_path,
     load_project_bindings,
     load_project_session,
     pending_auth_path,
+    pending_handoff_path,
     resolve_project_root,
     session_path,
 )
@@ -104,6 +106,10 @@ def _doctor_command(args: argparse.Namespace) -> int:
             "bindings_exists": load_project_bindings(project_root) is not None,
             "pending_auth_path": str(pending_path),
             "pending_auth_exists": pending_path.exists(),
+            "pending_handoff_path": str(pending_handoff_path(project_root)),
+            "pending_handoff_exists": pending_handoff_path(project_root).exists(),
+            "local_handoff_server_path": str(local_handoff_server_path(project_root)),
+            "local_handoff_server_exists": local_handoff_server_path(project_root).exists(),
         },
         "notion_status": status(project_root),
         "mcp": {
