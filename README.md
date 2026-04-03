@@ -17,20 +17,17 @@ Use Agent Labbook as a local MCP server for the current project.
 Requirements:
 
 - Python 3.10 or newer
-- network access the first time the server starts
+- `uv`
 - a Codex, Claude Code, or other MCP-capable client that can run a local MCP server
 
 Recommended setup:
 
-- keep the checked-in [`.mcp.json`](./.mcp.json) in the repo root for a shared project install
-- or add it explicitly from the project root:
-
 ```bash
-codex mcp add labbook -- python3 scripts/run_labbook.py mcp
-claude mcp add --scope project labbook -- python3 scripts/run_labbook.py mcp
+codex mcp add labbook -- uvx agent-labbook mcp
+claude mcp add --scope project labbook -- uvx agent-labbook mcp
 ```
 
-On first launch, `scripts/run_labbook.py` installs the required MCP runtime into `.labbook/runtime/` and then starts the server automatically.
+- or use the checked-in [`.mcp.json`](./.mcp.json) when the repository itself is the MCP source
 
 ## Typical Flow
 

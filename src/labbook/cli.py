@@ -4,6 +4,7 @@ import argparse
 import json
 import platform
 import sys
+from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any
 from urllib import error, request
 
@@ -23,6 +24,13 @@ from .state import (
 
 def _json_dump(payload: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _installed_mcp_sdk_version() -> str | None:
+    try:
+        return package_version("mcp")
+    except PackageNotFoundError:
+        return None
 
 
 def _probe_backend_health(backend_url: str) -> dict[str, Any]:
@@ -63,8 +71,8 @@ def _mcp_server_config(*, server_name: str) -> dict[str, Any]:
     return {
         "mcpServers": {
             server_name: {
-                "command": "python3",
-                "args": ["scripts/run_labbook.py", "mcp"],
+                "command": "uvx",
+                "args": ["agent-labbook", "mcp"],
             }
         }
     }
@@ -94,9 +102,9 @@ def _doctor_command(args: argparse.Namespace) -> int:
         },
         "notion_status": status(project_root),
         "mcp": {
-            "install_surface": "codex mcp add / claude mcp add / project .mcp.json",
-            "launcher": _mcp_server_config(server_name="labbook")["mcpServers"]["labbook"],
+            "install_surface": "uvx agent-labbook mcp",
             "sdk": "modelcontextprotocol/python-sdk",
+            "sdk_version": _installed_mcp_sdk_version(),
             "transport": "stdio",
             "wire_protocol": "content-length",
         },
@@ -108,7 +116,8 @@ def _doctor_command(args: argparse.Namespace) -> int:
 
 
 def _print_mcp_config_command(args: argparse.Namespace) -> int:
-    _json_dump(_mcp_server_config(server_name=args.server_name))
+    payload = _mcp_server_config(server_name=args.server_name)
+    _json_dump(payload)
     return 0
 
 
@@ -118,8 +127,8 @@ def _run_mcp_command() -> int:
     except ModuleNotFoundError as exc:
         if exc.name == "mcp":
             raise RuntimeError(
-                "The Agent Labbook MCP runtime is not installed in this Python environment. "
-                "Launch the server through scripts/run_labbook.py so it can bootstrap the official MCP SDK automatically."
+                "The Python 'mcp' package is not installed. "
+                "Use 'uvx agent-labbook mcp'."
             ) from exc
         raise
 
@@ -150,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     config_parser = subparsers.add_parser(
         "print-mcp-config",
-        help="Print a reusable project-level MCP config snippet.",
+        help="Print a reusable uvx-based MCP server config snippet.",
     )
     config_parser.add_argument(
         "--server-name",

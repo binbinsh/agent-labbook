@@ -104,9 +104,9 @@ Set this environment variable in the MCP server config:
 {
   "mcpServers": {
     "labbook": {
-      "command": "python3",
+      "command": "uvx",
       "args": [
-        "scripts/run_labbook.py",
+        "agent-labbook",
         "mcp"
       ],
       "env": {
@@ -119,12 +119,12 @@ Set this environment variable in the MCP server config:
 
 Then Agent Labbook will use your Worker instead of `https://labbook.superplanner.net`.
 
-Use this snippet in the repo's [`.mcp.json`](../.mcp.json) for a shared project setup, or pass the same command and environment through `codex mcp add` / `claude mcp add`.
+Use this snippet in your client's MCP config, or pass the same command and environment through `codex mcp add` / `claude mcp add`.
 
 You can verify the local setup with:
 
 ```bash
-python3 scripts/run_labbook.py doctor --probe-backend
+uvx agent-labbook doctor --probe-backend
 ```
 
 ## 8. Understand the chooser limits

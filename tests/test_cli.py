@@ -16,7 +16,7 @@ from labbook.cli import main
 
 
 class CliTests(unittest.TestCase):
-    def test_print_mcp_config_defaults_to_project_launcher(self) -> None:
+    def test_print_mcp_config_defaults_to_pypi_package(self) -> None:
         stdout = io.StringIO()
         with redirect_stdout(stdout):
             exit_code = main(["print-mcp-config", "--server-name", "labbook"])
@@ -28,8 +28,8 @@ class CliTests(unittest.TestCase):
             {
                 "mcpServers": {
                     "labbook": {
-                        "command": "python3",
-                        "args": ["scripts/run_labbook.py", "mcp"],
+                        "command": "uvx",
+                        "args": ["agent-labbook", "mcp"],
                     }
                 }
             },
