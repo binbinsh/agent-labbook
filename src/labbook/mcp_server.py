@@ -11,6 +11,7 @@ from mcp.server.stdio import stdio_server
 
 from . import __version__
 from .service import (
+    DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
     DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
     auth_browser,
     bind_resources,
@@ -67,7 +68,8 @@ def _tool_definitions() -> list[types.Tool]:
             description=(
                 "Open the official Notion public-integration consent flow in a browser and wait for the selected "
                 f"bindings to be saved into this project. Browser auth can take several minutes; the default wait is "
-                f"{DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS} seconds."
+                f"{DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS} seconds, and the default page_limit is "
+                f"{DEFAULT_BROWSER_AUTH_PAGE_LIMIT}."
             ),
             inputSchema={
                 "type": "object",
@@ -167,11 +169,11 @@ def _handlers() -> dict[str, ToolHandler]:
             project_root=args.get("project_root"),
             timeout_seconds=args.get("timeout_seconds"),
             open_browser=bool(args.get("open_browser", True)),
-            page_limit=int(args.get("page_limit") or 5000),
+            page_limit=args.get("page_limit"),
         ),
         "notion_start_headless_auth": lambda args: start_headless_auth(
             project_root=args.get("project_root"),
-            page_limit=int(args.get("page_limit") or 5000),
+            page_limit=args.get("page_limit"),
         ),
         "notion_complete_headless_auth": lambda args: complete_headless_auth(
             project_root=args.get("project_root"),

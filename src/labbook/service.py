@@ -43,6 +43,8 @@ LOCAL_CALLBACK_PATH = "/oauth/handoff"
 CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
 DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS = 1800
 MIN_BROWSER_AUTH_TIMEOUT_SECONDS = 30
+DEFAULT_BROWSER_AUTH_PAGE_LIMIT = 5000
+MIN_BROWSER_AUTH_PAGE_LIMIT = 500
 
 
 def _utc_now() -> str:
@@ -61,6 +63,18 @@ def normalize_browser_auth_timeout_seconds(timeout_seconds: int | str | None = N
             f"timeout_seconds must be at least {MIN_BROWSER_AUTH_TIMEOUT_SECONDS} seconds."
         )
     return timeout
+
+
+def normalize_browser_auth_page_limit(page_limit: int | str | None = None) -> int:
+    if page_limit in (None, ""):
+        return DEFAULT_BROWSER_AUTH_PAGE_LIMIT
+    try:
+        limit = int(page_limit)
+    except (TypeError, ValueError) as exc:
+        raise LabbookError("page_limit must be an integer number of resources.") from exc
+    if limit < MIN_BROWSER_AUTH_PAGE_LIMIT:
+        return MIN_BROWSER_AUTH_PAGE_LIMIT
+    return min(limit, DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
 
 
 def _rich_text_to_plain_text(items: Any) -> str | None:
@@ -212,6 +226,7 @@ def _build_setup_guide() -> str:
             "For MCP users:",
             "1. Call `notion_auth_browser` for a direct browser flow, or `notion_start_headless_auth` if the browser cannot be opened locally.",
             f"   For browser auth, prefer a long wait and pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` because users may need several minutes to finish consent and resource selection.",
+            f"   Keep `page_limit` reasonably high too. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped because very small catalogs tend to show only root pages.",
             "2. Complete the official Notion public integration consent page.",
             "3. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",
             "4. Call `notion_get_api_context` and use the official Notion API directly with the returned access token.",
@@ -576,9 +591,14 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "redirect_uri": backend_redirect_uri(backend_url),
         "auth_modes": ["local_browser", "headless"],
         "recommended_browser_auth_timeout_seconds": DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
+        "recommended_browser_auth_page_limit": DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
         "browser_auth_hint": (
             "When using notion_auth_browser, prefer a long timeout_seconds value and keep waiting for the browser handoff "
             f"to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+        ),
+        "browser_auth_page_limit_hint": (
+            f"Keep page_limit reasonably high. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped because very small "
+            "catalogs tend to show only root pages."
         ),
         "authenticated": authenticated,
         "refresh_supported": bool(str(session_payload.get("refresh_token") or "").strip()),
@@ -603,12 +623,13 @@ def auth_browser(
     project_root: str | Path | None = None,
     timeout_seconds: int | str | None = DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
     open_browser: bool = True,
-    page_limit: int = 5000,
+    page_limit: int | str | None = DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()
     session_id = uuid4().hex
     wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
+    normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
 
     handoff_server = _LocalHandoffServer(expected_session_id=session_id)
     handoff_server.start()
@@ -618,7 +639,7 @@ def auth_browser(
         session_id=session_id,
         mode="local_browser",
         return_to=handoff_server.return_to_url,
-        page_limit=page_limit,
+        page_limit=normalized_page_limit,
     )
     save_pending_auth(
         root,
@@ -630,6 +651,7 @@ def auth_browser(
             auth_url=auth_url,
             return_to=handoff_server.return_to_url,
             timeout_seconds=wait_timeout_seconds,
+            page_limit=normalized_page_limit,
         ),
     )
 
@@ -645,6 +667,7 @@ def auth_browser(
         result["auth_url"] = auth_url
         result["browser_opened"] = bool(opened)
         result["timeout_seconds"] = wait_timeout_seconds
+        result["page_limit"] = normalized_page_limit
         return result
     except Exception:
         clear_pending_auth(root)
@@ -656,17 +679,18 @@ def auth_browser(
 def start_headless_auth(
     *,
     project_root: str | Path | None = None,
-    page_limit: int = 5000,
+    page_limit: int | str | None = DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()
     session_id = uuid4().hex
+    normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
     auth_url = _oauth_start_url(
         backend_url=backend_url,
         project_root=root,
         session_id=session_id,
         mode="headless",
-        page_limit=page_limit,
+        page_limit=normalized_page_limit,
     )
     save_pending_auth(
         root,
@@ -677,6 +701,7 @@ def start_headless_auth(
             session_id=session_id,
             auth_url=auth_url,
             return_to=None,
+            page_limit=normalized_page_limit,
         ),
     )
     return {
@@ -684,6 +709,7 @@ def start_headless_auth(
         "backend_url": backend_url,
         "auth_url": auth_url,
         "session_id": session_id,
+        "page_limit": normalized_page_limit,
         "instructions": (
             "Open auth_url in any browser, finish the Notion consent screen, choose project bindings on the "
             "Labbook page, then paste the resulting handoff bundle into notion_complete_headless_auth."

@@ -2,6 +2,7 @@ import { SELECTION_UI_CSS, SELECTION_UI_JS } from "../generated/selection_ui_bun
 
 const DEFAULT_NOTION_VERSION = "2026-03-11";
 const DEFAULT_PAGE_LIMIT = 5000;
+const MIN_PAGE_LIMIT = 500;
 const MAX_PAGE_LIMIT = 5000;
 const STATE_TTL_SECONDS = 900;
 const SELECTION_TOKEN_TTL_SECONDS = 3600;
@@ -210,7 +211,7 @@ function validateLocalReturnUrl(value) {
 }
 
 function normalizePageLimit(value) {
-  return clampInteger(value, DEFAULT_PAGE_LIMIT, 1, MAX_PAGE_LIMIT);
+  return clampInteger(value, DEFAULT_PAGE_LIMIT, MIN_PAGE_LIMIT, MAX_PAGE_LIMIT);
 }
 
 function richTextToPlainText(items) {

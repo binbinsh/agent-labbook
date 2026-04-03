@@ -10,7 +10,13 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from labbook.service import DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS, status
+from labbook.service import (
+    DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
+    DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
+    MIN_BROWSER_AUTH_PAGE_LIMIT,
+    normalize_browser_auth_page_limit,
+    status,
+)
 
 
 class ServiceTests(unittest.TestCase):
@@ -24,6 +30,10 @@ class ServiceTests(unittest.TestCase):
             DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         )
         self.assertIn("timeout_seconds", payload["browser_auth_hint"])
+
+    def test_page_limit_is_clamped_to_minimum(self) -> None:
+        self.assertEqual(normalize_browser_auth_page_limit(None), DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
+        self.assertEqual(normalize_browser_auth_page_limit(50), MIN_BROWSER_AUTH_PAGE_LIMIT)
 
 
 if __name__ == "__main__":
