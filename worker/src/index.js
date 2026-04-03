@@ -662,6 +662,64 @@ async function retrievePageResource(env, accessToken, pageId, fallbackTitle, dis
   }
 }
 
+async function retrieveDataSourceResourcesForDatabase(
+  env,
+  accessToken,
+  databaseId,
+  discoveryMeta = {},
+) {
+  try {
+    const databasePayload = await notionJson(env, `/databases/${databaseId}`, {
+      method: "GET",
+      headers: notionBearerHeaders(env, accessToken),
+    });
+    const dataSources = Array.isArray(databasePayload?.data_sources) ? databasePayload.data_sources : [];
+    const resources = [];
+
+    for (const item of dataSources) {
+      const dataSourceId = normalizeNotionIdLike(item?.id);
+      if (!dataSourceId) {
+        continue;
+      }
+      try {
+        const payload = await notionJson(env, `/data_sources/${dataSourceId}`, {
+          method: "GET",
+          headers: notionBearerHeaders(env, accessToken),
+        });
+        resources.push(
+          normalizeResource(payload, {
+            resource_type: "data_source",
+            title: resourceTitle(payload) || String(item?.name || "").trim() || undefined,
+            ...discoveryMeta,
+          }),
+        );
+      } catch {
+        resources.push(
+          normalizeResource(
+            {
+              id: dataSourceId,
+              object: "data_source",
+              parent: {
+                type: "page_id",
+                page_id: discoveryMeta.discovered_parent_id || discoveryMeta.parent_id || null,
+              },
+            },
+            {
+              resource_type: "data_source",
+              title: String(item?.name || "").trim() || `Data source ${dataSourceId.slice(0, 8)}`,
+              ...discoveryMeta,
+            },
+          ),
+        );
+      }
+    }
+
+    return resources;
+  } catch {
+    return [];
+  }
+}
+
 async function tryRetrieveResource(env, accessToken, resourceId, resourceType) {
   if (resourceType === "page") {
     const payload = await notionJson(env, `/pages/${resourceId}`, {
@@ -792,6 +850,37 @@ async function discoverChildPages(env, accessToken, pageIds, options = {}) {
           continue;
         }
 
+        if (blockType === "child_database" && blockId) {
+          const dataSourceResources = await retrieveDataSourceResourcesForDatabase(
+            env,
+            accessToken,
+            blockId,
+            {
+              discovered_parent_id: current.page_id,
+              discovered_root_id: current.root_id,
+              discovered_depth: current.depth + 1,
+              parent_type: "page_id",
+              parent_id: current.page_id,
+            },
+          );
+
+          for (const dataSourceResource of dataSourceResources) {
+            if (!dataSourceResource.resource_id || discovered.has(dataSourceResource.resource_id)) {
+              continue;
+            }
+            discovered.set(dataSourceResource.resource_id, dataSourceResource);
+
+            if (discovered.size >= nodeLimit) {
+              truncated = true;
+              break;
+            }
+          }
+          if (truncated) {
+            break;
+          }
+          continue;
+        }
+
         if (block?.has_children && blockType !== "child_page" && blockId) {
           containerQueue.push(blockId);
         }
@@ -885,9 +974,27 @@ async function buildSelectionCatalog(env, accessToken, pageLimit) {
     });
   }
 
+  const mergedWithPageDiscovery = mergeResources(mergedSeedResources, pageDiscovery.resources);
+  const allDataSourceIds = mergedWithPageDiscovery
+    .filter((resource) => normalizeResourceType(resource.resource_type) === "data_source")
+    .map((resource) => resource.resource_id)
+    .filter(Boolean);
+
+  let nestedDataSourceDiscovery = { truncated: false, resources: [] };
+  if (allDataSourceIds.length) {
+    nestedDataSourceDiscovery = await discoverDataSourceContents(env, accessToken, allDataSourceIds, {
+      node_limit: pageLimit,
+    });
+  }
+
   return {
-    truncated: Boolean(searchPayload.truncated || dataSourceDiscovery.truncated || pageDiscovery.truncated),
-    resources: mergeResources(mergedSeedResources, pageDiscovery.resources),
+    truncated: Boolean(
+      searchPayload.truncated ||
+        dataSourceDiscovery.truncated ||
+        pageDiscovery.truncated ||
+        nestedDataSourceDiscovery.truncated
+    ),
+    resources: mergeResources(mergedWithPageDiscovery, nestedDataSourceDiscovery.resources),
   };
 }
 
