@@ -6,11 +6,10 @@ const MAX_PAGE_LIMIT = 500;
 const STATE_TTL_SECONDS = 900;
 const SELECTION_TOKEN_TTL_SECONDS = 3600;
 const HANDOFF_BUNDLE_TTL_SECONDS = 3600;
-const DEFAULT_DISCOVERY_DEPTH = 4;
-const MAX_DISCOVERY_DEPTH = 6;
 const DEFAULT_DISCOVERY_NODE_LIMIT = 200;
 const MAX_DISCOVERY_NODE_LIMIT = 400;
 const MAX_BLOCK_SCAN_LIMIT = 2000;
+const MAX_DISCOVERY_DEPTH_LIMIT = 128;
 const NOTION_OAUTH_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_API_BASE = "https://api.notion.com/v1";
 
@@ -165,7 +164,18 @@ function richTextToPlainText(items) {
 
 function normalizeNotionIdLike(value) {
   const raw = String(value || "").trim();
-  const collapsed = raw.replaceAll("-", "").toLowerCase();
+  let candidateSource = raw;
+  try {
+    const parsedUrl = new URL(raw);
+    if (parsedUrl.pathname) {
+      candidateSource = parsedUrl.pathname;
+    }
+  } catch {}
+  const matches = candidateSource.match(
+    /[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,
+  );
+  const candidate = matches?.length ? matches[matches.length - 1] : raw;
+  const collapsed = String(candidate || "").replaceAll("-", "").toLowerCase();
   if (/^[0-9a-f]{32}$/.test(collapsed)) {
     return [
       collapsed.slice(0, 8),
@@ -344,6 +354,14 @@ function notionBearerHeaders(env, accessToken) {
   };
 }
 
+function normalizeDepthLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return null;
+  }
+  return Math.min(parsed, MAX_DISCOVERY_DEPTH_LIMIT);
+}
+
 async function exchangeCode(env, redirectUri, code) {
   const body = JSON.stringify({
     grant_type: "authorization_code",
@@ -492,8 +510,61 @@ async function retrievePageResource(env, accessToken, pageId, fallbackTitle, dis
   }
 }
 
+async function tryRetrieveResource(env, accessToken, resourceId, resourceType) {
+  if (resourceType === "page") {
+    const payload = await notionJson(env, `/pages/${resourceId}`, {
+      method: "GET",
+      headers: notionBearerHeaders(env, accessToken),
+    });
+    return normalizeResource(payload, {
+      resource_type: "page",
+    });
+  }
+
+  if (resourceType === "data_source") {
+    const payload = await notionJson(env, `/data_sources/${resourceId}`, {
+      method: "GET",
+      headers: notionBearerHeaders(env, accessToken),
+    });
+    return normalizeResource(payload, {
+      resource_type: "data_source",
+    });
+  }
+
+  throw new Error(`Unsupported resource type: ${resourceType}`);
+}
+
+async function resolveResourceReference(env, accessToken, resourceRef, resourceType = null) {
+  const resourceId = normalizeNotionIdLike(resourceRef);
+  if (!resourceId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resourceId)) {
+    throw new Error("Could not find a valid Notion page or data source ID in that input.");
+  }
+
+  const preferredType = normalizeResourceType(resourceType);
+  const candidateTypes =
+    preferredType && preferredType !== "unknown"
+      ? [preferredType]
+      : ["page", "data_source"];
+
+  let lastError = null;
+  for (const candidateType of candidateTypes) {
+    try {
+      return await tryRetrieveResource(env, accessToken, resourceId, candidateType);
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || error || "");
+      if (/Notion API (400|404)/.test(message)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError || new Error("Could not retrieve that Notion resource.");
+}
+
 async function discoverChildPages(env, accessToken, pageIds, options = {}) {
-  const depthLimit = clampInteger(options.depth_limit, DEFAULT_DISCOVERY_DEPTH, 1, MAX_DISCOVERY_DEPTH);
+  const depthLimit = normalizeDepthLimit(options.depth_limit);
   const nodeLimit = clampInteger(options.node_limit, DEFAULT_DISCOVERY_NODE_LIMIT, 1, MAX_DISCOVERY_NODE_LIMIT);
 
   const discovered = new Map();
@@ -559,7 +630,7 @@ async function discoverChildPages(env, accessToken, pageIds, options = {}) {
             truncated = true;
             break;
           }
-          if (current.depth + 1 < depthLimit) {
+          if (depthLimit === null || current.depth + 1 < depthLimit) {
             queue.push({
               page_id: blockId,
               depth: current.depth + 1,
@@ -1291,6 +1362,34 @@ async function handleCatalog(request, env) {
   }
 }
 
+async function handleResolveResource(request, env) {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
+  }
+
+  try {
+    const payload = await request.json();
+    const accessToken = String(payload?.access_token || "").trim();
+    const resourceRef = String(payload?.resource_id_or_url || payload?.resource_id || payload?.resource_url || "").trim();
+    const resourceType = String(payload?.resource_type || "").trim();
+
+    if (!accessToken) {
+      return jsonResponse({ ok: false, error: "access_token is required." }, { status: 400 });
+    }
+    if (!resourceRef) {
+      return jsonResponse({ ok: false, error: "resource_id_or_url is required." }, { status: 400 });
+    }
+
+    const resource = await resolveResourceReference(env, accessToken, resourceRef, resourceType);
+    return jsonResponse({
+      ok: true,
+      resource,
+    });
+  } catch (exc) {
+    return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
+  }
+}
+
 async function handleFinalizeSelection(request, env) {
   if (request.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
@@ -1433,6 +1532,9 @@ export default {
     }
     if (url.pathname === "/api/catalog") {
       return handleCatalog(request, env);
+    }
+    if (url.pathname === "/api/resolve-resource") {
+      return handleResolveResource(request, env);
     }
     if (url.pathname === "/api/finalize-selection") {
       return handleFinalizeSelection(request, env);

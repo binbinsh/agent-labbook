@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   Database,
   FileText,
+  Link2,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -72,7 +73,20 @@ declare global {
 
 function normalizeNotionIdLike(value: string | null | undefined) {
   const raw = String(value || "").trim();
-  const collapsed = raw.replace(/-/g, "").toLowerCase();
+  let candidateSource = raw;
+  try {
+    const parsedUrl = new URL(raw);
+    if (parsedUrl.pathname) {
+      candidateSource = parsedUrl.pathname;
+    }
+  } catch {}
+  const matches = candidateSource.match(
+    /[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,
+  );
+  const candidate = matches?.length ? matches[matches.length - 1] : raw;
+  const collapsed = String(candidate || "")
+    .replace(/-/g, "")
+    .toLowerCase();
   if (/^[0-9a-f]{32}$/.test(collapsed)) {
     return [
       collapsed.slice(0, 8),
@@ -190,6 +204,20 @@ function copyMap<T>(entries?: Iterable<[string, T]>) {
   return new Map(entries ? Array.from(entries) : []);
 }
 
+function buildDescendantIndex(items: Resource[], rootId: string) {
+  const index = new Map<string, Resource[]>();
+  for (const item of items) {
+    const parentId = normalizeNotionIdLike(item.discovered_parent_id || item.parent_id) || rootId;
+    const next = index.get(parentId) || [];
+    next.push(item);
+    index.set(parentId, next);
+  }
+  for (const [key, value] of index.entries()) {
+    index.set(key, [...value].sort(compareResources));
+  }
+  return index;
+}
+
 function resourceIcon(resource: Resource) {
   if (resource.icon_emoji) {
     return <span className="text-[13px] leading-none">{resource.icon_emoji}</span>;
@@ -202,17 +230,22 @@ function resourceIcon(resource: Resource) {
 
 function ResourceRow({
   resource,
-  selected,
+  selectedState,
   loading,
   includedCount,
+  depth = 0,
+  disabled = false,
   onToggle,
 }: {
   resource: Resource;
-  selected: boolean;
+  selectedState: "none" | "explicit" | "descendant";
   loading: boolean;
   includedCount: number;
-  onToggle: (resource: Resource, checked: boolean) => Promise<void> | void;
+  depth?: number;
+  disabled?: boolean;
+  onToggle?: (resource: Resource, checked: boolean) => Promise<void> | void;
 }) {
+  const selected = selectedState !== "none";
   const edited = formatDate(resource.last_edited_time);
   const details = [
     resource.title || "Untitled",
@@ -227,13 +260,22 @@ function ResourceRow({
     <label
       className={cn(
         "flex min-h-9 items-center gap-2 rounded-lg px-2 py-1.5 transition",
-        selected ? "bg-stone-100" : "hover:bg-stone-50",
+        selectedState === "explicit"
+          ? "bg-stone-100"
+          : selectedState === "descendant"
+            ? "bg-stone-50"
+            : "hover:bg-stone-50",
       )}
+      style={{ paddingLeft: `${8 + depth * 18}px` }}
       title={details}
     >
       <Checkbox
         checked={selected}
+        disabled={disabled}
         onCheckedChange={(nextChecked) => {
+          if (!onToggle || disabled) {
+            return;
+          }
           void onToggle(resource, nextChecked === true);
         }}
       />
@@ -246,14 +288,19 @@ function ResourceRow({
           <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px] text-stone-500">
             {resource.resource_type === "data_source" ? "Data source" : "Page"}
           </Badge>
-          {selected ? (
+          {selectedState === "explicit" ? (
             <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
               Selected
             </Badge>
           ) : null}
+          {selectedState === "descendant" ? (
+            <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
+              Included
+            </Badge>
+          ) : null}
           {includedCount > 0 ? (
             <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              +{includedCount} child pages
+              +{includedCount} nested pages
             </Badge>
           ) : null}
         </div>
@@ -264,16 +311,19 @@ function ResourceRow({
   );
 }
 
-function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources }: SelectionConfig) {
+function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources, truncated }: SelectionConfig) {
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
+  const [catalogTruncated, setCatalogTruncated] = useState(Boolean(truncated));
   const rootIndex = new Map(catalog.map((resource) => [resource.resource_id, resource]));
 
   const [selectedRootIds, setSelectedRootIds] = useState<Set<string>>(new Set());
   const [discoveredByRoot, setDiscoveredByRoot] = useState<Map<string, Resource[]>>(new Map());
   const [loadingRootIds, setLoadingRootIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  const [manualResourceRef, setManualResourceRef] = useState("");
   const [handoffBundle, setHandoffBundle] = useState("");
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
+  const [resolvingManualResource, setResolvingManualResource] = useState(false);
   const [bundleStatus, setBundleStatus] = useState<"idle" | "ready" | "copied">("idle");
   const outputRef = useRef<HTMLDivElement | null>(null);
 
@@ -283,12 +333,11 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources 
     return rootIndex.get(normalizeNotionIdLike(resourceId));
   }
 
-  async function ensureChildrenForRoot(rootId: string) {
+  async function ensureChildrenForRoot(rootId: string, resourceType: string = "page") {
     const normalizedId = normalizeNotionIdLike(rootId);
-    const rootResource = getRootResource(normalizedId);
     if (
-      !rootResource ||
-      rootResource.resource_type !== "page" ||
+      !normalizedId ||
+      normalizeResourceType(resourceType) !== "page" ||
       discoveredByRoot.has(normalizedId) ||
       loadingRootIds.has(normalizedId)
     ) {
@@ -360,7 +409,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources 
     });
 
     if (resource.resource_type === "page") {
-      await ensureChildrenForRoot(resourceId);
+      await ensureChildrenForRoot(resourceId, resource.resource_type);
     }
   }
 
@@ -419,8 +468,24 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources 
   const projectLabel = state.project_name || "this project";
   const title = `Choose Pages and Data Sources in ${workspaceLabel} for Project ${projectLabel}`;
 
+  const descendantIndices = new Map<string, Map<string, Resource[]>>();
+  const hiddenTopLevelDescendantIds = new Set<string>();
+  for (const [rootId, descendants] of discoveredByRoot.entries()) {
+    descendantIndices.set(rootId, buildDescendantIndex(descendants, rootId));
+    if (selectedRootIds.has(rootId)) {
+      for (const child of descendants) {
+        if (!selectedRootIds.has(child.resource_id)) {
+          hiddenTopLevelDescendantIds.add(child.resource_id);
+        }
+      }
+    }
+  }
+
   const visibleResources = [...catalog]
     .filter((resource) => {
+      if (hiddenTopLevelDescendantIds.has(resource.resource_id) && !selectedRootIds.has(resource.resource_id)) {
+        return false;
+      }
       if (selectedRootIds.has(resource.resource_id)) {
         return true;
       }
@@ -463,10 +528,56 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources 
           ...selectedResources,
         ]),
       );
+      setCatalogTruncated(Boolean(payload.truncated));
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally {
       setRefreshingCatalog(false);
+    }
+  }
+
+  async function addResourceByReference() {
+    const resourceRef = manualResourceRef.trim();
+    if (!resourceRef) {
+      return;
+    }
+    setResolvingManualResource(true);
+    try {
+      const response = await fetch(`${baseUrl}/api/resolve-resource`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          access_token: tokenPayload.access_token,
+          resource_id_or_url: resourceRef,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+
+      const resolved = dedupeSortResources(payload.resource ? [payload.resource] : [])[0];
+      if (!resolved) {
+        throw new Error("Worker did not return a Notion resource.");
+      }
+
+      setCatalog((current) => dedupeSortResources([...current, resolved]));
+      setSelectedRootIds((current) => {
+        const next = copySet(current);
+        next.add(resolved.resource_id);
+        return next;
+      });
+      setManualResourceRef("");
+
+      if (resolved.resource_type === "page") {
+        await ensureChildrenForRoot(resolved.resource_id, resolved.resource_type);
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setResolvingManualResource(false);
     }
   }
 
@@ -540,11 +651,33 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources 
     setBundleStatus("copied");
   }
 
+  function renderDescendants(rootId: string, parentId: string, depth: number) {
+    const descendantIndex = descendantIndices.get(rootId);
+    const children = descendantIndex?.get(parentId) || [];
+    return children.flatMap((child) => {
+      if (selectedRootIds.has(child.resource_id)) {
+        return [];
+      }
+      return [
+        <ResourceRow
+          key={`${rootId}:${child.resource_id}`}
+          resource={child}
+          selectedState="descendant"
+          loading={false}
+          includedCount={0}
+          depth={depth}
+          disabled
+        />,
+        ...renderDescendants(rootId, child.resource_id, depth + 1),
+      ];
+    });
+  }
+
   return (
     <div className="mx-auto min-h-screen w-full max-w-3xl px-3 py-6 sm:px-5 sm:py-8">
       <div className="space-y-4 pb-28">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-stone-950 sm:text-[30px]">
+          <h1 className="max-w-2xl text-xl font-semibold tracking-tight text-stone-950 sm:text-2xl">
             {title}
           </h1>
         </div>
@@ -579,19 +712,54 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources 
                 placeholder="Search pages, data sources, or resource IDs"
               />
             </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
+              Notion&apos;s chooser is based on search results. Newly shared pages and data sources can take a while to appear.
+              Click <strong>Refresh</strong> after sharing, or paste a Notion page or data source URL below to add it directly.
+            </div>
+            {catalogTruncated ? (
+              <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
+                The current list is truncated to the first {pageLimit} search results from Notion. If something is missing,
+                add it directly by URL or ID.
+              </div>
+            ) : null}
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative flex-1">
+                <Link2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
+                <Input
+                  value={manualResourceRef}
+                  onChange={(event) => {
+                    setManualResourceRef(event.target.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void addResourceByReference();
+                    }
+                  }}
+                  className="pl-9"
+                  placeholder="Paste a Notion page or data source URL or ID"
+                />
+              </div>
+              <Button variant="secondary" onClick={() => void addResourceByReference()} disabled={!manualResourceRef.trim() || resolvingManualResource}>
+                {resolvingManualResource ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+                Add by URL
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {visibleResources.length ? (
               <div className="space-y-2">
                 {visibleResources.map((resource) => (
-                  <ResourceRow
-                    key={resource.resource_id}
-                    resource={resource}
-                    selected={selectedRootIds.has(resource.resource_id)}
-                    loading={loadingRootIds.has(resource.resource_id)}
-                    includedCount={(discoveredByRoot.get(resource.resource_id) || []).length}
-                    onToggle={toggleResourceSelection}
-                  />
+                  <div key={resource.resource_id} className="space-y-1">
+                    <ResourceRow
+                      resource={resource}
+                      selectedState={selectedRootIds.has(resource.resource_id) ? "explicit" : "none"}
+                      loading={loadingRootIds.has(resource.resource_id)}
+                      includedCount={(discoveredByRoot.get(resource.resource_id) || []).length}
+                      onToggle={toggleResourceSelection}
+                    />
+                    {selectedRootIds.has(resource.resource_id) ? renderDescendants(resource.resource_id, resource.resource_id, 1) : null}
+                  </div>
                 ))}
               </div>
             ) : (
