@@ -460,7 +460,6 @@ async function fetchSelectableResources(env, accessToken, pageLimit, options = {
   const resources = [];
   const seenIds = new Set();
   let nextCursor = null;
-  let truncated = false;
   const query = String(options.query || "").trim();
 
   while (resources.length < pageLimit) {
@@ -504,23 +503,18 @@ async function fetchSelectableResources(env, accessToken, pageLimit, options = {
       break;
     }
     if (resources.length >= pageLimit) {
-      truncated = true;
       break;
     }
     nextCursor = payload.next_cursor;
   }
 
-  return {
-    truncated,
-    resources,
-  };
+  return resources;
 }
 
 async function queryDataSourceEntries(env, accessToken, dataSourceId, remainingLimit, discoveryMeta = {}) {
   const resources = [];
   const seenIds = new Set();
   let nextCursor = null;
-  let truncated = false;
 
   while (resources.length < remainingLimit) {
     const body = {
@@ -564,16 +558,12 @@ async function queryDataSourceEntries(env, accessToken, dataSourceId, remainingL
       break;
     }
     if (resources.length >= remainingLimit) {
-      truncated = true;
       break;
     }
     nextCursor = payload.next_cursor;
   }
 
-  return {
-    truncated,
-    resources,
-  };
+  return resources;
 }
 
 function mergeResources(...resourceLists) {
@@ -796,10 +786,7 @@ async function discoverPageImmediateChildren(env, accessToken, pageId, options =
     }
   }
 
-  return {
-    truncated: scanState.truncated,
-    resources,
-  };
+  return resources;
 }
 
 async function discoverDataSourceImmediateChildren(env, accessToken, dataSourceId, options = {}) {
@@ -828,7 +815,6 @@ async function searchSelectableResources(env, accessToken, query, limit) {
 async function discoverImmediateChildren(env, accessToken, pageIds, dataSourceIds, options = {}) {
   const nodeLimit = clampInteger(options.node_limit, DEFAULT_DISCOVERY_NODE_LIMIT, 1, MAX_DISCOVERY_NODE_LIMIT);
   const resources = [];
-  let truncated = false;
   const scanState = {
     scannedBlockCount: 0,
     truncated: false,
@@ -836,8 +822,7 @@ async function discoverImmediateChildren(env, accessToken, pageIds, dataSourceId
   const remainingCapacity = () => Math.max(1, nodeLimit - resources.length);
 
   for (const pageId of pageIds) {
-    if (resources.length >= nodeLimit || truncated) {
-      truncated = true;
+    if (resources.length >= nodeLimit) {
       break;
     }
     const payload = await discoverPageImmediateChildren(env, accessToken, pageId, {
@@ -846,13 +831,14 @@ async function discoverImmediateChildren(env, accessToken, pageIds, dataSourceId
       remaining_limit: remainingCapacity(),
       scan_state: scanState,
     });
-    resources.push(...payload.resources);
-    truncated = truncated || payload.truncated;
+    resources.push(...payload);
+    if (scanState.truncated) {
+      break;
+    }
   }
 
   for (const dataSourceId of dataSourceIds) {
-    if (resources.length >= nodeLimit || truncated) {
-      truncated = true;
+    if (resources.length >= nodeLimit || scanState.truncated) {
       break;
     }
     const payload = await discoverDataSourceImmediateChildren(env, accessToken, dataSourceId, {
@@ -860,14 +846,10 @@ async function discoverImmediateChildren(env, accessToken, pageIds, dataSourceId
       depth: 0,
       remaining_limit: remainingCapacity(),
     });
-    resources.push(...payload.resources);
-    truncated = truncated || payload.truncated;
+    resources.push(...payload);
   }
 
-  return {
-    truncated,
-    resources: mergeResources(resources),
-  };
+  return mergeResources(resources);
 }
 
 function pageShell({ title, body }) {
@@ -1367,14 +1349,13 @@ function errorPage(title, message) {
   });
 }
 
-function selectionPage({ baseUrl, state, selectionToken, workspaceName, resources, truncated, catalogLoaded }) {
+function selectionPage({ baseUrl, state, selectionToken, workspaceName, resources, catalogLoaded }) {
   const bootstrap = {
     baseUrl,
     state,
     selectionToken,
     workspaceName,
     resources,
-    truncated: Boolean(truncated),
     catalogLoaded: Boolean(catalogLoaded),
   };
 
@@ -1505,7 +1486,6 @@ async function handleCallback(request, env) {
 
     let initialCatalog = {
       resources: [],
-      truncated: false,
       catalogLoaded: false,
     };
     try {
@@ -1516,8 +1496,7 @@ async function handleCallback(request, env) {
         pageLimit,
       );
       initialCatalog = {
-        resources: preloadedCatalog.resources,
-        truncated: preloadedCatalog.truncated,
+        resources: preloadedCatalog,
         catalogLoaded: true,
       };
     } catch (preloadError) {
@@ -1531,7 +1510,6 @@ async function handleCallback(request, env) {
         selectionToken,
         workspaceName: sanitizedTokenPayload.workspace_name || null,
         resources: initialCatalog.resources,
-        truncated: initialCatalog.truncated,
         catalogLoaded: initialCatalog.catalogLoaded,
       }),
     );
@@ -1571,7 +1549,7 @@ async function handleDiscoverChildren(request, env) {
     );
 
     if (!pageIds.length && !dataSourceIds.length) {
-      return jsonResponse({ ok: true, truncated: false, resources: [] });
+      return jsonResponse({ ok: true, resources: [] });
     }
 
     const nodeLimit = clampInteger(
@@ -1592,8 +1570,7 @@ async function handleDiscoverChildren(request, env) {
 
     return jsonResponse({
       ok: true,
-      truncated: children.truncated,
-      resources: children.resources,
+      resources: children,
     });
   } catch (exc) {
     return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
@@ -1618,8 +1595,7 @@ async function handleCatalog(request, env) {
     const searchPayload = await buildSelectionCatalog(env, accessToken, pageLimit);
     return jsonResponse({
       ok: true,
-      truncated: searchPayload.truncated,
-      resources: searchPayload.resources,
+      resources: searchPayload,
     });
   } catch (exc) {
     return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
@@ -1639,7 +1615,7 @@ async function handleSearch(request, env) {
     }
     const query = String(payload?.query || "").trim();
     if (!query) {
-      return jsonResponse({ ok: true, truncated: false, resources: [] });
+      return jsonResponse({ ok: true, resources: [] });
     }
 
     const selectionSession = await resolveSelectionSession(env, selectionToken);
@@ -1648,8 +1624,7 @@ async function handleSearch(request, env) {
     const searchPayload = await searchSelectableResources(env, accessToken, query, limit);
     return jsonResponse({
       ok: true,
-      truncated: searchPayload.truncated,
-      resources: searchPayload.resources,
+      resources: searchPayload,
     });
   } catch (exc) {
     return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });

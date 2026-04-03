@@ -52,7 +52,6 @@ type SelectionConfig = {
   selectionToken: string;
   workspaceName: string | null;
   resources: Resource[];
-  truncated: boolean;
   catalogLoaded: boolean;
 };
 
@@ -344,7 +343,6 @@ function SelectionApp({
   selectionToken,
   workspaceName,
   resources,
-  truncated,
   catalogLoaded: initialCatalogLoaded,
 }: SelectionConfig) {
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
@@ -361,7 +359,6 @@ function SelectionApp({
   const [remoteSearchIds, setRemoteSearchIds] = useState<Set<string>>(new Set());
   const [catalogLoaded, setCatalogLoaded] = useState(Boolean(initialCatalogLoaded));
   const [localDeliveryStatus, setLocalDeliveryStatus] = useState<"idle" | "delivered" | "fallback">("idle");
-  const [bundleStatus, setBundleStatus] = useState<"idle" | "ready" | "copied">("idle");
   const outputRef = useRef<HTMLDivElement | null>(null);
 
   const deferredQuery = useDeferredValue(inputValue.trim().toLowerCase());
@@ -791,13 +788,6 @@ function SelectionApp({
       setLocalDeliveryStatus("fallback");
     }
     setHandoffBundle(bundle);
-    setBundleStatus("ready");
-    try {
-      await navigator.clipboard.writeText(bundle);
-      setBundleStatus("copied");
-    } catch {
-      setBundleStatus("ready");
-    }
     window.setTimeout(() => {
       outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 0);
@@ -808,7 +798,6 @@ function SelectionApp({
       return;
     }
     await navigator.clipboard.writeText(handoffBundle);
-    setBundleStatus("copied");
   }
 
   return (
@@ -916,9 +905,7 @@ function SelectionApp({
                 <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">
                   {localDeliveryStatus === "fallback"
                     ? "The local browser handoff could not reach the MCP server on 127.0.0.1. The handoff bundle is shown below so you can finish with notion_complete_headless_auth."
-                    : bundleStatus === "copied"
-                      ? "The handoff bundle is ready and has been copied to your clipboard."
-                      : "The handoff bundle is ready. Copy it and paste it into notion_complete_headless_auth."}
+                    : "The handoff bundle is ready. Copy it and paste it into notion_complete_headless_auth."}
                 </div>
                 <textarea
                   readOnly
@@ -946,9 +933,7 @@ function SelectionApp({
                   : loadingRootIds.size
                   ? "Loading nested content..."
                   : handoffBundle
-                    ? bundleStatus === "copied"
-                      ? "The handoff bundle is copied and ready."
-                      : "The handoff bundle is ready below."
+                    ? "The handoff bundle is ready below."
                   : `${finalBundle.length} root${finalBundle.length === 1 ? "" : "s"} selected`}
               </p>
             </div>

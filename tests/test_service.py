@@ -32,13 +32,7 @@ from labbook.state import load_pending_auth, save_project_bindings, save_project
 class ServiceTests(unittest.TestCase):
     def test_status_recommends_browser_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(
-                "os.environ",
-                {"SSH_CONNECTION": "", "SSH_CLIENT": "", "SSH_TTY": "", "DISPLAY": ":0", "WAYLAND_DISPLAY": ""},
-                clear=False,
-            ):
-                with mock.patch("labbook.service.platform.system", return_value="Darwin"):
-                    payload = status(tmpdir)
+            payload = status(tmpdir)
 
         self.assertEqual(payload["recommended_action"], "notion_auth_browser")
         self.assertEqual(
@@ -46,7 +40,7 @@ class ServiceTests(unittest.TestCase):
             DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         )
         self.assertIn("same machine", payload["browser_auth_hint"])
-        self.assertIn("127.0.0.1", payload["headless_auth_hint"])
+        self.assertIn("notion_complete_headless_auth", payload["headless_auth_hint"])
 
     def test_page_limit_is_clamped_to_minimum(self) -> None:
         self.assertEqual(normalize_browser_auth_page_limit(None), DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
@@ -73,24 +67,6 @@ class ServiceTests(unittest.TestCase):
 
         self.assertIsNone(payload["pending_auth"])
         self.assertTrue(payload["stale_pending_auth_cleared"])
-
-    def test_status_recommends_headless_when_running_over_ssh(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict("os.environ", {"SSH_CONNECTION": "1 2 3 4"}, clear=False):
-                payload = status(tmpdir)
-
-        self.assertEqual(payload["recommended_action"], "notion_auth_browser")
-        self.assertTrue(payload["remote_session_detected"])
-        self.assertIn("127.0.0.1", payload["remote_auth_hint"])
-
-    def test_status_recommends_headless_when_linux_has_no_display(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict("os.environ", {"DISPLAY": "", "WAYLAND_DISPLAY": "", "SSH_CONNECTION": ""}, clear=False):
-                with mock.patch("labbook.service.platform.system", return_value="Linux"):
-                    payload = status(tmpdir)
-
-        self.assertEqual(payload["recommended_action"], "notion_auth_browser")
-        self.assertTrue(payload["remote_session_detected"])
 
     def test_status_recommends_complete_headless_auth_for_any_pending_auth(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -149,12 +125,11 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNotNone(pending_auth)
         self.assertEqual(pending_auth["mode"], "headless")
 
-    def test_auth_browser_auto_switches_to_headless_when_browser_cannot_open(self) -> None:
+    def test_auth_browser_falls_back_to_headless_when_browser_cannot_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict("os.environ", {"SSH_CONNECTION": "", "DISPLAY": ":0"}, clear=False):
-                with mock.patch("labbook.service.webbrowser.open", return_value=False):
-                    payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
-                    pending_auth = load_pending_auth(tmpdir)
+            with mock.patch("labbook.service.webbrowser.open", return_value=False):
+                payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
+                pending_auth = load_pending_auth(tmpdir)
 
         self.assertEqual(payload["auth_mode"], "headless")
         self.assertTrue(payload["auto_switched_to_headless"])

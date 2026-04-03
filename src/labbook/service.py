@@ -4,8 +4,6 @@ import base64
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import os
-import platform
 import queue
 import re
 import threading
@@ -47,27 +45,6 @@ DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS = 1800
 MIN_BROWSER_AUTH_TIMEOUT_SECONDS = 30
 DEFAULT_BROWSER_AUTH_PAGE_LIMIT = 200
 MIN_BROWSER_AUTH_PAGE_LIMIT = 25
-
-
-def _remote_session_reason() -> str | None:
-    if str(os.getenv("SSH_CONNECTION") or "").strip():
-        return "ssh_connection"
-    if str(os.getenv("SSH_CLIENT") or "").strip():
-        return "ssh_client"
-    if str(os.getenv("SSH_TTY") or "").strip():
-        return "ssh_tty"
-    return None
-
-
-def _headless_session_reason() -> str | None:
-    remote_reason = _remote_session_reason()
-    if remote_reason:
-        return remote_reason
-    if platform.system() == "Linux":
-        has_display = bool(str(os.getenv("DISPLAY") or "").strip() or str(os.getenv("WAYLAND_DISPLAY") or "").strip())
-        if not has_display:
-            return "linux_no_display"
-    return None
 
 
 def _utc_now() -> str:
@@ -287,7 +264,7 @@ def _build_setup_guide() -> str:
             "# Agent Labbook Public Integration Setup",
             "",
             "For MCP users:",
-            "1. Use `notion_auth_browser` when the browser and MCP server are running on the same machine. Otherwise use `notion_start_headless_auth`.",
+            "1. Start with `notion_auth_browser` if you want the simplest flow. If the browser handoff cannot get back to the MCP server, use `notion_complete_headless_auth` with the handoff bundle shown on the page.",
             f"   For browser auth, prefer a long wait and pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` because users may need several minutes to finish consent and resource selection.",
             f"   `page_limit` now controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped, but remote search still searches the whole shared workspace.",
             "2. Complete the official Notion public integration consent page.",
@@ -547,7 +524,7 @@ def _complete_auth_handoff(
     handoff_bundle: str,
 ) -> dict[str, Any]:
     expected_session_id = str(pending_auth.get("session_id") or "").strip()
-    backend_url = str(pending_auth.get("backend_url") or effective_backend_url()).strip()
+    backend_url = effective_backend_url()
     decoded = _resolve_handoff_bundle(
         backend_url=backend_url,
         expected_session_id=expected_session_id,
@@ -647,7 +624,6 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     resources = list(bindings.get("resources") or [])
     authenticated = bool(str(session_payload.get("access_token") or "").strip())
     bindings_ready = bool(resources)
-    remote_session_reason = _headless_session_reason()
 
     if pending_auth and not authenticated:
         recommended_action = "notion_complete_headless_auth"
@@ -670,20 +646,13 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
             f"prefer a long timeout_seconds value and keep waiting for the browser handoff to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
         ),
         "headless_auth_hint": (
-            "Prefer notion_start_headless_auth for MCP and SSH-driven workflows. It does not depend on a 127.0.0.1 callback "
-            "to the machine running the MCP server."
-        ),
-        "remote_auth_hint": (
-            "Detected an SSH or likely headless shell session. Prefer notion_start_headless_auth because the local-browser "
-            "handoff posts back to 127.0.0.1 on the machine running the MCP server."
-            if remote_session_reason
-            else None
+            "If the browser handoff cannot get back to the MCP server, finish the flow with notion_complete_headless_auth "
+            "using the handoff bundle shown on the page."
         ),
         "browser_auth_page_limit_hint": (
             f"page_limit controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} "
             "are clamped, and remote search still covers the full shared workspace."
         ),
-        "remote_session_detected": bool(remote_session_reason),
         "authenticated": authenticated,
         "refresh_supported": bool(str(session_payload.get("refresh_token") or "").strip()),
         "workspace_name": session_payload.get("workspace_name"),
@@ -850,7 +819,7 @@ def refresh_session(project_root: str | Path | None = None) -> dict[str, Any]:
     if not refresh_token:
         raise LabbookError("No refresh token is available for this project.")
 
-    backend_url = str(session_payload.get("backend_url") or effective_backend_url()).strip()
+    backend_url = effective_backend_url()
     payload = _post_backend_json(f"{backend_url}/api/refresh", {"refresh_token": refresh_token})
     if not payload.get("ok"):
         raise LabbookError(str(payload.get("error") or "Worker refresh failed."))
