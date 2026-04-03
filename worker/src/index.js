@@ -6,6 +6,7 @@ const MAX_PAGE_LIMIT = 500;
 const STATE_TTL_SECONDS = 900;
 const SELECTION_TOKEN_TTL_SECONDS = 3600;
 const HANDOFF_BUNDLE_TTL_SECONDS = 3600;
+const PRIVATE_PAYLOAD_VERSION = "v1";
 const DEFAULT_DISCOVERY_NODE_LIMIT = 200;
 const MAX_DISCOVERY_NODE_LIMIT = 400;
 const MAX_BLOCK_SCAN_LIMIT = 2000;
@@ -25,6 +26,19 @@ function jsonResponse(payload, init = {}) {
 function htmlResponse(html, init = {}) {
   const headers = new Headers(init.headers || {});
   headers.set("content-type", "text/html; charset=utf-8");
+  headers.set(
+    "content-security-policy",
+    [
+      "default-src 'none'",
+      "style-src 'unsafe-inline'",
+      "script-src 'unsafe-inline'",
+      "img-src data: https:",
+      "connect-src 'self'",
+      "base-uri 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self' http://127.0.0.1:* http://localhost:*",
+    ].join("; "),
+  );
   return new Response(html, {
     ...init,
     headers,
@@ -63,12 +77,16 @@ function encodeBase64Url(value) {
 }
 
 function decodeBase64Url(value) {
+  const bytes = decodeBase64UrlBytes(value);
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeBase64UrlBytes(value) {
   const padded = `${value}${"=".repeat((4 - (value.length % 4)) % 4)}`
     .replaceAll("-", "+")
     .replaceAll("_", "/");
   const binary = atob(padded);
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 function clampInteger(value, fallback, minimum, maximum) {
@@ -109,6 +127,37 @@ async function verifySignedPayload(env, signedValue) {
   return JSON.parse(decodeBase64Url(body));
 }
 
+async function privatePayloadKey(env) {
+  const secret = new TextEncoder().encode(`${env.NOTION_CLIENT_SECRET}:agent-labbook-private-payload:${PRIVATE_PAYLOAD_VERSION}`);
+  const digest = await crypto.subtle.digest("SHA-256", secret);
+  return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+async function encryptPrivatePayload(env, payload) {
+  const key = await privatePayloadKey(env);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext));
+  return [PRIVATE_PAYLOAD_VERSION, encodeBase64Url(iv), encodeBase64Url(ciphertext)].join(".");
+}
+
+async function decryptPrivatePayload(env, encryptedValue) {
+  const [version, ivPart, ciphertextPart] = String(encryptedValue || "").split(".");
+  if (version !== PRIVATE_PAYLOAD_VERSION || !ivPart || !ciphertextPart) {
+    throw new Error("Missing or malformed encrypted payload.");
+  }
+
+  const key = await privatePayloadKey(env);
+  const iv = decodeBase64UrlBytes(ivPart);
+  const ciphertext = decodeBase64UrlBytes(ciphertextPart);
+  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  const decoded = JSON.parse(new TextDecoder().decode(plaintext));
+  if (!(decoded && typeof decoded === "object")) {
+    throw new Error("Encrypted payload did not decode to an object.");
+  }
+  return decoded;
+}
+
 function ensureRecentPayload(payload, ttlSeconds, errorMessage) {
   const now = Math.floor(Date.now() / 1000);
   if (typeof payload?.issued_at !== "number" || now - payload.issued_at > ttlSeconds) {
@@ -123,6 +172,18 @@ async function signState(env, payload) {
 async function verifyState(env, signedState) {
   const payload = await verifySignedPayload(env, signedState);
   ensureRecentPayload(payload, STATE_TTL_SECONDS, "Authorization state expired.");
+  return payload;
+}
+
+async function resolveSelectionSession(env, selectionToken) {
+  const payload = await decryptPrivatePayload(env, selectionToken);
+  ensureRecentPayload(payload, SELECTION_TOKEN_TTL_SECONDS, "Selection session expired.");
+  if (payload?.purpose !== "selection_session") {
+    throw new Error("Invalid selection token.");
+  }
+  if (!(payload.token && typeof payload.token === "object")) {
+    throw new Error("Selection token did not contain a token payload.");
+  }
   return payload;
 }
 
@@ -1150,12 +1211,12 @@ function errorPage(title, message) {
   });
 }
 
-function selectionPage({ baseUrl, state, selectionToken, tokenPayload, resources, truncated }) {
+function selectionPage({ baseUrl, state, selectionToken, workspaceName, resources, truncated }) {
   const bootstrap = {
     baseUrl,
     state,
     selectionToken,
-    tokenPayload,
+    workspaceName,
     resources,
     truncated: Boolean(truncated),
   };
@@ -1274,7 +1335,7 @@ async function handleCallback(request, env) {
       duplicated_template_id: tokenPayload.duplicated_template_id,
       owner: tokenPayload.owner || null,
     };
-    const selectionToken = await signSignedPayload(env, {
+    const selectionToken = await encryptPrivatePayload(env, {
       version: 1,
       purpose: "selection_session",
       issued_at: Math.floor(Date.now() / 1000),
@@ -1288,7 +1349,7 @@ async function handleCallback(request, env) {
         baseUrl,
         state,
         selectionToken,
-        tokenPayload: sanitizedTokenPayload,
+        workspaceName: sanitizedTokenPayload.workspace_name || null,
         resources: searchPayload.resources,
         truncated: searchPayload.truncated,
       }),
@@ -1306,10 +1367,12 @@ async function handleDiscoverChildren(request, env) {
 
   try {
     const payload = await request.json();
-    const accessToken = String(payload?.access_token || "").trim();
-    if (!accessToken) {
-      return jsonResponse({ ok: false, error: "access_token is required." }, { status: 400 });
+    const selectionToken = String(payload?.selection_token || "").trim();
+    if (!selectionToken) {
+      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
     }
+    const selectionSession = await resolveSelectionSession(env, selectionToken);
+    const accessToken = String(selectionSession.token.access_token || "").trim();
 
     const pageIds = Array.from(
       new Set(
@@ -1345,10 +1408,12 @@ async function handleCatalog(request, env) {
 
   try {
     const payload = await request.json();
-    const accessToken = String(payload?.access_token || "").trim();
-    if (!accessToken) {
-      return jsonResponse({ ok: false, error: "access_token is required." }, { status: 400 });
+    const selectionToken = String(payload?.selection_token || "").trim();
+    if (!selectionToken) {
+      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
     }
+    const selectionSession = await resolveSelectionSession(env, selectionToken);
+    const accessToken = String(selectionSession.token.access_token || "").trim();
 
     const pageLimit = normalizePageLimit(payload?.page_limit);
     const searchPayload = await fetchSelectableResources(env, accessToken, pageLimit);
@@ -1369,17 +1434,19 @@ async function handleResolveResource(request, env) {
 
   try {
     const payload = await request.json();
-    const accessToken = String(payload?.access_token || "").trim();
+    const selectionToken = String(payload?.selection_token || "").trim();
     const resourceRef = String(payload?.resource_id_or_url || payload?.resource_id || payload?.resource_url || "").trim();
     const resourceType = String(payload?.resource_type || "").trim();
 
-    if (!accessToken) {
-      return jsonResponse({ ok: false, error: "access_token is required." }, { status: 400 });
+    if (!selectionToken) {
+      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
     }
     if (!resourceRef) {
       return jsonResponse({ ok: false, error: "resource_id_or_url is required." }, { status: 400 });
     }
 
+    const selectionSession = await resolveSelectionSession(env, selectionToken);
+    const accessToken = String(selectionSession.token.access_token || "").trim();
     const resource = await resolveResourceReference(env, accessToken, resourceRef, resourceType);
     return jsonResponse({
       ok: true,
@@ -1402,28 +1469,19 @@ async function handleFinalizeSelection(request, env) {
       return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
     }
 
-    const signedSelection = await verifySignedPayload(env, selectionToken);
-    ensureRecentPayload(signedSelection, SELECTION_TOKEN_TTL_SECONDS, "Selection session expired.");
-    if (signedSelection?.purpose !== "selection_session") {
-      return jsonResponse({ ok: false, error: "Invalid selection token." }, { status: 400 });
-    }
-
-    const tokenPayload = signedSelection?.token;
-    if (!(tokenPayload && typeof tokenPayload === "object")) {
-      return jsonResponse({ ok: false, error: "Selection token did not contain a token payload." }, { status: 400 });
-    }
+    const selectionSession = await resolveSelectionSession(env, selectionToken);
 
     const selectedResources = Array.isArray(payload?.selected_resources)
       ? payload.selected_resources.filter((item) => item && typeof item === "object")
       : [];
 
-    const handoffBundle = await signSignedPayload(env, {
+    const handoffBundle = await encryptPrivatePayload(env, {
       version: 1,
       purpose: "handoff_bundle",
       issued_at: Math.floor(Date.now() / 1000),
-      session_id: String(signedSelection.session_id || "").trim(),
-      backend_url: String(signedSelection.backend_url || getBaseUrl(request, env)).trim(),
-      token: tokenPayload,
+      session_id: String(selectionSession.session_id || "").trim(),
+      backend_url: String(selectionSession.backend_url || getBaseUrl(request, env)).trim(),
+      token: selectionSession.token,
       selected_resources: selectedResources,
     });
 
@@ -1445,16 +1503,19 @@ async function handleConsumeHandoff(request, env) {
     const payload = await request.json();
     const handoffBundle = String(payload?.handoff_bundle || "").trim();
     const sessionId = String(payload?.session_id || "").trim();
+    if (!sessionId) {
+      return jsonResponse({ ok: false, error: "session_id is required." }, { status: 400 });
+    }
     if (!handoffBundle) {
       return jsonResponse({ ok: false, error: "handoff_bundle is required." }, { status: 400 });
     }
 
-    const signedHandoff = await verifySignedPayload(env, handoffBundle);
+    const signedHandoff = await decryptPrivatePayload(env, handoffBundle);
     ensureRecentPayload(signedHandoff, HANDOFF_BUNDLE_TTL_SECONDS, "Handoff bundle expired.");
     if (signedHandoff?.purpose !== "handoff_bundle") {
       return jsonResponse({ ok: false, error: "Invalid handoff bundle." }, { status: 400 });
     }
-    if (sessionId && String(signedHandoff.session_id || "").trim() !== sessionId) {
+    if (String(signedHandoff.session_id || "").trim() !== sessionId) {
       return jsonResponse({ ok: false, error: "Handoff bundle session mismatch." }, { status: 400 });
     }
 

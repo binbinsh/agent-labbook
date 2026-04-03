@@ -43,23 +43,11 @@ type SelectionState = {
   page_limit?: number | null;
 };
 
-type TokenPayload = {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  bot_id: string | null;
-  workspace_id: string | null;
-  workspace_name: string | null;
-  workspace_icon: string | null;
-  duplicated_template_id: string | null;
-  owner: Record<string, unknown> | null;
-};
-
 type SelectionConfig = {
   baseUrl: string;
   state: SelectionState;
   selectionToken: string;
-  tokenPayload: TokenPayload;
+  workspaceName: string | null;
   resources: Resource[];
   truncated: boolean;
 };
@@ -310,7 +298,7 @@ function ResourceRow({
   );
 }
 
-function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources, truncated }: SelectionConfig) {
+function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources, truncated }: SelectionConfig) {
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
   const rootIndex = new Map(catalog.map((resource) => [resource.resource_id, resource]));
 
@@ -354,7 +342,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          access_token: tokenPayload.access_token,
+          selection_token: selectionToken,
           page_ids: [normalizedId],
         }),
       });
@@ -461,7 +449,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
 
   const finalBundle = bundleResources();
   const pageLimit = Number.isFinite(Number(state.page_limit)) ? Number(state.page_limit) : 500;
-  const workspaceLabel = tokenPayload.workspace_name || "your workspace";
+  const workspaceLabel = workspaceName || "your workspace";
   const projectLabel = state.project_name || "this project";
   const title = "Choose Notion Resources";
   const titleLine = `${workspaceLabel} for ${projectLabel}`;
@@ -507,7 +495,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          access_token: tokenPayload.access_token,
+          selection_token: selectionToken,
           page_limit: pageLimit,
         }),
       });
@@ -546,7 +534,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          access_token: tokenPayload.access_token,
+          selection_token: selectionToken,
           resource_id_or_url: resourceRef,
         }),
       });
