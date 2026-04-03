@@ -21,6 +21,8 @@ from .state import (
     session_path,
 )
 
+CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
+
 
 def _json_dump(payload: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -36,7 +38,10 @@ def _installed_mcp_sdk_version() -> str | None:
 def _probe_backend_health(backend_url: str) -> dict[str, Any]:
     req = request.Request(
         f"{backend_url}/health",
-        headers={"Accept": "application/json"},
+        headers={
+            "Accept": "application/json",
+            "User-Agent": CLIENT_USER_AGENT,
+        },
         method="GET",
     )
     try:

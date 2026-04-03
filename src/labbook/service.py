@@ -14,6 +14,7 @@ from uuid import uuid4
 import webbrowser
 
 from .notion_api import NOTION_API_BASE, NotionClient
+from . import __version__
 from .state import (
     DEFAULT_NOTION_VERSION,
     backend_redirect_uri,
@@ -39,6 +40,7 @@ from .state import (
 LOCAL_CALLBACK_HOST = "127.0.0.1"
 LOCAL_CALLBACK_PORT = 8765
 LOCAL_CALLBACK_PATH = "/oauth/handoff"
+CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
 
 
 def _utc_now() -> str:
@@ -260,6 +262,7 @@ def _post_backend_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": CLIENT_USER_AGENT,
         },
         method="POST",
     )
