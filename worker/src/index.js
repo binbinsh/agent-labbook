@@ -515,7 +515,7 @@ async function fetchSelectableResources(env, accessToken, pageLimit) {
   };
 }
 
-async function queryDataSourceEntries(env, accessToken, dataSourceId, remainingLimit) {
+async function queryDataSourceEntries(env, accessToken, dataSourceId, remainingLimit, discoveryMeta = {}) {
   const resources = [];
   const seenIds = new Set();
   let nextCursor = null;
@@ -541,9 +541,13 @@ async function queryDataSourceEntries(env, accessToken, dataSourceId, remainingL
         continue;
       }
       const normalized = normalizeResource(item, {
-        discovered_parent_id: dataSourceId,
-        discovered_root_id: dataSourceId,
-        discovered_depth: 1,
+        discovered_parent_id: discoveryMeta.discovered_parent_id ?? dataSourceId,
+        discovered_root_id: discoveryMeta.discovered_root_id ?? dataSourceId,
+        discovered_depth:
+          typeof discoveryMeta.discovered_depth === "number" ? discoveryMeta.discovered_depth : 1,
+        parent_type: discoveryMeta.parent_type,
+        parent_id: discoveryMeta.parent_id,
+        parent_database_id: discoveryMeta.parent_database_id,
       });
       if (!normalized.resource_id || seenIds.has(normalized.resource_id)) {
         continue;
@@ -773,228 +777,244 @@ async function resolveResourceReference(env, accessToken, resourceRef, resourceT
   throw lastError || new Error("Could not retrieve that Notion resource.");
 }
 
-async function discoverChildPages(env, accessToken, pageIds, options = {}) {
-  const depthLimit = normalizeDepthLimit(options.depth_limit);
-  const nodeLimit = clampInteger(options.node_limit, DEFAULT_DISCOVERY_NODE_LIMIT, 1, MAX_DISCOVERY_NODE_LIMIT);
+async function discoverPageImmediateChildren(env, accessToken, pageId, options = {}) {
+  const scanState = options.scan_state || { scannedBlockCount: 0, truncated: false };
+  const rootId = normalizeNotionIdLike(options.root_id || pageId) || pageId;
+  const depth = Number.isFinite(options.depth) ? options.depth : 0;
+  const remainingLimit = Math.max(1, Number.parseInt(String(options.remaining_limit || 1), 10) || 1);
+  const resources = [];
+  const containerQueue = [pageId];
+  const scannedContainers = new Set();
 
-  const discovered = new Map();
-  const queue = [];
-  const visitedPages = new Set();
-  let scannedBlockCount = 0;
-  let truncated = false;
-
-  for (const pageId of pageIds) {
-    const cleanId = normalizeNotionIdLike(pageId);
-    if (!cleanId || visitedPages.has(cleanId)) {
+  while (containerQueue.length && !scanState.truncated) {
+    const containerId = String(containerQueue.shift() || "").trim();
+    if (!containerId || scannedContainers.has(containerId)) {
       continue;
     }
-    visitedPages.add(cleanId);
-    queue.push({
-      page_id: cleanId,
-      depth: 0,
-      root_id: cleanId,
-    });
-  }
+    scannedContainers.add(containerId);
 
-  while (queue.length && !truncated) {
-    const current = queue.shift();
-    const containerQueue = [current.page_id];
-    const scannedContainers = new Set();
+    const blocks = await listAllBlockChildren(env, accessToken, containerId);
+    scanState.scannedBlockCount += blocks.length;
+    if (scanState.scannedBlockCount > MAX_BLOCK_SCAN_LIMIT) {
+      scanState.truncated = true;
+      break;
+    }
 
-    while (containerQueue.length && !truncated) {
-      const containerId = String(containerQueue.shift() || "").trim();
-      if (!containerId || scannedContainers.has(containerId)) {
-        continue;
-      }
-      scannedContainers.add(containerId);
+    for (const block of blocks) {
+      const blockId = normalizeNotionIdLike(block?.id);
+      const blockType = String(block?.type || "").trim();
 
-      const blocks = await listAllBlockChildren(env, accessToken, containerId);
-      scannedBlockCount += blocks.length;
-      if (scannedBlockCount > MAX_BLOCK_SCAN_LIMIT) {
-        truncated = true;
-        break;
-      }
-
-      for (const block of blocks) {
-        const blockId = normalizeNotionIdLike(block?.id);
-        const blockType = String(block?.type || "").trim();
-
-        if (blockType === "child_page" && blockId && !visitedPages.has(blockId)) {
-          visitedPages.add(blockId);
-          const childResource = await retrievePageResource(
+      if (blockType === "child_page" && blockId) {
+        resources.push(
+          await retrievePageResource(
             env,
             accessToken,
             blockId,
             String(block?.child_page?.title || "").trim() || null,
             {
-              discovered_parent_id: current.page_id,
-              discovered_root_id: current.root_id,
-              discovered_depth: current.depth + 1,
+              discovered_parent_id: pageId,
+              discovered_root_id: rootId,
+              discovered_depth: depth + 1,
               parent_type: "page_id",
-              parent_id: current.page_id,
+              parent_id: pageId,
             },
-          );
-          discovered.set(blockId, childResource);
+          ),
+        );
+      } else if (blockType === "child_database" && blockId) {
+        resources.push(
+          ...(
+            await retrieveDataSourceResourcesForDatabase(
+              env,
+              accessToken,
+              blockId,
+              {
+                discovered_parent_id: pageId,
+                discovered_root_id: rootId,
+                discovered_depth: depth + 1,
+                parent_type: "page_id",
+                parent_id: pageId,
+              },
+            )
+          ),
+        );
+      } else if (block?.has_children && blockId) {
+        containerQueue.push(blockId);
+      }
 
-          if (discovered.size >= nodeLimit) {
-            truncated = true;
-            break;
-          }
-          if (depthLimit === null || current.depth + 1 < depthLimit) {
-            queue.push({
-              page_id: blockId,
-              depth: current.depth + 1,
-              root_id: current.root_id,
-            });
-          }
-          continue;
-        }
-
-        if (blockType === "child_database" && blockId) {
-          const dataSourceResources = await retrieveDataSourceResourcesForDatabase(
-            env,
-            accessToken,
-            blockId,
-            {
-              discovered_parent_id: current.page_id,
-              discovered_root_id: current.root_id,
-              discovered_depth: current.depth + 1,
-              parent_type: "page_id",
-              parent_id: current.page_id,
-            },
-          );
-
-          for (const dataSourceResource of dataSourceResources) {
-            if (!dataSourceResource.resource_id || discovered.has(dataSourceResource.resource_id)) {
-              continue;
-            }
-            discovered.set(dataSourceResource.resource_id, dataSourceResource);
-
-            if (discovered.size >= nodeLimit) {
-              truncated = true;
-              break;
-            }
-          }
-          if (truncated) {
-            break;
-          }
-          continue;
-        }
-
-        if (block?.has_children && blockType !== "child_page" && blockId) {
-          containerQueue.push(blockId);
-        }
+      if (resources.length >= remainingLimit) {
+        scanState.truncated = true;
+        break;
       }
     }
   }
 
   return {
-    truncated,
-    resources: Array.from(discovered.values()),
+    truncated: scanState.truncated,
+    resources,
   };
 }
 
-async function discoverDataSourceContents(env, accessToken, dataSourceIds, options = {}) {
+async function discoverDataSourceImmediateChildren(env, accessToken, dataSourceId, options = {}) {
+  const rootId = normalizeNotionIdLike(options.root_id || dataSourceId) || dataSourceId;
+  const depth = Number.isFinite(options.depth) ? options.depth : 0;
+  const remainingLimit = Math.max(1, Number.parseInt(String(options.remaining_limit || 1), 10) || 1);
+  return queryDataSourceEntries(env, accessToken, dataSourceId, remainingLimit, {
+    discovered_parent_id: dataSourceId,
+    discovered_root_id: rootId,
+    discovered_depth: depth + 1,
+    parent_type: "data_source_id",
+    parent_id: dataSourceId,
+  });
+}
+
+async function discoverResourceGraph(env, accessToken, seedResources, options = {}) {
+  const depthLimit = normalizeDepthLimit(options.depth_limit);
   const nodeLimit = clampInteger(options.node_limit, DEFAULT_DISCOVERY_NODE_LIMIT, 1, MAX_DISCOVERY_NODE_LIMIT);
   const discovered = new Map();
   const queue = [];
+  const queuedKeys = new Set();
+  const visitedPages = new Set();
   const visitedDataSources = new Set();
-  let truncated = false;
+  const scanState = {
+    scannedBlockCount: 0,
+    truncated: false,
+  };
 
-  for (const dataSourceId of dataSourceIds) {
-    const cleanId = normalizeNotionIdLike(dataSourceId);
-    if (!cleanId || visitedDataSources.has(cleanId)) {
-      continue;
+  function enqueue(resourceId, resourceType, rootId, depth) {
+    const normalizedId = normalizeNotionIdLike(resourceId);
+    const normalizedType = normalizeResourceType(resourceType);
+    if (!normalizedId || !["page", "data_source"].includes(normalizedType)) {
+      return;
     }
-    visitedDataSources.add(cleanId);
-    queue.push(cleanId);
+    const queueKey = `${normalizedType}:${normalizedId}`;
+    if (queuedKeys.has(queueKey)) {
+      return;
+    }
+    queuedKeys.add(queueKey);
+    queue.push({
+      queue_key: queueKey,
+      resource_id: normalizedId,
+      resource_type: normalizedType,
+      root_id: normalizeNotionIdLike(rootId) || normalizedId,
+      depth: Number.isFinite(depth) ? depth : 0,
+    });
   }
 
-  while (queue.length && !truncated) {
-    const currentId = String(queue.shift() || "").trim();
-    if (!currentId) {
+  for (const seed of Array.isArray(seedResources) ? seedResources : []) {
+    enqueue(seed?.resource_id, seed?.resource_type, seed?.root_id || seed?.resource_id, seed?.depth || 0);
+  }
+
+  while (queue.length && !scanState.truncated && discovered.size < nodeLimit) {
+    const current = queue.shift();
+    queuedKeys.delete(current.queue_key);
+
+    if (current.resource_type === "page") {
+      if (visitedPages.has(current.resource_id)) {
+        continue;
+      }
+      visitedPages.add(current.resource_id);
+    } else if (current.resource_type === "data_source") {
+      if (visitedDataSources.has(current.resource_id)) {
+        continue;
+      }
+      visitedDataSources.add(current.resource_id);
+    } else {
+      continue;
+    }
+
+    if (depthLimit !== null && current.depth >= depthLimit) {
       continue;
     }
 
     const remainingLimit = Math.max(1, nodeLimit - discovered.size);
-    const queryPayload = await queryDataSourceEntries(env, accessToken, currentId, remainingLimit);
+    const nextDiscovery =
+      current.resource_type === "page"
+        ? await discoverPageImmediateChildren(env, accessToken, current.resource_id, {
+            root_id: current.root_id,
+            depth: current.depth,
+            remaining_limit: remainingLimit,
+            scan_state: scanState,
+          })
+        : await discoverDataSourceImmediateChildren(env, accessToken, current.resource_id, {
+            root_id: current.root_id,
+            depth: current.depth,
+            remaining_limit: remainingLimit,
+          });
 
-    for (const resource of queryPayload.resources) {
-      if (!resource.resource_id || discovered.has(resource.resource_id)) {
-        continue;
-      }
-      discovered.set(resource.resource_id, resource);
-
-      if (resource.resource_type === "data_source" && !visitedDataSources.has(resource.resource_id)) {
-        visitedDataSources.add(resource.resource_id);
-        queue.push(resource.resource_id);
-      }
-
-      if (discovered.size >= nodeLimit) {
-        truncated = true;
-        break;
-      }
+    if (nextDiscovery.truncated) {
+      scanState.truncated = true;
     }
 
-    if (queryPayload.truncated) {
-      truncated = true;
+    for (const resource of nextDiscovery.resources) {
+      if (!resource?.resource_id) {
+        continue;
+      }
+
+      const existing = discovered.get(resource.resource_id);
+      discovered.set(resource.resource_id, {
+        ...(existing || resource),
+        ...resource,
+      });
+
+      if (discovered.size >= nodeLimit) {
+        scanState.truncated = true;
+        break;
+      }
+
+      const normalizedType = normalizeResourceType(resource.resource_type);
+      if (normalizedType === "page" && !visitedPages.has(resource.resource_id)) {
+        enqueue(resource.resource_id, normalizedType, current.root_id, current.depth + 1);
+      } else if (normalizedType === "data_source" && !visitedDataSources.has(resource.resource_id)) {
+        enqueue(resource.resource_id, normalizedType, current.root_id, current.depth + 1);
+      }
     }
   }
 
   return {
-    truncated,
+    truncated: scanState.truncated || discovered.size >= nodeLimit,
     resources: Array.from(discovered.values()),
   };
 }
 
+async function discoverChildPages(env, accessToken, pageIds, options = {}) {
+  return discoverResourceGraph(
+    env,
+    accessToken,
+    pageIds.map((pageId) => ({
+      resource_id: pageId,
+      resource_type: "page",
+    })),
+    options,
+  );
+}
+
+async function discoverDataSourceContents(env, accessToken, dataSourceIds, options = {}) {
+  return discoverResourceGraph(
+    env,
+    accessToken,
+    dataSourceIds.map((dataSourceId) => ({
+      resource_id: dataSourceId,
+      resource_type: "data_source",
+    })),
+    options,
+  );
+}
+
 async function buildSelectionCatalog(env, accessToken, pageLimit) {
   const searchPayload = await fetchSelectableResources(env, accessToken, pageLimit);
-  const seedDataSourceIds = searchPayload.resources
-    .filter((resource) => normalizeResourceType(resource.resource_type) === "data_source")
-    .map((resource) => resource.resource_id)
-    .filter(Boolean);
-
-  let dataSourceDiscovery = { truncated: false, resources: [] };
-  if (seedDataSourceIds.length) {
-    dataSourceDiscovery = await discoverDataSourceContents(env, accessToken, seedDataSourceIds, {
-      node_limit: pageLimit,
-    });
-  }
-
-  const mergedSeedResources = mergeResources(searchPayload.resources, dataSourceDiscovery.resources);
-  const pageIds = mergedSeedResources
-    .filter((resource) => normalizeResourceType(resource.resource_type) === "page")
-    .map((resource) => resource.resource_id)
-    .filter(Boolean);
-
-  let pageDiscovery = { truncated: false, resources: [] };
-  if (pageIds.length) {
-    pageDiscovery = await discoverChildPages(env, accessToken, pageIds, {
-      node_limit: pageLimit,
-    });
-  }
-
-  const mergedWithPageDiscovery = mergeResources(mergedSeedResources, pageDiscovery.resources);
-  const allDataSourceIds = mergedWithPageDiscovery
-    .filter((resource) => normalizeResourceType(resource.resource_type) === "data_source")
-    .map((resource) => resource.resource_id)
-    .filter(Boolean);
-
-  let nestedDataSourceDiscovery = { truncated: false, resources: [] };
-  if (allDataSourceIds.length) {
-    nestedDataSourceDiscovery = await discoverDataSourceContents(env, accessToken, allDataSourceIds, {
-      node_limit: pageLimit,
-    });
-  }
+  const seedResources = searchPayload.resources.filter((resource) => {
+    const resourceType = normalizeResourceType(resource.resource_type);
+    return resourceType === "page" || resourceType === "data_source";
+  });
+  const graphDiscovery = seedResources.length
+    ? await discoverResourceGraph(env, accessToken, seedResources, {
+        node_limit: pageLimit,
+      })
+    : { truncated: false, resources: [] };
 
   return {
-    truncated: Boolean(
-      searchPayload.truncated ||
-        dataSourceDiscovery.truncated ||
-        pageDiscovery.truncated ||
-        nestedDataSourceDiscovery.truncated
-    ),
-    resources: mergeResources(mergedWithPageDiscovery, nestedDataSourceDiscovery.resources),
+    truncated: Boolean(searchPayload.truncated || graphDiscovery.truncated),
+    resources: mergeResources(searchPayload.resources, graphDiscovery.resources),
   };
 }
 
@@ -1677,22 +1697,23 @@ async function handleDiscoverChildren(request, env) {
       return jsonResponse({ ok: true, truncated: false, resources: [] });
     }
 
-    const pageDiscovery = pageIds.length
-      ? await discoverChildPages(env, accessToken, pageIds, {
-          depth_limit: payload?.depth_limit,
-          node_limit: payload?.node_limit,
-        })
-      : { truncated: false, resources: [] };
-    const dataSourceDiscovery = dataSourceIds.length
-      ? await discoverDataSourceContents(env, accessToken, dataSourceIds, {
-          node_limit: payload?.node_limit,
-        })
-      : { truncated: false, resources: [] };
+    const graphDiscovery = await discoverResourceGraph(
+      env,
+      accessToken,
+      [
+        ...pageIds.map((pageId) => ({ resource_id: pageId, resource_type: "page" })),
+        ...dataSourceIds.map((dataSourceId) => ({ resource_id: dataSourceId, resource_type: "data_source" })),
+      ],
+      {
+        depth_limit: payload?.depth_limit,
+        node_limit: payload?.node_limit,
+      },
+    );
 
     return jsonResponse({
       ok: true,
-      truncated: Boolean(pageDiscovery.truncated || dataSourceDiscovery.truncated),
-      resources: mergeResources(pageDiscovery.resources, dataSourceDiscovery.resources),
+      truncated: graphDiscovery.truncated,
+      resources: graphDiscovery.resources,
     });
   } catch (exc) {
     return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
