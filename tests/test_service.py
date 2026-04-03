@@ -30,7 +30,13 @@ from labbook.state import load_pending_auth, save_project_bindings, save_project
 class ServiceTests(unittest.TestCase):
     def test_status_recommends_long_browser_auth_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            payload = status(tmpdir)
+            with mock.patch.dict(
+                "os.environ",
+                {"SSH_CONNECTION": "", "SSH_CLIENT": "", "SSH_TTY": "", "DISPLAY": ":0", "WAYLAND_DISPLAY": ""},
+                clear=False,
+            ):
+                with mock.patch("labbook.service.platform.system", return_value="Darwin"):
+                    payload = status(tmpdir)
 
         self.assertEqual(payload["recommended_action"], "notion_auth_browser")
         self.assertEqual(
