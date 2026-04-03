@@ -1,15 +1,15 @@
 import { SELECTION_UI_CSS, SELECTION_UI_JS } from "../generated/selection_ui_bundle.js";
 
 const DEFAULT_NOTION_VERSION = "2026-03-11";
-const DEFAULT_PAGE_LIMIT = 500;
-const MAX_PAGE_LIMIT = 500;
+const DEFAULT_PAGE_LIMIT = 5000;
+const MAX_PAGE_LIMIT = 5000;
 const STATE_TTL_SECONDS = 900;
 const SELECTION_TOKEN_TTL_SECONDS = 3600;
 const HANDOFF_BUNDLE_TTL_SECONDS = 3600;
 const PRIVATE_PAYLOAD_VERSION = "v1";
-const DEFAULT_DISCOVERY_NODE_LIMIT = 200;
-const MAX_DISCOVERY_NODE_LIMIT = 400;
-const MAX_BLOCK_SCAN_LIMIT = 2000;
+const DEFAULT_DISCOVERY_NODE_LIMIT = 2000;
+const MAX_DISCOVERY_NODE_LIMIT = 5000;
+const MAX_BLOCK_SCAN_LIMIT = 20000;
 const MAX_DISCOVERY_DEPTH_LIMIT = 128;
 const NOTION_OAUTH_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_API_BASE = "https://api.notion.com/v1";
@@ -514,6 +514,40 @@ async function fetchSelectableResources(env, accessToken, pageLimit) {
   };
 }
 
+function mergeResources(...resourceLists) {
+  const byId = new Map();
+  for (const list of resourceLists) {
+    for (const item of Array.isArray(list) ? list : []) {
+      if (!(item && typeof item === "object")) {
+        continue;
+      }
+      const normalized = normalizeResource(item, item);
+      if (!normalized.resource_id) {
+        continue;
+      }
+      byId.set(normalized.resource_id, {
+        ...(byId.get(normalized.resource_id) || normalized),
+        ...normalized,
+      });
+    }
+  }
+  return Array.from(byId.values()).sort((left, right) => {
+    const typeOrder = { page: 0, data_source: 1 };
+    const leftRank = typeOrder[left.resource_type] ?? 2;
+    const rightRank = typeOrder[right.resource_type] ?? 2;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    const titleCompare = String(left.title || "").localeCompare(String(right.title || ""), undefined, {
+      sensitivity: "base",
+    });
+    if (titleCompare !== 0) {
+      return titleCompare;
+    }
+    return String(left.resource_id || "").localeCompare(String(right.resource_id || ""));
+  });
+}
+
 async function listAllBlockChildren(env, accessToken, blockId) {
   const results = [];
   let nextCursor = null;
@@ -711,6 +745,26 @@ async function discoverChildPages(env, accessToken, pageIds, options = {}) {
   return {
     truncated,
     resources: Array.from(discovered.values()),
+  };
+}
+
+async function buildSelectionCatalog(env, accessToken, pageLimit) {
+  const searchPayload = await fetchSelectableResources(env, accessToken, pageLimit);
+  const rootPageIds = searchPayload.resources
+    .filter((resource) => normalizeResourceType(resource.resource_type) === "page")
+    .map((resource) => resource.resource_id)
+    .filter(Boolean);
+
+  let discovery = { truncated: false, resources: [] };
+  if (rootPageIds.length) {
+    discovery = await discoverChildPages(env, accessToken, rootPageIds, {
+      node_limit: pageLimit,
+    });
+  }
+
+  return {
+    truncated: Boolean(searchPayload.truncated || discovery.truncated),
+    resources: mergeResources(searchPayload.resources, discovery.resources),
   };
 }
 
@@ -1343,7 +1397,7 @@ async function handleCallback(request, env) {
       backend_url: baseUrl,
       token: sanitizedTokenPayload,
     });
-    const searchPayload = await fetchSelectableResources(env, tokenPayload.access_token, state.page_limit || DEFAULT_PAGE_LIMIT);
+    const searchPayload = await buildSelectionCatalog(env, tokenPayload.access_token, state.page_limit || DEFAULT_PAGE_LIMIT);
     return htmlResponse(
       selectionPage({
         baseUrl,
@@ -1416,7 +1470,7 @@ async function handleCatalog(request, env) {
     const accessToken = String(selectionSession.token.access_token || "").trim();
 
     const pageLimit = normalizePageLimit(payload?.page_limit);
-    const searchPayload = await fetchSelectableResources(env, accessToken, pageLimit);
+    const searchPayload = await buildSelectionCatalog(env, accessToken, pageLimit);
     return jsonResponse({
       ok: true,
       truncated: searchPayload.truncated,

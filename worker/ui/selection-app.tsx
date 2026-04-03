@@ -205,6 +205,24 @@ function buildDescendantIndex(items: Resource[], rootId: string) {
   return index;
 }
 
+function buildChildIndex(items: Resource[]) {
+  const byId = new Map(items.map((item) => [item.resource_id, item]));
+  const index = new Map<string, Resource[]>();
+  for (const item of items) {
+    const parentId = normalizeNotionIdLike(item.discovered_parent_id || item.parent_id);
+    if (!parentId || !byId.has(parentId)) {
+      continue;
+    }
+    const next = index.get(parentId) || [];
+    next.push(item);
+    index.set(parentId, next);
+  }
+  for (const [key, value] of index.entries()) {
+    index.set(key, [...value].sort(compareResources));
+  }
+  return index;
+}
+
 function resourceIcon(resource: Resource) {
   if (resource.icon_emoji) {
     return <span className="text-[13px] leading-none">{resource.icon_emoji}</span>;
@@ -352,6 +370,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
       }
 
       const descendants = dedupeSortResources(Array.isArray(payload.resources) ? payload.resources : []);
+      setCatalog((current) => dedupeSortResources([...current, ...descendants]));
       setDiscoveredByRoot((current) => {
         const next = copyMap(current.entries());
         next.set(normalizedId, descendants);
@@ -436,7 +455,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
         selected_via: "explicit",
         inherited_from: null,
       });
-      for (const child of discoveredByRoot.get(rootId) || []) {
+      for (const child of collectDescendants(rootId, [])) {
         upsert(child, {
           selected_via: "descendant",
           inherited_from: rootId,
@@ -454,32 +473,47 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   const title = "Choose Notion Resources";
   const titleLine = `${workspaceLabel} for ${projectLabel}`;
 
-  const descendantIndices = new Map<string, Map<string, Resource[]>>();
-  const hiddenTopLevelDescendantIds = new Set<string>();
-  for (const [rootId, descendants] of discoveredByRoot.entries()) {
-    descendantIndices.set(rootId, buildDescendantIndex(descendants, rootId));
-    if (selectedRootIds.has(rootId)) {
-      for (const child of descendants) {
-        if (!selectedRootIds.has(child.resource_id)) {
-          hiddenTopLevelDescendantIds.add(child.resource_id);
-        }
+  const childIndex = buildChildIndex(catalog);
+
+  function collectDescendants(rootId: string, bucket: Resource[] = []) {
+    const children = childIndex.get(rootId) || [];
+    for (const child of children) {
+      bucket.push(child);
+      collectDescendants(child.resource_id, bucket);
+    }
+    return bucket;
+  }
+
+  const descendantCountCache = new Map<string, number>();
+  function descendantCount(resourceId: string) {
+    const cached = descendantCountCache.get(resourceId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const count = collectDescendants(resourceId, []).length;
+    descendantCountCache.set(resourceId, count);
+    return count;
+  }
+
+  const autoIncludedIds = new Set<string>();
+  for (const rootId of selectedRootIds) {
+    for (const child of collectDescendants(rootId, [])) {
+      if (!selectedRootIds.has(child.resource_id)) {
+        autoIncludedIds.add(child.resource_id);
       }
     }
   }
 
   const visibleResources = [...catalog]
     .filter((resource) => {
-      if (hiddenTopLevelDescendantIds.has(resource.resource_id) && !selectedRootIds.has(resource.resource_id)) {
-        return false;
-      }
-      if (selectedRootIds.has(resource.resource_id)) {
+      if (selectedRootIds.has(resource.resource_id) || autoIncludedIds.has(resource.resource_id)) {
         return true;
       }
       return matchesQuery(resource, deferredQuery);
     })
     .sort((left, right) => {
-      const leftSelected = selectedRootIds.has(left.resource_id) ? 1 : 0;
-      const rightSelected = selectedRootIds.has(right.resource_id) ? 1 : 0;
+      const leftSelected = selectedRootIds.has(left.resource_id) ? 2 : autoIncludedIds.has(left.resource_id) ? 1 : 0;
+      const rightSelected = selectedRootIds.has(right.resource_id) ? 2 : autoIncludedIds.has(right.resource_id) ? 1 : 0;
       if (leftSelected !== rightSelected) {
         return rightSelected - leftSelected;
       }
@@ -636,28 +670,6 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     setBundleStatus("copied");
   }
 
-  function renderDescendants(rootId: string, parentId: string, depth: number) {
-    const descendantIndex = descendantIndices.get(rootId);
-    const children = descendantIndex?.get(parentId) || [];
-    return children.flatMap((child) => {
-      if (selectedRootIds.has(child.resource_id)) {
-        return [];
-      }
-      return [
-        <ResourceRow
-          key={`${rootId}:${child.resource_id}`}
-          resource={child}
-          selectedState="descendant"
-          loading={false}
-          includedCount={0}
-          depth={depth}
-          disabled
-        />,
-        ...renderDescendants(rootId, child.resource_id, depth + 1),
-      ];
-    });
-  }
-
   return (
     <div className="mx-auto min-h-screen w-full max-w-3xl px-3 py-6 sm:px-5 sm:py-8">
       <div className="space-y-4 pb-28">
@@ -717,18 +729,24 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
           <CardContent>
             {visibleResources.length ? (
               <div className="space-y-2">
-                {visibleResources.map((resource) => (
-                  <div key={resource.resource_id} className="space-y-1">
+                {visibleResources.map((resource) => {
+                  const selectedState = selectedRootIds.has(resource.resource_id)
+                    ? "explicit"
+                    : autoIncludedIds.has(resource.resource_id)
+                      ? "descendant"
+                      : "none";
+                  return (
                     <ResourceRow
+                      key={resource.resource_id}
                       resource={resource}
-                      selectedState={selectedRootIds.has(resource.resource_id) ? "explicit" : "none"}
+                      selectedState={selectedState}
                       loading={loadingRootIds.has(resource.resource_id)}
-                      includedCount={(discoveredByRoot.get(resource.resource_id) || []).length}
+                      includedCount={resource.resource_type === "page" ? descendantCount(resource.resource_id) : 0}
+                      disabled={selectedState === "descendant"}
                       onToggle={toggleResourceSelection}
                     />
-                    {selectedRootIds.has(resource.resource_id) ? renderDescendants(resource.resource_id, resource.resource_id, 1) : null}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500">
