@@ -14,7 +14,7 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 pycparser==3.0
 pydantic==2.12.5
-pydantic-core==2.41.5
+pydantic-core==2.45.0
 pydantic-settings==2.13.1
 pyjwt[crypto]==2.12.1
 python-dotenv==1.2.2
