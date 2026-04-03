@@ -1594,15 +1594,14 @@ async function handleCallback(request, env) {
       backend_url: baseUrl,
       token: sanitizedTokenPayload,
     });
-    const searchPayload = await buildSelectionCatalog(env, tokenPayload.access_token, state.page_limit || DEFAULT_PAGE_LIMIT);
     return htmlResponse(
       selectionPage({
         baseUrl,
         state,
         selectionToken,
         workspaceName: sanitizedTokenPayload.workspace_name || null,
-        resources: searchPayload.resources,
-        truncated: searchPayload.truncated,
+        resources: [],
+        truncated: false,
       }),
     );
   } catch (exc) {

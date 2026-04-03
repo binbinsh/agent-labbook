@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useRef, useState } from "react";
+import { startTransition, useDeferredValue, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ChevronDown,
@@ -340,6 +340,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   const [inputValue, setInputValue] = useState("");
   const [handoffBundle, setHandoffBundle] = useState("");
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
+  const [catalogLoaded, setCatalogLoaded] = useState(resources.length > 0);
   const [bundleStatus, setBundleStatus] = useState<"idle" | "ready" | "copied">("idle");
   const outputRef = useRef<HTMLDivElement | null>(null);
 
@@ -618,12 +619,19 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
           ...discoveredResources,
         ]),
       );
+      setCatalogLoaded(true);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally {
       setRefreshingCatalog(false);
     }
   }
+
+  useEffect(() => {
+    if (!catalogLoaded) {
+      void refreshCatalog();
+    }
+  }, [catalogLoaded]);
 
   function toggleCollapsed(resourceId: string) {
     setCollapsedIds((current) => {
@@ -762,7 +770,11 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
             ) : null}
           </CardHeader>
           <CardContent>
-            {visibleRows.length ? (
+            {!catalogLoaded && refreshingCatalog ? (
+              <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500">
+                Loading available pages and data sources...
+              </div>
+            ) : visibleRows.length ? (
               <div className="space-y-2">
                 {visibleRows.map(({ resource, depth }) => {
                   const selectedState = selectedRootIds.has(resource.resource_id)
