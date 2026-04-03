@@ -7,3 +7,5 @@ node_modules/
 .dev.vars
 .env
 .codex
+playwright-report/
+test-results/

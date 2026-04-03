@@ -33,6 +33,7 @@ type Resource = {
 };
 
 type BundledResource = Resource & {
+  selection_scope: "subtree";
   selected_via: "explicit" | "descendant";
   inherited_from: string | null;
 };
@@ -52,6 +53,7 @@ type SelectionConfig = {
   workspaceName: string | null;
   resources: Resource[];
   truncated: boolean;
+  catalogLoaded: boolean;
 };
 
 declare global {
@@ -94,6 +96,11 @@ function normalizeResourceType(value: string | null | undefined) {
     return "data_source";
   }
   return resourceType || "unknown";
+}
+
+function canResourceHaveChildren(resourceType: string | null | undefined) {
+  const normalizedType = normalizeResourceType(resourceType);
+  return normalizedType === "page" || normalizedType === "data_source";
 }
 
 function resourceTypeRank(type: string) {
@@ -231,8 +238,8 @@ function ResourceRow({
   resource,
   selectedState,
   loading,
-  includedCount,
-  hasChildren,
+  includesSubtree,
+  canExpand,
   expanded,
   depth = 0,
   disabled = false,
@@ -242,13 +249,13 @@ function ResourceRow({
   resource: Resource;
   selectedState: "none" | "explicit" | "descendant";
   loading: boolean;
-  includedCount: number;
-  hasChildren: boolean;
+  includesSubtree: boolean;
+  canExpand: boolean;
   expanded: boolean;
   depth?: number;
   disabled?: boolean;
   onToggle?: (resource: Resource, checked: boolean) => Promise<void> | void;
-  onToggleExpand?: (resourceId: string) => void;
+  onToggleExpand?: (resource: Resource) => Promise<void> | void;
 }) {
   const selected = selectedState !== "none";
   const edited = formatDate(resource.last_edited_time);
@@ -263,6 +270,8 @@ function ResourceRow({
 
   return (
     <div
+      data-resource-id={resource.resource_id}
+      data-selected-state={selectedState}
       className={cn(
         "flex min-h-9 items-center gap-2 rounded-lg px-2 py-1.5 transition",
         selectedState === "explicit"
@@ -274,12 +283,12 @@ function ResourceRow({
       style={{ paddingLeft: `${8 + depth * 18}px` }}
       title={details}
     >
-      {hasChildren ? (
+      {canExpand ? (
         <button
           type="button"
           className="flex size-4 shrink-0 items-center justify-center rounded text-stone-500 hover:bg-stone-200/60 hover:text-stone-700"
           aria-label={expanded ? "Collapse nested items" : "Expand nested items"}
-          onClick={() => onToggleExpand?.(resource.resource_id)}
+          onClick={() => void onToggleExpand?.(resource)}
         >
           {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         </button>
@@ -311,14 +320,14 @@ function ResourceRow({
               Selected
             </Badge>
           ) : null}
-          {selectedState === "descendant" ? (
+          {selectedState === "explicit" && includesSubtree ? (
             <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              Included via parent
+              Includes subtree
             </Badge>
           ) : null}
-          {includedCount > 0 ? (
+          {selectedState === "descendant" ? (
             <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              +{includedCount} nested items
+              In selected subtree
             </Badge>
           ) : null}
         </div>
@@ -329,7 +338,15 @@ function ResourceRow({
   );
 }
 
-function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources, truncated }: SelectionConfig) {
+function SelectionApp({
+  baseUrl,
+  state,
+  selectionToken,
+  workspaceName,
+  resources,
+  truncated,
+  catalogLoaded: initialCatalogLoaded,
+}: SelectionConfig) {
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
   const rootIndex = new Map(catalog.map((resource) => [resource.resource_id, resource]));
 
@@ -340,7 +357,9 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   const [inputValue, setInputValue] = useState("");
   const [handoffBundle, setHandoffBundle] = useState("");
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
-  const [catalogLoaded, setCatalogLoaded] = useState(resources.length > 0);
+  const [searchingCatalog, setSearchingCatalog] = useState(false);
+  const [remoteSearchIds, setRemoteSearchIds] = useState<Set<string>>(new Set());
+  const [catalogLoaded, setCatalogLoaded] = useState(Boolean(initialCatalogLoaded));
   const [bundleStatus, setBundleStatus] = useState<"idle" | "ready" | "copied">("idle");
   const outputRef = useRef<HTMLDivElement | null>(null);
 
@@ -433,13 +452,6 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
       next.add(resourceId);
       return next;
     });
-    setCollapsedIds((current) => {
-      const next = copySet(current);
-      next.delete(resourceId);
-      return next;
-    });
-
-    await ensureChildrenForRoot(resourceId, resource.resource_type);
   }
 
   function bundleResources() {
@@ -449,6 +461,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     const upsert = (
       resource: Resource,
       meta: {
+        selection_scope: "subtree";
         selected_via: "explicit" | "descendant";
         inherited_from: string | null;
       },
@@ -477,22 +490,17 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
         continue;
       }
       upsert(rootResource, {
+        selection_scope: "subtree",
         selected_via: "explicit",
         inherited_from: null,
       });
-      for (const child of collectDescendants(rootId, [])) {
-        upsert(child, {
-          selected_via: "descendant",
-          inherited_from: rootId,
-        });
-      }
     }
 
     return orderedIds.map((resourceId) => byId.get(resourceId)).filter(Boolean) as BundledResource[];
   }
 
   const finalBundle = bundleResources();
-  const pageLimit = Number.isFinite(Number(state.page_limit)) ? Number(state.page_limit) : 500;
+  const pageLimit = Number.isFinite(Number(state.page_limit)) ? Number(state.page_limit) : 200;
   const workspaceLabel = workspaceName || "your workspace";
   const projectLabel = state.project_name || "this project";
   const title = "Choose Notion Content";
@@ -510,17 +518,6 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     return bucket;
   }
 
-  const descendantCountCache = new Map<string, number>();
-  function descendantCount(resourceId: string) {
-    const cached = descendantCountCache.get(resourceId);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const count = collectDescendants(resourceId, []).length;
-    descendantCountCache.set(resourceId, count);
-    return count;
-  }
-
   const autoIncludedIds = new Set<string>();
   for (const rootId of selectedRootIds) {
     for (const child of collectDescendants(rootId, [])) {
@@ -536,7 +533,9 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     if (
       selectedRootIds.has(resource.resource_id) ||
       autoIncludedIds.has(resource.resource_id) ||
-      matchesQuery(resource, deferredQuery)
+      (searchActive
+        ? remoteSearchIds.has(resource.resource_id) || matchesQuery(resource, deferredQuery)
+        : matchesQuery(resource, deferredQuery))
     ) {
       visibleIds.add(resource.resource_id);
     }
@@ -572,7 +571,14 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
 
   const visibleRows: Array<{ resource: Resource; depth: number }> = [];
   function isExpanded(resourceId: string) {
-    return searchActive || !collapsedIds.has(resourceId);
+    const hasKnownChildren = Boolean((childIndex.get(resourceId) || []).length);
+    if (!hasKnownChildren && !discoveredByRoot.has(resourceId)) {
+      return false;
+    }
+    if (searchActive) {
+      return true;
+    }
+    return !collapsedIds.has(resourceId);
   }
   function appendVisibleRows(resource: Resource, depth: number) {
     if (!visibleIds.has(resource.resource_id)) {
@@ -633,16 +639,85 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     }
   }, [catalogLoaded]);
 
-  function toggleCollapsed(resourceId: string) {
+  useEffect(() => {
+    if (!catalogLoaded) {
+      return;
+    }
+    if (!deferredQuery) {
+      setRemoteSearchIds(new Set());
+      setSearchingCatalog(false);
+      return;
+    }
+
+    setRemoteSearchIds(new Set());
+    setSearchingCatalog(true);
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`${baseUrl}/api/search`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            selection_token: selectionToken,
+            query: deferredQuery,
+          }),
+        });
+        const payload = await response.json();
+        if (cancelled) {
+          return;
+        }
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        const results = dedupeSortResources(Array.isArray(payload.resources) ? payload.resources : []);
+        setCatalog((current) => dedupeSortResources([...current, ...results]));
+        setRemoteSearchIds(new Set(results.map((resource) => resource.resource_id)));
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Remote Notion search failed", error);
+          setRemoteSearchIds(new Set());
+        }
+      } finally {
+        if (!cancelled) {
+          setSearchingCatalog(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [baseUrl, catalogLoaded, deferredQuery, selectionToken]);
+
+  async function toggleCollapsed(resource: Resource) {
+    const resourceId = normalizeNotionIdLike(resource.resource_id);
+    if (!resourceId) {
+      return;
+    }
+
+    if (isExpanded(resourceId)) {
+      setCollapsedIds((current) => {
+        const next = copySet(current);
+        next.add(resourceId);
+        return next;
+      });
+      return;
+    }
+
     setCollapsedIds((current) => {
       const next = copySet(current);
-      if (next.has(resourceId)) {
-        next.delete(resourceId);
-      } else {
-        next.add(resourceId);
-      }
+      next.delete(resourceId);
       return next;
     });
+
+    if (canResourceHaveChildren(resource.resource_type) && !discoveredByRoot.has(resourceId)) {
+      await ensureChildrenForRoot(resourceId, resource.resource_type);
+    }
   }
 
   async function requestHandoffBundle(chosen: BundledResource[]) {
@@ -680,7 +755,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   }
 
   async function finishBinding() {
-    if (!finalBundle.length || loadingRootIds.size) {
+    if (!finalBundle.length) {
       return;
     }
     let bundle = "";
@@ -731,7 +806,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
               <div className="space-y-1">
                 <CardTitle className="text-base">Select Pages and Data Sources</CardTitle>
                 <CardDescription>
-                  Selecting a parent item also includes everything nested under it.
+                  Selecting a root binds that page or data source with subtree scope. Expand rows to inspect nested content on demand.
                 </CardDescription>
               </div>
               <Button
@@ -756,12 +831,15 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
                     });
                   }}
                   className="pl-9"
-                  placeholder="Filter by title, type, or ID"
+                  placeholder="Search workspace by title, type, or ID"
                 />
               </div>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
-              This list comes from Notion search. If something is missing, share it with the integration in Notion first, then click <strong>Refresh</strong>.
+              Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click <strong>Refresh</strong>.
+            </div>
+            <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
+              Expanding a row loads nested content for inspection. It does not change the binding scope of an already selected root.
             </div>
             {truncated ? (
               <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
@@ -782,14 +860,19 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
                     : autoIncludedIds.has(resource.resource_id)
                       ? "descendant"
                       : "none";
+                  const hasChildren = Boolean((childIndex.get(resource.resource_id) || []).length);
+                  const canExpand =
+                    hasChildren ||
+                    loadingRootIds.has(resource.resource_id) ||
+                    (canResourceHaveChildren(resource.resource_type) && !discoveredByRoot.has(resource.resource_id));
                   return (
                     <ResourceRow
                       key={resource.resource_id}
                       resource={resource}
                       selectedState={selectedState}
                       loading={loadingRootIds.has(resource.resource_id)}
-                      includedCount={descendantCount(resource.resource_id)}
-                      hasChildren={(childIndex.get(resource.resource_id) || []).length > 0}
+                      includesSubtree={selectedState === "explicit" && canResourceHaveChildren(resource.resource_type)}
+                      canExpand={canExpand}
                       expanded={isExpanded(resource.resource_id)}
                       depth={depth}
                       disabled={selectedState === "descendant"}
@@ -841,16 +924,18 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
           <CardContent className="flex items-center justify-between gap-3 pt-5">
             <div className="min-w-0">
               <p className="text-sm text-stone-500">
-                {loadingRootIds.size
+                {searchingCatalog
+                  ? "Searching Notion..."
+                  : loadingRootIds.size
                   ? "Loading nested content..."
                   : handoffBundle
                     ? bundleStatus === "copied"
                       ? "The handoff bundle is copied and ready."
                       : "The handoff bundle is ready below."
-                  : `${finalBundle.length} item${finalBundle.length === 1 ? "" : "s"} selected`}
+                  : `${finalBundle.length} root${finalBundle.length === 1 ? "" : "s"} selected`}
               </p>
             </div>
-            <Button disabled={!finalBundle.length || loadingRootIds.size > 0} onClick={() => void finishBinding()}>
+            <Button disabled={!finalBundle.length} onClick={() => void finishBinding()}>
               Connect Selected
             </Button>
           </CardContent>

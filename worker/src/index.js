@@ -1,9 +1,11 @@
 import { SELECTION_UI_CSS, SELECTION_UI_JS } from "../generated/selection_ui_bundle.js";
 
 const DEFAULT_NOTION_VERSION = "2026-03-11";
-const DEFAULT_PAGE_LIMIT = 5000;
-const MIN_PAGE_LIMIT = 500;
-const MAX_PAGE_LIMIT = 5000;
+const DEFAULT_PAGE_LIMIT = 200;
+const MIN_PAGE_LIMIT = 25;
+const MAX_PAGE_LIMIT = 1000;
+const DEFAULT_SEARCH_LIMIT = 50;
+const MAX_SEARCH_LIMIT = 100;
 const STATE_TTL_SECONDS = 3600;
 const SELECTION_TOKEN_TTL_SECONDS = 3600;
 const HANDOFF_BUNDLE_TTL_SECONDS = 3600;
@@ -11,7 +13,6 @@ const PRIVATE_PAYLOAD_VERSION = "v1";
 const DEFAULT_DISCOVERY_NODE_LIMIT = 2000;
 const MAX_DISCOVERY_NODE_LIMIT = 5000;
 const MAX_BLOCK_SCAN_LIMIT = 20000;
-const MAX_DISCOVERY_DEPTH_LIMIT = 128;
 const NOTION_OAUTH_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_API_BASE = "https://api.notion.com/v1";
 
@@ -212,6 +213,10 @@ function validateLocalReturnUrl(value) {
 
 function normalizePageLimit(value) {
   return clampInteger(value, DEFAULT_PAGE_LIMIT, MIN_PAGE_LIMIT, MAX_PAGE_LIMIT);
+}
+
+function normalizeSearchLimit(value) {
+  return clampInteger(value, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT);
 }
 
 function richTextToPlainText(items) {
@@ -416,14 +421,6 @@ function notionBearerHeaders(env, accessToken) {
   };
 }
 
-function normalizeDepthLimit(value) {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return null;
-  }
-  return Math.min(parsed, MAX_DISCOVERY_DEPTH_LIMIT);
-}
-
 async function exchangeCode(env, redirectUri, code) {
   const body = JSON.stringify({
     grant_type: "authorization_code",
@@ -459,11 +456,12 @@ async function refreshAccessToken(env, refreshToken) {
   });
 }
 
-async function fetchSelectableResources(env, accessToken, pageLimit) {
+async function fetchSelectableResources(env, accessToken, pageLimit, options = {}) {
   const resources = [];
   const seenIds = new Set();
   let nextCursor = null;
   let truncated = false;
+  const query = String(options.query || "").trim();
 
   while (resources.length < pageLimit) {
     const body = {
@@ -473,6 +471,9 @@ async function fetchSelectableResources(env, accessToken, pageLimit) {
         timestamp: "last_edited_time",
       },
     };
+    if (query) {
+      body.query = query;
+    }
     if (nextCursor) {
       body.start_cursor = nextCursor;
     }
@@ -814,154 +815,58 @@ async function discoverDataSourceImmediateChildren(env, accessToken, dataSourceI
   });
 }
 
-async function discoverResourceGraph(env, accessToken, seedResources, options = {}) {
-  const depthLimit = normalizeDepthLimit(options.depth_limit);
+async function buildSelectionCatalog(env, accessToken, pageLimit) {
+  return fetchSelectableResources(env, accessToken, pageLimit);
+}
+
+async function searchSelectableResources(env, accessToken, query, limit) {
+  return fetchSelectableResources(env, accessToken, limit, {
+    query,
+  });
+}
+
+async function discoverImmediateChildren(env, accessToken, pageIds, dataSourceIds, options = {}) {
   const nodeLimit = clampInteger(options.node_limit, DEFAULT_DISCOVERY_NODE_LIMIT, 1, MAX_DISCOVERY_NODE_LIMIT);
-  const discovered = new Map();
-  const queue = [];
-  const queuedKeys = new Set();
-  const visitedPages = new Set();
-  const visitedDataSources = new Set();
+  const resources = [];
+  let truncated = false;
   const scanState = {
     scannedBlockCount: 0,
     truncated: false,
   };
+  const remainingCapacity = () => Math.max(1, nodeLimit - resources.length);
 
-  function enqueue(resourceId, resourceType, rootId, depth) {
-    const normalizedId = normalizeNotionIdLike(resourceId);
-    const normalizedType = normalizeResourceType(resourceType);
-    if (!normalizedId || !["page", "data_source"].includes(normalizedType)) {
-      return;
+  for (const pageId of pageIds) {
+    if (resources.length >= nodeLimit || truncated) {
+      truncated = true;
+      break;
     }
-    const queueKey = `${normalizedType}:${normalizedId}`;
-    if (queuedKeys.has(queueKey)) {
-      return;
-    }
-    queuedKeys.add(queueKey);
-    queue.push({
-      queue_key: queueKey,
-      resource_id: normalizedId,
-      resource_type: normalizedType,
-      root_id: normalizeNotionIdLike(rootId) || normalizedId,
-      depth: Number.isFinite(depth) ? depth : 0,
+    const payload = await discoverPageImmediateChildren(env, accessToken, pageId, {
+      root_id: pageId,
+      depth: 0,
+      remaining_limit: remainingCapacity(),
+      scan_state: scanState,
     });
+    resources.push(...payload.resources);
+    truncated = truncated || payload.truncated;
   }
 
-  for (const seed of Array.isArray(seedResources) ? seedResources : []) {
-    enqueue(seed?.resource_id, seed?.resource_type, seed?.root_id || seed?.resource_id, seed?.depth || 0);
-  }
-
-  while (queue.length && !scanState.truncated && discovered.size < nodeLimit) {
-    const current = queue.shift();
-    queuedKeys.delete(current.queue_key);
-
-    if (current.resource_type === "page") {
-      if (visitedPages.has(current.resource_id)) {
-        continue;
-      }
-      visitedPages.add(current.resource_id);
-    } else if (current.resource_type === "data_source") {
-      if (visitedDataSources.has(current.resource_id)) {
-        continue;
-      }
-      visitedDataSources.add(current.resource_id);
-    } else {
-      continue;
+  for (const dataSourceId of dataSourceIds) {
+    if (resources.length >= nodeLimit || truncated) {
+      truncated = true;
+      break;
     }
-
-    if (depthLimit !== null && current.depth >= depthLimit) {
-      continue;
-    }
-
-    const remainingLimit = Math.max(1, nodeLimit - discovered.size);
-    const nextDiscovery =
-      current.resource_type === "page"
-        ? await discoverPageImmediateChildren(env, accessToken, current.resource_id, {
-            root_id: current.root_id,
-            depth: current.depth,
-            remaining_limit: remainingLimit,
-            scan_state: scanState,
-          })
-        : await discoverDataSourceImmediateChildren(env, accessToken, current.resource_id, {
-            root_id: current.root_id,
-            depth: current.depth,
-            remaining_limit: remainingLimit,
-          });
-
-    if (nextDiscovery.truncated) {
-      scanState.truncated = true;
-    }
-
-    for (const resource of nextDiscovery.resources) {
-      if (!resource?.resource_id) {
-        continue;
-      }
-
-      const existing = discovered.get(resource.resource_id);
-      discovered.set(resource.resource_id, {
-        ...(existing || resource),
-        ...resource,
-      });
-
-      if (discovered.size >= nodeLimit) {
-        scanState.truncated = true;
-        break;
-      }
-
-      const normalizedType = normalizeResourceType(resource.resource_type);
-      if (normalizedType === "page" && !visitedPages.has(resource.resource_id)) {
-        enqueue(resource.resource_id, normalizedType, current.root_id, current.depth + 1);
-      } else if (normalizedType === "data_source" && !visitedDataSources.has(resource.resource_id)) {
-        enqueue(resource.resource_id, normalizedType, current.root_id, current.depth + 1);
-      }
-    }
+    const payload = await discoverDataSourceImmediateChildren(env, accessToken, dataSourceId, {
+      root_id: dataSourceId,
+      depth: 0,
+      remaining_limit: remainingCapacity(),
+    });
+    resources.push(...payload.resources);
+    truncated = truncated || payload.truncated;
   }
 
   return {
-    truncated: scanState.truncated || discovered.size >= nodeLimit,
-    resources: Array.from(discovered.values()),
-  };
-}
-
-async function discoverChildPages(env, accessToken, pageIds, options = {}) {
-  return discoverResourceGraph(
-    env,
-    accessToken,
-    pageIds.map((pageId) => ({
-      resource_id: pageId,
-      resource_type: "page",
-    })),
-    options,
-  );
-}
-
-async function discoverDataSourceContents(env, accessToken, dataSourceIds, options = {}) {
-  return discoverResourceGraph(
-    env,
-    accessToken,
-    dataSourceIds.map((dataSourceId) => ({
-      resource_id: dataSourceId,
-      resource_type: "data_source",
-    })),
-    options,
-  );
-}
-
-async function buildSelectionCatalog(env, accessToken, pageLimit) {
-  const searchPayload = await fetchSelectableResources(env, accessToken, pageLimit);
-  const seedResources = searchPayload.resources.filter((resource) => {
-    const resourceType = normalizeResourceType(resource.resource_type);
-    return resourceType === "page" || resourceType === "data_source";
-  });
-  const graphDiscovery = seedResources.length
-    ? await discoverResourceGraph(env, accessToken, seedResources, {
-        node_limit: pageLimit,
-      })
-    : { truncated: false, resources: [] };
-
-  return {
-    truncated: Boolean(searchPayload.truncated || graphDiscovery.truncated),
-    resources: mergeResources(searchPayload.resources, graphDiscovery.resources),
+    truncated,
+    resources: mergeResources(resources),
   };
 }
 
@@ -1462,7 +1367,7 @@ function errorPage(title, message) {
   });
 }
 
-function selectionPage({ baseUrl, state, selectionToken, workspaceName, resources, truncated }) {
+function selectionPage({ baseUrl, state, selectionToken, workspaceName, resources, truncated, catalogLoaded }) {
   const bootstrap = {
     baseUrl,
     state,
@@ -1470,6 +1375,7 @@ function selectionPage({ baseUrl, state, selectionToken, workspaceName, resource
     workspaceName,
     resources,
     truncated: Boolean(truncated),
+    catalogLoaded: Boolean(catalogLoaded),
   };
 
   return `<!doctype html>
@@ -1594,14 +1500,37 @@ async function handleCallback(request, env) {
       backend_url: baseUrl,
       token: sanitizedTokenPayload,
     });
+
+    let initialCatalog = {
+      resources: [],
+      truncated: false,
+      catalogLoaded: false,
+    };
+    try {
+      const pageLimit = normalizePageLimit(state.page_limit);
+      const preloadedCatalog = await buildSelectionCatalog(
+        env,
+        String(sanitizedTokenPayload.access_token || "").trim(),
+        pageLimit,
+      );
+      initialCatalog = {
+        resources: preloadedCatalog.resources,
+        truncated: preloadedCatalog.truncated,
+        catalogLoaded: true,
+      };
+    } catch (preloadError) {
+      console.error("Selection catalog preload failed", preloadError);
+    }
+
     return htmlResponse(
       selectionPage({
         baseUrl,
         state,
         selectionToken,
         workspaceName: sanitizedTokenPayload.workspace_name || null,
-        resources: [],
-        truncated: false,
+        resources: initialCatalog.resources,
+        truncated: initialCatalog.truncated,
+        catalogLoaded: initialCatalog.catalogLoaded,
       }),
     );
   } catch (exc) {
@@ -1643,23 +1572,26 @@ async function handleDiscoverChildren(request, env) {
       return jsonResponse({ ok: true, truncated: false, resources: [] });
     }
 
-    const graphDiscovery = await discoverResourceGraph(
+    const nodeLimit = clampInteger(
+      payload?.node_limit,
+      DEFAULT_DISCOVERY_NODE_LIMIT,
+      1,
+      MAX_DISCOVERY_NODE_LIMIT,
+    );
+    const children = await discoverImmediateChildren(
       env,
       accessToken,
-      [
-        ...pageIds.map((pageId) => ({ resource_id: pageId, resource_type: "page" })),
-        ...dataSourceIds.map((dataSourceId) => ({ resource_id: dataSourceId, resource_type: "data_source" })),
-      ],
+      pageIds,
+      dataSourceIds,
       {
-        depth_limit: payload?.depth_limit,
-        node_limit: payload?.node_limit,
+        node_limit: nodeLimit,
       },
     );
 
     return jsonResponse({
       ok: true,
-      truncated: graphDiscovery.truncated,
-      resources: graphDiscovery.resources,
+      truncated: children.truncated,
+      resources: children.resources,
     });
   } catch (exc) {
     return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
@@ -1682,6 +1614,36 @@ async function handleCatalog(request, env) {
 
     const pageLimit = normalizePageLimit(payload?.page_limit);
     const searchPayload = await buildSelectionCatalog(env, accessToken, pageLimit);
+    return jsonResponse({
+      ok: true,
+      truncated: searchPayload.truncated,
+      resources: searchPayload.resources,
+    });
+  } catch (exc) {
+    return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
+  }
+}
+
+async function handleSearch(request, env) {
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
+  }
+
+  try {
+    const payload = await request.json();
+    const selectionToken = String(payload?.selection_token || "").trim();
+    if (!selectionToken) {
+      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
+    }
+    const query = String(payload?.query || "").trim();
+    if (!query) {
+      return jsonResponse({ ok: true, truncated: false, resources: [] });
+    }
+
+    const selectionSession = await resolveSelectionSession(env, selectionToken);
+    const accessToken = String(selectionSession.token.access_token || "").trim();
+    const limit = normalizeSearchLimit(payload?.limit);
+    const searchPayload = await searchSelectableResources(env, accessToken, query, limit);
     return jsonResponse({
       ok: true,
       truncated: searchPayload.truncated,
@@ -1828,6 +1790,9 @@ export default {
     }
     if (url.pathname === "/api/catalog") {
       return handleCatalog(request, env);
+    }
+    if (url.pathname === "/api/search") {
+      return handleSearch(request, env);
     }
     if (url.pathname === "/api/finalize-selection") {
       return handleFinalizeSelection(request, env);

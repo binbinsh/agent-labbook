@@ -42,6 +42,7 @@ def _tool_definitions() -> list[types.Tool]:
             "resource_url": {"type": "string"},
             "resource_type": {"type": "string"},
             "alias": {"type": "string"},
+            "selection_scope": {"type": "string", "enum": ["resource", "subtree"]},
         },
     }
     return [
@@ -127,7 +128,7 @@ def _tool_definitions() -> list[types.Tool]:
         ),
         types.Tool(
             name="notion_bind_resources",
-            description="Bind one or more existing Notion pages or data sources to the current project using the saved access token.",
+            description="Bind one or more existing Notion pages or data sources to the current project using the saved access token. Pass selection_scope='subtree' to bind a root resource and treat nested content under it as included.",
             inputSchema={
                 "type": "object",
                 "properties": {

@@ -43,8 +43,8 @@ LOCAL_CALLBACK_PATH = "/oauth/handoff"
 CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
 DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS = 1800
 MIN_BROWSER_AUTH_TIMEOUT_SECONDS = 30
-DEFAULT_BROWSER_AUTH_PAGE_LIMIT = 5000
-MIN_BROWSER_AUTH_PAGE_LIMIT = 500
+DEFAULT_BROWSER_AUTH_PAGE_LIMIT = 200
+MIN_BROWSER_AUTH_PAGE_LIMIT = 25
 
 
 def _utc_now() -> str:
@@ -143,6 +143,13 @@ def _slugify_alias(text: str, *, fallback: str) -> str:
     return slug or fallback
 
 
+def _normalize_selection_scope(value: Any) -> str:
+    scope = str(value or "resource").strip().lower() or "resource"
+    if scope not in {"resource", "subtree"}:
+        raise LabbookError("selection_scope must be 'resource' or 'subtree'.")
+    return scope
+
+
 def _default_resource_alias(resources: list[dict[str, Any]]) -> str | None:
     if not resources:
         return None
@@ -211,11 +218,13 @@ def _normalize_binding_entry(
     alias: str | None,
     source: str,
     bound_at: str,
+    selection_scope: str | None = None,
 ) -> dict[str, Any]:
     clean_id = normalize_notion_id(resource_id)
     clean_type = str(resource_type or "unknown").strip() or "unknown"
     clean_title = str(title or "").strip() or f"Notion resource {clean_id[:8]}"
     clean_alias = str(alias or "").strip() or _slugify_alias(clean_title, fallback=f"resource-{clean_id[:8]}")
+    clean_selection_scope = str(selection_scope or "resource").strip() or "resource"
     return {
         "alias": clean_alias,
         "resource_id": clean_id,
@@ -224,6 +233,7 @@ def _normalize_binding_entry(
         "title": clean_title,
         "source": source,
         "bound_at": bound_at,
+        "selection_scope": clean_selection_scope,
     }
 
 
@@ -256,7 +266,7 @@ def _build_setup_guide() -> str:
             "For MCP users:",
             "1. Call `notion_auth_browser` for a direct browser flow, or `notion_start_headless_auth` if the browser cannot be opened locally.",
             f"   For browser auth, prefer a long wait and pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` because users may need several minutes to finish consent and resource selection.",
-            f"   Keep `page_limit` reasonably high too. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped because very small catalogs tend to show only root pages.",
+            f"   `page_limit` now controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped, but remote search still searches the whole shared workspace.",
             "2. Complete the official Notion public integration consent page.",
             "3. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",
             "4. Call `notion_get_api_context` and use the official Notion API directly with the returned access token.",
@@ -292,6 +302,7 @@ def _normalize_resource_input(item: dict[str, Any]) -> dict[str, str | None]:
         "resource_id": normalize_notion_id(resource_ref),
         "resource_type": str(item.get("resource_type") or "").strip() or None,
         "alias": str(item.get("alias") or "").strip() or None,
+        "selection_scope": _normalize_selection_scope(item.get("selection_scope")),
     }
 
 
@@ -500,6 +511,7 @@ def _bindings_from_selected_resources(
                 alias=alias,
                 source="oauth_selection",
                 bound_at=bound_at,
+                selection_scope=str(item.get("selection_scope") or "resource").strip() or "resource",
             )
         )
     return _bindings_payload(resources=resources, project_root=project_root, default_alias=default_alias)
@@ -558,6 +570,7 @@ def _pending_auth_payload(
     auth_url: str,
     return_to: str | None,
     timeout_seconds: int | None = None,
+    page_limit: int | None = None,
 ) -> dict[str, Any]:
     return {
         "version": 1,
@@ -568,6 +581,7 @@ def _pending_auth_payload(
         "auth_url": auth_url,
         "return_to": return_to,
         "timeout_seconds": timeout_seconds,
+        "page_limit": page_limit,
         "started_at": _utc_now(),
     }
 
@@ -632,8 +646,8 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
             f"to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
         ),
         "browser_auth_page_limit_hint": (
-            f"Keep page_limit reasonably high. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped because very small "
-            "catalogs tend to show only root pages."
+            f"page_limit controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} "
+            "are clamped, and remote search still covers the full shared workspace."
         ),
         "authenticated": authenticated,
         "refresh_supported": bool(str(session_payload.get("refresh_token") or "").strip()),
@@ -852,6 +866,7 @@ def bind_resources(
                 alias=alias,
                 source="manual_bind",
                 bound_at=bound_at,
+                selection_scope=_normalize_selection_scope(item.get("selection_scope")),
             )
         )
 
@@ -932,6 +947,11 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
         "default_resource_alias": default_alias,
         "default_binding": default_binding,
         "resources": resources,
+        "binding_model": "explicit_roots_with_selection_scope",
+        "selection_scope_note": (
+            "A binding with selection_scope='subtree' represents an explicitly selected root resource and should be "
+            "treated as including nested content under that root."
+        ),
         "binding_path": str(bindings_path(root)),
         "session_path": str(session_path(root)),
         "refresh_supported": True,

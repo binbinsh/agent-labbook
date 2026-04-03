@@ -4,10 +4,12 @@
   "type": "module",
   "scripts": {
     "build:worker-ui": "node scripts/build_worker_ui.mjs",
+    "test:e2e": "npm run build:worker-ui && playwright test",
     "worker:dev": "npm run build:worker-ui && wrangler dev --config wrangler.toml",
     "worker:deploy": "npm run build:worker-ui && wrangler deploy --config wrangler.toml"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "esbuild": "^0.27.5",
