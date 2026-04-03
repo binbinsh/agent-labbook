@@ -4,6 +4,7 @@ import base64
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import queue
 import re
 import threading
@@ -45,6 +46,16 @@ DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS = 1800
 MIN_BROWSER_AUTH_TIMEOUT_SECONDS = 30
 DEFAULT_BROWSER_AUTH_PAGE_LIMIT = 200
 MIN_BROWSER_AUTH_PAGE_LIMIT = 25
+
+
+def _remote_session_reason() -> str | None:
+    if str(os.getenv("SSH_CONNECTION") or "").strip():
+        return "ssh_connection"
+    if str(os.getenv("SSH_CLIENT") or "").strip():
+        return "ssh_client"
+    if str(os.getenv("SSH_TTY") or "").strip():
+        return "ssh_tty"
+    return None
 
 
 def _utc_now() -> str:
@@ -624,9 +635,12 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     resources = list(bindings.get("resources") or [])
     authenticated = bool(str(session_payload.get("access_token") or "").strip())
     bindings_ready = bool(resources)
+    remote_session_reason = _remote_session_reason()
 
     if pending_auth and str(pending_auth.get("mode") or "") == "headless" and not authenticated:
         recommended_action = "notion_complete_headless_auth"
+    elif not authenticated and remote_session_reason:
+        recommended_action = "notion_start_headless_auth"
     elif not authenticated:
         recommended_action = "notion_auth_browser"
     elif not bindings_ready:
@@ -645,10 +659,17 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
             "When using notion_auth_browser, prefer a long timeout_seconds value and keep waiting for the browser handoff "
             f"to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
         ),
+        "remote_auth_hint": (
+            "Detected an SSH or remote shell session. Prefer notion_start_headless_auth because the local-browser "
+            "handoff posts back to 127.0.0.1 on the machine running the MCP server."
+            if remote_session_reason
+            else None
+        ),
         "browser_auth_page_limit_hint": (
             f"page_limit controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} "
             "are clamped, and remote search still covers the full shared workspace."
         ),
+        "remote_session_detected": bool(remote_session_reason),
         "authenticated": authenticated,
         "refresh_supported": bool(str(session_payload.get("refresh_token") or "").strip()),
         "workspace_name": session_payload.get("workspace_name"),
@@ -680,6 +701,20 @@ def auth_browser(
     session_id = uuid4().hex
     wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
+    remote_session_reason = _remote_session_reason()
+
+    if remote_session_reason:
+        result = start_headless_auth(
+            project_root=root,
+            page_limit=normalized_page_limit,
+        )
+        result["auth_mode"] = "headless"
+        result["auto_switched_to_headless"] = True
+        result["reason"] = (
+            "Detected an SSH or remote shell session. The browser handoff for notion_auth_browser posts back to "
+            "127.0.0.1 on the machine running the MCP server, so this request was switched to headless auth."
+        )
+        return result
 
     handoff_server = _LocalHandoffServer(expected_session_id=session_id)
     handoff_server.start()

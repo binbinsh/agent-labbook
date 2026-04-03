@@ -17,6 +17,7 @@ from labbook.service import (
     DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
     MIN_BROWSER_AUTH_PAGE_LIMIT,
     _bindings_from_selected_resources,
+    auth_browser,
     bind_resources,
     get_api_context,
     normalize_browser_auth_page_limit,
@@ -64,6 +65,15 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNone(payload["pending_auth"])
         self.assertTrue(payload["stale_pending_auth_cleared"])
 
+    def test_status_recommends_headless_when_running_over_ssh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict("os.environ", {"SSH_CONNECTION": "1 2 3 4"}, clear=False):
+                payload = status(tmpdir)
+
+        self.assertEqual(payload["recommended_action"], "notion_start_headless_auth")
+        self.assertTrue(payload["remote_session_detected"])
+        self.assertIn("127.0.0.1", payload["remote_auth_hint"])
+
     def test_start_headless_auth_persists_clamped_page_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             payload = start_headless_auth(project_root=tmpdir, page_limit=10)
@@ -88,6 +98,19 @@ class ServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
+
+    def test_auth_browser_auto_switches_to_headless_over_ssh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict("os.environ", {"SSH_CONNECTION": "1 2 3 4"}, clear=False):
+                payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=False)
+                pending_auth = load_pending_auth(tmpdir)
+
+        self.assertEqual(payload["auth_mode"], "headless")
+        self.assertTrue(payload["auto_switched_to_headless"])
+        self.assertIn("127.0.0.1", payload["reason"])
+        self.assertEqual(payload["page_limit"], MIN_BROWSER_AUTH_PAGE_LIMIT)
+        self.assertIsNotNone(pending_auth)
+        self.assertEqual(pending_auth["mode"], "headless")
 
     def test_api_context_exposes_selection_scope_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
