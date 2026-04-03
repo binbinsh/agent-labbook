@@ -1,4 +1,4 @@
-# agent-labbook
+# Agent Labbook
 
 Agent Labbook is the Notion connection layer for Codex, Claude Code, and other MCP clients. It starts Notion auth, lets you choose which pages or data sources belong to a project, stores tokens and bindings locally in `.labbook/`, and returns the API context your agent needs to call Notion directly.
 
