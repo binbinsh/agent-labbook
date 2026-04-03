@@ -51,6 +51,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def normalize_browser_auth_timeout_seconds(timeout_seconds: int | str | None = None) -> int:
     if timeout_seconds in (None, ""):
         return DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS
@@ -75,6 +88,23 @@ def normalize_browser_auth_page_limit(page_limit: int | str | None = None) -> in
     if limit < MIN_BROWSER_AUTH_PAGE_LIMIT:
         return MIN_BROWSER_AUTH_PAGE_LIMIT
     return min(limit, DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
+
+
+def pending_auth_is_stale(pending_auth: dict[str, Any] | None) -> bool:
+    if not isinstance(pending_auth, dict) or not pending_auth:
+        return False
+    started_at = _parse_utc_timestamp(pending_auth.get("started_at"))
+    if started_at is None:
+        return False
+
+    mode = str(pending_auth.get("mode") or "").strip()
+    timeout_seconds = (
+        normalize_browser_auth_timeout_seconds(pending_auth.get("timeout_seconds"))
+        if mode == "local_browser"
+        else 3600
+    )
+    age_seconds = int((datetime.now(timezone.utc) - started_at).total_seconds())
+    return age_seconds > timeout_seconds
 
 
 def _rich_text_to_plain_text(items: Any) -> str | None:
@@ -571,6 +601,11 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     backend_url = effective_backend_url()
     session_payload = load_project_session(root) or {}
     pending_auth = load_pending_auth(root) or {}
+    stale_pending_auth_cleared = False
+    if pending_auth_is_stale(pending_auth):
+        clear_pending_auth(root)
+        pending_auth = {}
+        stale_pending_auth_cleared = True
     bindings = load_project_bindings(root) or {}
     resources = list(bindings.get("resources") or [])
     authenticated = bool(str(session_payload.get("access_token") or "").strip())
@@ -612,6 +647,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "binding_path": str(bindings_path(root)),
         "pending_auth_path": str(pending_auth_path(root)),
         "pending_auth": pending_auth or None,
+        "stale_pending_auth_cleared": stale_pending_auth_cleared,
         "ready": authenticated and bindings_ready,
         "recommended_action": recommended_action,
         "setup_guide": None if authenticated else _build_setup_guide(),
