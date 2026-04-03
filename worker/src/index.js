@@ -724,59 +724,6 @@ async function retrieveDataSourceResourcesForDatabase(
   }
 }
 
-async function tryRetrieveResource(env, accessToken, resourceId, resourceType) {
-  if (resourceType === "page") {
-    const payload = await notionJson(env, `/pages/${resourceId}`, {
-      method: "GET",
-      headers: notionBearerHeaders(env, accessToken),
-    });
-    return normalizeResource(payload, {
-      resource_type: "page",
-    });
-  }
-
-  if (resourceType === "data_source") {
-    const payload = await notionJson(env, `/data_sources/${resourceId}`, {
-      method: "GET",
-      headers: notionBearerHeaders(env, accessToken),
-    });
-    return normalizeResource(payload, {
-      resource_type: "data_source",
-    });
-  }
-
-  throw new Error(`Unsupported resource type: ${resourceType}`);
-}
-
-async function resolveResourceReference(env, accessToken, resourceRef, resourceType = null) {
-  const resourceId = normalizeNotionIdLike(resourceRef);
-  if (!resourceId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resourceId)) {
-    throw new Error("Could not find a valid Notion page or data source ID in that input.");
-  }
-
-  const preferredType = normalizeResourceType(resourceType);
-  const candidateTypes =
-    preferredType && preferredType !== "unknown"
-      ? [preferredType]
-      : ["page", "data_source"];
-
-  let lastError = null;
-  for (const candidateType of candidateTypes) {
-    try {
-      return await tryRetrieveResource(env, accessToken, resourceId, candidateType);
-    } catch (error) {
-      lastError = error;
-      const message = String(error?.message || error || "");
-      if (/Notion API (400|404)/.test(message)) {
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw lastError || new Error("Could not retrieve that Notion resource.");
-}
-
 async function discoverPageImmediateChildren(env, accessToken, pageId, options = {}) {
   const scanState = options.scan_state || { scannedBlockCount: 0, truncated: false };
   const rootId = normalizeNotionIdLike(options.root_id || pageId) || pageId;
@@ -1746,36 +1693,6 @@ async function handleCatalog(request, env) {
   }
 }
 
-async function handleResolveResource(request, env) {
-  if (request.method !== "POST") {
-    return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
-  }
-
-  try {
-    const payload = await request.json();
-    const selectionToken = String(payload?.selection_token || "").trim();
-    const resourceRef = String(payload?.resource_id_or_url || payload?.resource_id || payload?.resource_url || "").trim();
-    const resourceType = String(payload?.resource_type || "").trim();
-
-    if (!selectionToken) {
-      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
-    }
-    if (!resourceRef) {
-      return jsonResponse({ ok: false, error: "resource_id_or_url is required." }, { status: 400 });
-    }
-
-    const selectionSession = await resolveSelectionSession(env, selectionToken);
-    const accessToken = String(selectionSession.token.access_token || "").trim();
-    const resource = await resolveResourceReference(env, accessToken, resourceRef, resourceType);
-    return jsonResponse({
-      ok: true,
-      resource,
-    });
-  } catch (exc) {
-    return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
-  }
-}
-
 async function handleFinalizeSelection(request, env) {
   if (request.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
@@ -1912,9 +1829,6 @@ export default {
     }
     if (url.pathname === "/api/catalog") {
       return handleCatalog(request, env);
-    }
-    if (url.pathname === "/api/resolve-resource") {
-      return handleResolveResource(request, env);
     }
     if (url.pathname === "/api/finalize-selection") {
       return handleFinalizeSelection(request, env);

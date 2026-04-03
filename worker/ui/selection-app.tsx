@@ -1,6 +1,8 @@
 import { startTransition, useDeferredValue, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  ChevronDown,
+  ChevronRight,
   Database,
   FileText,
   LoaderCircle,
@@ -230,17 +232,23 @@ function ResourceRow({
   selectedState,
   loading,
   includedCount,
+  hasChildren,
+  expanded,
   depth = 0,
   disabled = false,
   onToggle,
+  onToggleExpand,
 }: {
   resource: Resource;
   selectedState: "none" | "explicit" | "descendant";
   loading: boolean;
   includedCount: number;
+  hasChildren: boolean;
+  expanded: boolean;
   depth?: number;
   disabled?: boolean;
   onToggle?: (resource: Resource, checked: boolean) => Promise<void> | void;
+  onToggleExpand?: (resourceId: string) => void;
 }) {
   const selected = selectedState !== "none";
   const edited = formatDate(resource.last_edited_time);
@@ -254,7 +262,7 @@ function ResourceRow({
     .join("\n");
 
   return (
-    <label
+    <div
       className={cn(
         "flex min-h-9 items-center gap-2 rounded-lg px-2 py-1.5 transition",
         selectedState === "explicit"
@@ -266,6 +274,19 @@ function ResourceRow({
       style={{ paddingLeft: `${8 + depth * 18}px` }}
       title={details}
     >
+      {hasChildren ? (
+        <button
+          type="button"
+          className="flex size-4 shrink-0 items-center justify-center rounded text-stone-500 hover:bg-stone-200/60 hover:text-stone-700"
+          aria-label={expanded ? "Collapse nested items" : "Expand nested items"}
+          onClick={() => onToggleExpand?.(resource.resource_id)}
+        >
+          {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        </button>
+      ) : (
+        <span className="size-4 shrink-0" aria-hidden="true" />
+      )}
+
       <Checkbox
         checked={selected}
         disabled={disabled}
@@ -292,19 +313,19 @@ function ResourceRow({
           ) : null}
           {selectedState === "descendant" ? (
             <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              Included
+              Included via parent
             </Badge>
           ) : null}
           {includedCount > 0 ? (
             <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              +{includedCount} nested pages
+              +{includedCount} nested items
             </Badge>
           ) : null}
         </div>
       </div>
 
       {loading ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-stone-500" /> : null}
-    </label>
+    </div>
   );
 }
 
@@ -315,15 +336,14 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   const [selectedRootIds, setSelectedRootIds] = useState<Set<string>>(new Set());
   const [discoveredByRoot, setDiscoveredByRoot] = useState<Map<string, Resource[]>>(new Map());
   const [loadingRootIds, setLoadingRootIds] = useState<Set<string>>(new Set());
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [inputValue, setInputValue] = useState("");
-  const [query, setQuery] = useState("");
   const [handoffBundle, setHandoffBundle] = useState("");
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
-  const [resolvingManualResource, setResolvingManualResource] = useState(false);
   const [bundleStatus, setBundleStatus] = useState<"idle" | "ready" | "copied">("idle");
   const outputRef = useRef<HTMLDivElement | null>(null);
 
-  const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+  const deferredQuery = useDeferredValue(inputValue.trim().toLowerCase());
 
   function getRootResource(resourceId: string) {
     return rootIndex.get(normalizeNotionIdLike(resourceId));
@@ -412,6 +432,11 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
       next.add(resourceId);
       return next;
     });
+    setCollapsedIds((current) => {
+      const next = copySet(current);
+      next.delete(resourceId);
+      return next;
+    });
 
     await ensureChildrenForRoot(resourceId, resource.resource_type);
   }
@@ -469,8 +494,8 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   const pageLimit = Number.isFinite(Number(state.page_limit)) ? Number(state.page_limit) : 500;
   const workspaceLabel = workspaceName || "your workspace";
   const projectLabel = state.project_name || "this project";
-  const title = "Choose Notion Resources";
-  const titleLine = `${workspaceLabel} for ${projectLabel}`;
+  const title = "Choose Notion Content";
+  const titleLine = `Pick the pages and data sources from ${workspaceLabel} that ${projectLabel} should be allowed to use.`;
 
   const childIndex = buildChildIndex(catalog);
   const parentIndex = new Map(catalog.map((resource) => [resource.resource_id, resolvedParentId(resource)]));
@@ -504,9 +529,8 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     }
   }
 
-  const visibleIds = new Set<string>(
-    deferredQuery ? [] : catalog.map((resource) => resource.resource_id),
-  );
+  const searchActive = Boolean(deferredQuery);
+  const visibleIds = new Set<string>(searchActive ? [] : catalog.map((resource) => resource.resource_id));
   for (const resource of catalog) {
     if (
       selectedRootIds.has(resource.resource_id) ||
@@ -546,21 +570,22 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     });
 
   const visibleRows: Array<{ resource: Resource; depth: number }> = [];
+  function isExpanded(resourceId: string) {
+    return searchActive || !collapsedIds.has(resourceId);
+  }
   function appendVisibleRows(resource: Resource, depth: number) {
     if (!visibleIds.has(resource.resource_id)) {
       return;
     }
     visibleRows.push({ resource, depth });
-    for (const child of childIndex.get(resource.resource_id) || []) {
-      appendVisibleRows(child, depth + 1);
+    if (isExpanded(resource.resource_id)) {
+      for (const child of childIndex.get(resource.resource_id) || []) {
+        appendVisibleRows(child, depth + 1);
+      }
     }
   }
   for (const resource of rootResources) {
     appendVisibleRows(resource, 0);
-  }
-
-  function applySearch() {
-    setQuery(inputValue);
   }
 
   async function refreshCatalog() {
@@ -600,48 +625,16 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     }
   }
 
-  async function addResourceByReference() {
-    const resourceRef = inputValue.trim();
-    if (!resourceRef) {
-      return;
-    }
-    setResolvingManualResource(true);
-    try {
-      const response = await fetch(`${baseUrl}/api/resolve-resource`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          selection_token: selectionToken,
-          resource_id_or_url: resourceRef,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || `HTTP ${response.status}`);
+  function toggleCollapsed(resourceId: string) {
+    setCollapsedIds((current) => {
+      const next = copySet(current);
+      if (next.has(resourceId)) {
+        next.delete(resourceId);
+      } else {
+        next.add(resourceId);
       }
-
-      const resolved = dedupeSortResources(payload.resource ? [payload.resource] : [])[0];
-      if (!resolved) {
-        throw new Error("Worker did not return a Notion resource.");
-      }
-
-      setCatalog((current) => dedupeSortResources([...current, resolved]));
-      setSelectedRootIds((current) => {
-        const next = copySet(current);
-        next.add(resolved.resource_id);
-        return next;
-      });
-      setInputValue("");
-      setQuery("");
-
-      await ensureChildrenForRoot(resolved.resource_id, resolved.resource_type);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : String(error));
-    } finally {
-      setResolvingManualResource(false);
-    }
+      return next;
+    });
   }
 
   async function requestHandoffBundle(chosen: BundledResource[]) {
@@ -728,7 +721,10 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
           <CardHeader className="gap-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1">
-                <CardTitle className="text-base">Pages and Data Sources</CardTitle>
+                <CardTitle className="text-base">Select Pages and Data Sources</CardTitle>
+                <CardDescription>
+                  Selecting a parent item also includes everything nested under it.
+                </CardDescription>
               </div>
               <Button
                 variant="secondary"
@@ -752,33 +748,16 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
                     });
                   }}
                   className="pl-9"
-                  placeholder="Search, or paste a Notion page or data source URL or ID"
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      applySearch();
-                    }
-                  }}
+                  placeholder="Filter by title, type, or ID"
                 />
               </div>
-              <Button
-                variant="secondary"
-                onClick={() => void addResourceByReference()}
-                disabled={!inputValue.trim() || resolvingManualResource}
-              >
-                {resolvingManualResource ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-                Add URL
-              </Button>
-              <Button onClick={() => applySearch()} disabled={!inputValue.trim() && !query.trim()}>
-                Search
-              </Button>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
-              Newly shared pages and data sources may not appear right away because this list comes from Notion search. Click <strong>Refresh</strong>, or paste its URL or ID here.
+              This list comes from Notion search. If something is missing, share it with the integration in Notion first, then click <strong>Refresh</strong>.
             </div>
             {truncated ? (
               <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
-                The initial list hit the current page limit, so some resources may still be omitted until you search, refresh, or add a URL directly.
+                This workspace is large, so the first pass was trimmed. Use the filter above or click <strong>Refresh</strong> after opening up access to more content.
               </div>
             ) : null}
           </CardHeader>
@@ -797,17 +776,20 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
                       resource={resource}
                       selectedState={selectedState}
                       loading={loadingRootIds.has(resource.resource_id)}
-                      includedCount={resource.resource_type === "page" ? descendantCount(resource.resource_id) : 0}
+                      includedCount={descendantCount(resource.resource_id)}
+                      hasChildren={(childIndex.get(resource.resource_id) || []).length > 0}
+                      expanded={isExpanded(resource.resource_id)}
                       depth={depth}
                       disabled={selectedState === "descendant"}
                       onToggle={toggleResourceSelection}
+                      onToggleExpand={toggleCollapsed}
                     />
                   );
                 })}
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500">
-                No accessible resources matched this filter.
+                No pages or data sources matched this filter.
               </div>
             )}
           </CardContent>
@@ -817,16 +799,16 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
           <div ref={outputRef}>
             <Card className="border-stone-200 shadow-sm">
               <CardHeader>
-                <CardTitle className="text-base">Handoff Bundle</CardTitle>
+                <CardTitle className="text-base">Complete Setup in Codex</CardTitle>
                 <CardDescription>
-                  Paste this value into <code>notion_complete_headless_auth</code>.
+                  Paste this value into <code>notion_complete_headless_auth</code> to finish connecting this project.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">
                   {bundleStatus === "copied"
-                    ? "Bundle generated and copied to your clipboard."
-                    : "Bundle generated. Copy it and paste it into notion_complete_headless_auth."}
+                    ? "The handoff bundle is ready and has been copied to your clipboard."
+                    : "The handoff bundle is ready. Copy it and paste it into notion_complete_headless_auth."}
                 </div>
                 <textarea
                   readOnly
@@ -848,16 +830,16 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
             <div className="min-w-0">
               <p className="text-sm text-stone-500">
                 {loadingRootIds.size
-                  ? "Loading selected pages..."
+                  ? "Loading nested content..."
                   : handoffBundle
                     ? bundleStatus === "copied"
-                      ? "Bundle copied to clipboard"
-                      : "Bundle ready below"
-                  : `${finalBundle.length} resource${finalBundle.length === 1 ? "" : "s"} selected`}
+                      ? "The handoff bundle is copied and ready."
+                      : "The handoff bundle is ready below."
+                  : `${finalBundle.length} item${finalBundle.length === 1 ? "" : "s"} selected`}
               </p>
             </div>
             <Button disabled={!finalBundle.length || loadingRootIds.size > 0} onClick={() => void finishBinding()}>
-              Finish Binding
+              Connect Selected
             </Button>
           </CardContent>
         </Card>
