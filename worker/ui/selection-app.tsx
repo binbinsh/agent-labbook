@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import {
   Database,
   FileText,
-  Link2,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -313,14 +312,12 @@ function ResourceRow({
 
 function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources, truncated }: SelectionConfig) {
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
-  const [catalogTruncated, setCatalogTruncated] = useState(Boolean(truncated));
   const rootIndex = new Map(catalog.map((resource) => [resource.resource_id, resource]));
 
   const [selectedRootIds, setSelectedRootIds] = useState<Set<string>>(new Set());
   const [discoveredByRoot, setDiscoveredByRoot] = useState<Map<string, Resource[]>>(new Map());
   const [loadingRootIds, setLoadingRootIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
-  const [manualResourceRef, setManualResourceRef] = useState("");
   const [handoffBundle, setHandoffBundle] = useState("");
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [resolvingManualResource, setResolvingManualResource] = useState(false);
@@ -466,7 +463,8 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
   const pageLimit = Number.isFinite(Number(state.page_limit)) ? Number(state.page_limit) : 500;
   const workspaceLabel = tokenPayload.workspace_name || "your workspace";
   const projectLabel = state.project_name || "this project";
-  const title = `Choose Pages and Data Sources in ${workspaceLabel} for Project ${projectLabel}`;
+  const title = "Choose Notion Resources";
+  const titleLine = `${workspaceLabel} for ${projectLabel}`;
 
   const descendantIndices = new Map<string, Map<string, Resource[]>>();
   const hiddenTopLevelDescendantIds = new Set<string>();
@@ -528,7 +526,6 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
           ...selectedResources,
         ]),
       );
-      setCatalogTruncated(Boolean(payload.truncated));
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally {
@@ -537,7 +534,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
   }
 
   async function addResourceByReference() {
-    const resourceRef = manualResourceRef.trim();
+    const resourceRef = query.trim();
     if (!resourceRef) {
       return;
     }
@@ -569,7 +566,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
         next.add(resolved.resource_id);
         return next;
       });
-      setManualResourceRef("");
+      setQuery("");
 
       if (resolved.resource_type === "page") {
         await ensureChildrenForRoot(resolved.resource_id, resolved.resource_type);
@@ -680,6 +677,7 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
           <h1 className="max-w-2xl text-xl font-semibold tracking-tight text-stone-950 sm:text-2xl">
             {title}
           </h1>
+          <p className="text-sm text-stone-500">{titleLine}</p>
         </div>
 
         <Card className="border-stone-200 shadow-sm">
@@ -709,40 +707,22 @@ function SelectionApp({ baseUrl, state, selectionToken, tokenPayload, resources,
                   });
                 }}
                 className="pl-9"
-                placeholder="Search pages, data sources, or resource IDs"
+                placeholder="Search, or paste a Notion page or data source URL or ID"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void addResourceByReference();
+                  }
+                }}
               />
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
-              Notion&apos;s chooser is based on search results. Newly shared pages and data sources can take a while to appear.
-              Click <strong>Refresh</strong> after sharing, or paste a Notion page or data source URL below to add it directly.
+              Newly shared pages and data sources may not appear right away because this list comes from Notion search. Click <strong>Refresh</strong>, or paste its URL or ID here.
             </div>
-            {catalogTruncated ? (
-              <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
-                The current list is truncated to the first {pageLimit} search results from Notion. If something is missing,
-                add it directly by URL or ID.
-              </div>
-            ) : null}
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <div className="relative flex-1">
-                <Link2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
-                <Input
-                  value={manualResourceRef}
-                  onChange={(event) => {
-                    setManualResourceRef(event.target.value);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void addResourceByReference();
-                    }
-                  }}
-                  className="pl-9"
-                  placeholder="Paste a Notion page or data source URL or ID"
-                />
-              </div>
-              <Button variant="secondary" onClick={() => void addResourceByReference()} disabled={!manualResourceRef.trim() || resolvingManualResource}>
+            <div className="flex justify-end">
+              <Button variant="secondary" onClick={() => void addResourceByReference()} disabled={!query.trim() || resolvingManualResource}>
                 {resolvingManualResource ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-                Add by URL
+                Add URL
               </Button>
             </div>
           </CardHeader>

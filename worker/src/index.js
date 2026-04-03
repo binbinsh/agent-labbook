@@ -1166,7 +1166,7 @@ function selectionPage({ baseUrl, state, selectionToken, tokenPayload, resources
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>Agent Labbook Authorization</title>
+    <title>Choose Notion Resources</title>
     <style>
       html, body, #selection-app-root {
         min-height: 100%;
