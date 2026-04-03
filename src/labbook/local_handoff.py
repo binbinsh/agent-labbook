@@ -131,11 +131,23 @@ class _PersistentLocalHandoffServer:
         handler.send_response(200)
         handler.send_header("Content-Type", "text/html; charset=utf-8")
         handler.end_headers()
+        message_payload = json.dumps(
+            {
+                "type": "agent-labbook-local-handoff-success",
+                "session_id": self.expected_session_id,
+            }
+        )
         handler.wfile.write(
             (
                 "<!doctype html><html><body>"
                 "<h1>Agent Labbook is connected</h1>"
                 "<p>You can close this tab and return to Codex.</p>"
+                "<script>"
+                f"const payload = {message_payload};"
+                "if (window.opener && !window.opener.closed) {"
+                "  try { window.opener.postMessage(payload, '*'); } catch {}"
+                "}"
+                "</script>"
                 "</body></html>"
             ).encode("utf-8")
         )

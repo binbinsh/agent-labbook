@@ -55,6 +55,10 @@ type SelectionConfig = {
   catalogLoaded: boolean;
 };
 
+const LOCAL_HANDOFF_SUCCESS_MESSAGE = "agent-labbook-local-handoff-success";
+const LOCAL_HANDOFF_WINDOW_NAME = "agent_labbook_local_handoff";
+const LOCAL_HANDOFF_WAIT_TIMEOUT_MS = 10000;
+
 declare global {
   interface Window {
     __AGENT_LABBOOK_SELECTION__?: SelectionConfig;
@@ -358,7 +362,9 @@ function SelectionApp({
   const [searchingCatalog, setSearchingCatalog] = useState(false);
   const [remoteSearchIds, setRemoteSearchIds] = useState<Set<string>>(new Set());
   const [catalogLoaded, setCatalogLoaded] = useState(Boolean(initialCatalogLoaded));
-  const [localDeliveryStatus, setLocalDeliveryStatus] = useState<"idle" | "delivered" | "fallback">("idle");
+  const [localDeliveryStatus, setLocalDeliveryStatus] = useState<"idle" | "delivering" | "delivered" | "fallback">(
+    "idle",
+  );
   const outputRef = useRef<HTMLDivElement | null>(null);
 
   const deferredQuery = useDeferredValue(inputValue.trim().toLowerCase());
@@ -742,29 +748,102 @@ function SelectionApp({
     return handoffBundle;
   }
 
-  async function submitToLocalhost(bundle: string) {
+  function openLocalDeliveryWindow() {
+    if (!state.return_to) {
+      return null;
+    }
+    try {
+      const popup = window.open("", LOCAL_HANDOFF_WINDOW_NAME, "popup=yes,width=480,height=720");
+      if (!popup) {
+        return null;
+      }
+      popup.document.write(
+        "<!doctype html><html><body><p style=\"font-family: sans-serif; padding: 24px;\">Connecting Agent Labbook to the local MCP listener...</p></body></html>",
+      );
+      popup.document.close();
+      return popup;
+    } catch {
+      return null;
+    }
+  }
+
+  function submitToLocalhostWindow(popup: Window, bundle: string) {
     if (!state.return_to) {
       return false;
     }
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
     try {
-      const body = new URLSearchParams({
-        session_id: state.session_id,
-        handoff_bundle: bundle,
-      });
-      await fetch(String(state.return_to), {
-        method: "POST",
-        body,
-        mode: "no-cors",
-        signal: controller.signal,
-      });
+      const doc = popup.document;
+      doc.open();
+      doc.write("<!doctype html><html><body></body></html>");
+      doc.close();
+
+      const form = doc.createElement("form");
+      form.method = "POST";
+      form.action = String(state.return_to);
+      form.target = "_self";
+
+      const sessionInput = doc.createElement("input");
+      sessionInput.type = "hidden";
+      sessionInput.name = "session_id";
+      sessionInput.value = state.session_id;
+
+      const bundleInput = doc.createElement("input");
+      bundleInput.type = "hidden";
+      bundleInput.name = "handoff_bundle";
+      bundleInput.value = bundle;
+
+      form.appendChild(sessionInput);
+      form.appendChild(bundleInput);
+      doc.body.appendChild(form);
+      form.submit();
       return true;
     } catch {
       return false;
-    } finally {
-      window.clearTimeout(timeoutId);
     }
+  }
+
+  function waitForLocalDeliveryConfirmation() {
+    if (!state.return_to) {
+      return Promise.resolve(false);
+    }
+
+    const expectedOrigin = new URL(String(state.return_to)).origin;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const timeoutId = window.setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.removeEventListener("message", handleMessage);
+        resolve(false);
+      }, LOCAL_HANDOFF_WAIT_TIMEOUT_MS);
+
+      function handleMessage(event: MessageEvent) {
+        if (event.origin !== expectedOrigin) {
+          return;
+        }
+        const payload = event.data;
+        if (!(payload && typeof payload === "object")) {
+          return;
+        }
+        if (
+          payload.type !== LOCAL_HANDOFF_SUCCESS_MESSAGE ||
+          String(payload.session_id || "") !== String(state.session_id || "")
+        ) {
+          return;
+        }
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timeoutId);
+        window.removeEventListener("message", handleMessage);
+        resolve(true);
+      }
+
+      window.addEventListener("message", handleMessage);
+    });
   }
 
   async function finishBinding() {
@@ -772,6 +851,9 @@ function SelectionApp({
       return;
     }
     setLocalDeliveryStatus("idle");
+    setHandoffBundle("");
+
+    const localWindow = state.mode === "local_browser" ? openLocalDeliveryWindow() : null;
     let bundle = "";
     try {
       bundle = await requestHandoffBundle(finalBundle);
@@ -780,7 +862,9 @@ function SelectionApp({
       return;
     }
     if (state.mode === "local_browser") {
-      const delivered = await submitToLocalhost(bundle);
+      setLocalDeliveryStatus("delivering");
+      const submitted = localWindow ? submitToLocalhostWindow(localWindow, bundle) : false;
+      const delivered = submitted ? await waitForLocalDeliveryConfirmation() : false;
       if (delivered) {
         setLocalDeliveryStatus("delivered");
         return;
@@ -928,6 +1012,8 @@ function SelectionApp({
               <p className="text-sm text-stone-500">
                 {searchingCatalog
                   ? "Searching Notion..."
+                  : localDeliveryStatus === "delivering"
+                    ? "Trying to deliver the handoff through a local browser window..."
                   : localDeliveryStatus === "delivered"
                     ? "The handoff was sent back to the local MCP server. You can close this tab."
                   : loadingRootIds.size

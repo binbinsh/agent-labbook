@@ -1,8 +1,69 @@
+import http from "node:http";
+
 import { expect, test } from "@playwright/test";
 
 import { TEST_IDS, startWorkerTestServer } from "./support/worker-test-server.mjs";
 
 let testServer;
+
+function startLocalHandoffServer(expectedSessionId) {
+  let resolveBody;
+  const bodyPromise = new Promise((resolve) => {
+    resolveBody = resolve;
+  });
+
+  const server = http.createServer((request, response) => {
+    if (request.method !== "POST" || request.url !== "/oauth/handoff") {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+
+    let rawBody = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      rawBody += chunk;
+    });
+    request.on("end", () => {
+      const form = new URLSearchParams(rawBody);
+      resolveBody({
+        sessionId: form.get("session_id"),
+        handoffBundle: form.get("handoff_bundle"),
+      });
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html><html><body><script>
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(${JSON.stringify(
+            {
+              type: "agent-labbook-local-handoff-success",
+              session_id: expectedSessionId,
+            },
+          )}, "*");
+        }
+      </script><h1>Connected</h1></body></html>`);
+    });
+  });
+
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolve({
+        close: () =>
+          new Promise((closeResolve, closeReject) => {
+            server.close((error) => {
+              if (error) {
+                closeReject(error);
+                return;
+              }
+              closeResolve();
+            });
+          }),
+        url: `http://127.0.0.1:${address.port}/oauth/handoff`,
+        bodyPromise,
+      });
+    });
+  });
+}
 
 test.beforeAll(async () => {
   testServer = await startWorkerTestServer();
@@ -100,6 +161,41 @@ test("local browser flow falls back to showing the handoff bundle when localhost
   await projectHubRow.getByRole("checkbox").click();
   await page.getByRole("button", { name: "Connect Selected" }).click();
 
-  await expect(page.getByText("could not reach the MCP server on 127.0.0.1")).toBeVisible();
+  await expect(page.getByText("could not reach the MCP server on 127.0.0.1")).toBeVisible({ timeout: 15000 });
   await expect(page.locator("textarea")).not.toHaveValue("");
+});
+
+test("local browser flow can deliver the handoff through a popup localhost navigation", async ({ page }) => {
+  const sessionId = "e2e-session-local-success";
+  const localServer = await startLocalHandoffServer(sessionId);
+  const startResponse = await fetch(
+    `${testServer.baseUrl}/oauth/start?mode=local_browser&session_id=${sessionId}&project_name=agent-labbook-e2e&page_limit=25&return_to=${encodeURIComponent(localServer.url)}`,
+    {
+      redirect: "manual",
+    },
+  );
+
+  expect(startResponse.status).toBe(302);
+  const location = startResponse.headers.get("location");
+  expect(location).toBeTruthy();
+  const state = new URL(location).searchParams.get("state");
+  expect(state).toBeTruthy();
+
+  try {
+    await page.goto(`${testServer.baseUrl}/oauth/callback?code=fake-oauth-code&state=${encodeURIComponent(state)}`);
+    const projectHubRow = page.locator(`[data-resource-id="${TEST_IDS.PROJECT_HUB_ID}"]`);
+    await projectHubRow.getByRole("checkbox").click();
+
+    const popupPromise = page.waitForEvent("popup");
+    await page.getByRole("button", { name: "Connect Selected" }).click();
+    const popup = await popupPromise;
+    await popup.waitForLoadState("domcontentloaded");
+
+    await expect(page.getByText("The handoff was sent back to the local MCP server.")).toBeVisible();
+    const delivered = await localServer.bodyPromise;
+    expect(delivered.sessionId).toBe(sessionId);
+    expect(delivered.handoffBundle).toBeTruthy();
+  } finally {
+    await localServer.close();
+  }
 });
