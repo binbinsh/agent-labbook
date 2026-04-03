@@ -28,7 +28,7 @@ from labbook.state import load_pending_auth, save_project_bindings, save_project
 
 
 class ServiceTests(unittest.TestCase):
-    def test_status_recommends_long_browser_auth_timeout(self) -> None:
+    def test_status_recommends_headless_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.dict(
                 "os.environ",
@@ -38,12 +38,13 @@ class ServiceTests(unittest.TestCase):
                 with mock.patch("labbook.service.platform.system", return_value="Darwin"):
                     payload = status(tmpdir)
 
-        self.assertEqual(payload["recommended_action"], "notion_auth_browser")
+        self.assertEqual(payload["recommended_action"], "notion_start_headless_auth")
         self.assertEqual(
             payload["recommended_browser_auth_timeout_seconds"],
             DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         )
-        self.assertIn("timeout_seconds", payload["browser_auth_hint"])
+        self.assertIn("same machine", payload["browser_auth_hint"])
+        self.assertIn("127.0.0.1", payload["headless_auth_hint"])
 
     def test_page_limit_is_clamped_to_minimum(self) -> None:
         self.assertEqual(normalize_browser_auth_page_limit(None), DEFAULT_BROWSER_AUTH_PAGE_LIMIT)

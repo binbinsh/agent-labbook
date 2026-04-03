@@ -287,7 +287,7 @@ def _build_setup_guide() -> str:
             "# Agent Labbook Public Integration Setup",
             "",
             "For MCP users:",
-            "1. Call `notion_auth_browser` for a direct browser flow, or `notion_start_headless_auth` if the browser cannot be opened locally.",
+            "1. Prefer `notion_start_headless_auth` for agent-driven setup. Use `notion_auth_browser` only when the browser and MCP server are running on the same machine.",
             f"   For browser auth, prefer a long wait and pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` because users may need several minutes to finish consent and resource selection.",
             f"   `page_limit` now controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped, but remote search still searches the whole shared workspace.",
             "2. Complete the official Notion public integration consent page.",
@@ -651,10 +651,8 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
 
     if pending_auth and str(pending_auth.get("mode") or "") == "headless" and not authenticated:
         recommended_action = "notion_complete_headless_auth"
-    elif not authenticated and remote_session_reason:
-        recommended_action = "notion_start_headless_auth"
     elif not authenticated:
-        recommended_action = "notion_auth_browser"
+        recommended_action = "notion_start_headless_auth"
     elif not bindings_ready:
         recommended_action = "notion_bind_resources"
     else:
@@ -668,8 +666,12 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "recommended_browser_auth_timeout_seconds": DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         "recommended_browser_auth_page_limit": DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
         "browser_auth_hint": (
-            "When using notion_auth_browser, prefer a long timeout_seconds value and keep waiting for the browser handoff "
-            f"to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+            "Use notion_auth_browser only when the browser and MCP server are on the same machine. When you do use it, "
+            f"prefer a long timeout_seconds value and keep waiting for the browser handoff to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+        ),
+        "headless_auth_hint": (
+            "Prefer notion_start_headless_auth for MCP and SSH-driven workflows. It does not depend on a 127.0.0.1 callback "
+            "to the machine running the MCP server."
         ),
         "remote_auth_hint": (
             "Detected an SSH or likely headless shell session. Prefer notion_start_headless_auth because the local-browser "
