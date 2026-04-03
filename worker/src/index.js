@@ -539,7 +539,11 @@ async function queryDataSourceEntries(env, accessToken, dataSourceId, remainingL
       if (!(item && typeof item === "object" && item.id)) {
         continue;
       }
-      const normalized = normalizeResource(item);
+      const normalized = normalizeResource(item, {
+        discovered_parent_id: dataSourceId,
+        discovered_root_id: dataSourceId,
+        discovered_depth: 1,
+      });
       if (!normalized.resource_id || seenIds.has(normalized.resource_id)) {
         continue;
       }
@@ -1553,20 +1557,34 @@ async function handleDiscoverChildren(request, env) {
           .filter(Boolean),
       ),
     );
+    const dataSourceIds = Array.from(
+      new Set(
+        (Array.isArray(payload?.data_source_ids) ? payload.data_source_ids : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    );
 
-    if (!pageIds.length) {
+    if (!pageIds.length && !dataSourceIds.length) {
       return jsonResponse({ ok: true, truncated: false, resources: [] });
     }
 
-    const discovery = await discoverChildPages(env, accessToken, pageIds, {
-      depth_limit: payload?.depth_limit,
-      node_limit: payload?.node_limit,
-    });
+    const pageDiscovery = pageIds.length
+      ? await discoverChildPages(env, accessToken, pageIds, {
+          depth_limit: payload?.depth_limit,
+          node_limit: payload?.node_limit,
+        })
+      : { truncated: false, resources: [] };
+    const dataSourceDiscovery = dataSourceIds.length
+      ? await discoverDataSourceContents(env, accessToken, dataSourceIds, {
+          node_limit: payload?.node_limit,
+        })
+      : { truncated: false, resources: [] };
 
     return jsonResponse({
       ok: true,
-      truncated: discovery.truncated,
-      resources: discovery.resources,
+      truncated: Boolean(pageDiscovery.truncated || dataSourceDiscovery.truncated),
+      resources: mergeResources(pageDiscovery.resources, dataSourceDiscovery.resources),
     });
   } catch (exc) {
     return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });

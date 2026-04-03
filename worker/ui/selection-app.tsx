@@ -179,6 +179,8 @@ function matchesQuery(resource: Resource, query: string) {
     resource.resource_type,
     resource.parent_id,
     resource.parent_type,
+    resource.parent_database_id,
+    resource.resource_url,
   ];
   return haystacks.some((value) => String(value || "").toLowerCase().includes(query));
 }
@@ -191,25 +193,15 @@ function copyMap<T>(entries?: Iterable<[string, T]>) {
   return new Map(entries ? Array.from(entries) : []);
 }
 
-function buildDescendantIndex(items: Resource[], rootId: string) {
-  const index = new Map<string, Resource[]>();
-  for (const item of items) {
-    const parentId = normalizeNotionIdLike(item.discovered_parent_id || item.parent_id) || rootId;
-    const next = index.get(parentId) || [];
-    next.push(item);
-    index.set(parentId, next);
-  }
-  for (const [key, value] of index.entries()) {
-    index.set(key, [...value].sort(compareResources));
-  }
-  return index;
+function resolvedParentId(resource: Resource) {
+  return normalizeNotionIdLike(resource.discovered_parent_id || resource.parent_id || resource.parent_database_id);
 }
 
 function buildChildIndex(items: Resource[]) {
   const byId = new Map(items.map((item) => [item.resource_id, item]));
   const index = new Map<string, Resource[]>();
   for (const item of items) {
-    const parentId = normalizeNotionIdLike(item.discovered_parent_id || item.parent_id);
+    const parentId = resolvedParentId(item);
     if (!parentId || !byId.has(parentId)) {
       continue;
     }
@@ -323,6 +315,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   const [selectedRootIds, setSelectedRootIds] = useState<Set<string>>(new Set());
   const [discoveredByRoot, setDiscoveredByRoot] = useState<Map<string, Resource[]>>(new Map());
   const [loadingRootIds, setLoadingRootIds] = useState<Set<string>>(new Set());
+  const [inputValue, setInputValue] = useState("");
   const [query, setQuery] = useState("");
   const [handoffBundle, setHandoffBundle] = useState("");
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
@@ -338,9 +331,10 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
 
   async function ensureChildrenForRoot(rootId: string, resourceType: string = "page") {
     const normalizedId = normalizeNotionIdLike(rootId);
+    const normalizedType = normalizeResourceType(resourceType);
     if (
       !normalizedId ||
-      normalizeResourceType(resourceType) !== "page" ||
+      (normalizedType !== "page" && normalizedType !== "data_source") ||
       discoveredByRoot.has(normalizedId) ||
       loadingRootIds.has(normalizedId)
     ) {
@@ -359,10 +353,17 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          selection_token: selectionToken,
-          page_ids: [normalizedId],
-        }),
+        body: JSON.stringify(
+          normalizedType === "page"
+            ? {
+                selection_token: selectionToken,
+                page_ids: [normalizedId],
+              }
+            : {
+                selection_token: selectionToken,
+                data_source_ids: [normalizedId],
+              },
+        ),
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
@@ -412,9 +413,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
       return next;
     });
 
-    if (resource.resource_type === "page") {
-      await ensureChildrenForRoot(resourceId, resource.resource_type);
-    }
+    await ensureChildrenForRoot(resourceId, resource.resource_type);
   }
 
   function bundleResources() {
@@ -474,6 +473,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   const titleLine = `${workspaceLabel} for ${projectLabel}`;
 
   const childIndex = buildChildIndex(catalog);
+  const parentIndex = new Map(catalog.map((resource) => [resource.resource_id, resolvedParentId(resource)]));
 
   function collectDescendants(rootId: string, bucket: Resource[] = []) {
     const children = childIndex.get(rootId) || [];
@@ -504,12 +504,37 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
     }
   }
 
-  const visibleResources = [...catalog]
-    .filter((resource) => {
-      if (selectedRootIds.has(resource.resource_id) || autoIncludedIds.has(resource.resource_id)) {
-        return true;
+  const visibleIds = new Set<string>(
+    deferredQuery ? [] : catalog.map((resource) => resource.resource_id),
+  );
+  for (const resource of catalog) {
+    if (
+      selectedRootIds.has(resource.resource_id) ||
+      autoIncludedIds.has(resource.resource_id) ||
+      matchesQuery(resource, deferredQuery)
+    ) {
+      visibleIds.add(resource.resource_id);
+    }
+  }
+  for (const resourceId of Array.from(visibleIds)) {
+    let currentParentId = parentIndex.get(resourceId);
+    while (currentParentId) {
+      if (visibleIds.has(currentParentId)) {
+        currentParentId = parentIndex.get(currentParentId);
+        continue;
       }
-      return matchesQuery(resource, deferredQuery);
+      visibleIds.add(currentParentId);
+      currentParentId = parentIndex.get(currentParentId);
+    }
+  }
+
+  const rootResources = [...catalog]
+    .filter((resource) => {
+      if (!visibleIds.has(resource.resource_id)) {
+        return false;
+      }
+      const parentId = parentIndex.get(resource.resource_id);
+      return !parentId || !visibleIds.has(parentId);
     })
     .sort((left, right) => {
       const leftSelected = selectedRootIds.has(left.resource_id) ? 2 : autoIncludedIds.has(left.resource_id) ? 1 : 0;
@@ -519,6 +544,24 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
       }
       return compareResources(left, right);
     });
+
+  const visibleRows: Array<{ resource: Resource; depth: number }> = [];
+  function appendVisibleRows(resource: Resource, depth: number) {
+    if (!visibleIds.has(resource.resource_id)) {
+      return;
+    }
+    visibleRows.push({ resource, depth });
+    for (const child of childIndex.get(resource.resource_id) || []) {
+      appendVisibleRows(child, depth + 1);
+    }
+  }
+  for (const resource of rootResources) {
+    appendVisibleRows(resource, 0);
+  }
+
+  function applySearch() {
+    setQuery(inputValue);
+  }
 
   async function refreshCatalog() {
     setRefreshingCatalog(true);
@@ -541,11 +584,13 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
       const selectedResources = Array.from(selectedRootIds)
         .map((resourceId) => getRootResource(resourceId))
         .filter(Boolean) as Resource[];
+      const discoveredResources = Array.from(discoveredByRoot.values()).flat();
 
       setCatalog(
         dedupeSortResources([
           ...(Array.isArray(payload.resources) ? payload.resources : []),
           ...selectedResources,
+          ...discoveredResources,
         ]),
       );
     } catch (error) {
@@ -556,7 +601,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
   }
 
   async function addResourceByReference() {
-    const resourceRef = query.trim();
+    const resourceRef = inputValue.trim();
     if (!resourceRef) {
       return;
     }
@@ -588,11 +633,10 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
         next.add(resolved.resource_id);
         return next;
       });
+      setInputValue("");
       setQuery("");
 
-      if (resolved.resource_type === "page") {
-        await ensureChildrenForRoot(resolved.resource_id, resolved.resource_type);
-      }
+      await ensureChildrenForRoot(resolved.resource_id, resolved.resource_type);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally {
@@ -696,40 +740,52 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
                 Refresh
               </Button>
             </div>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
-              <Input
-                value={query}
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  startTransition(() => {
-                    setQuery(nextValue);
-                  });
-                }}
-                className="pl-9"
-                placeholder="Search, or paste a Notion page or data source URL or ID"
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void addResourceByReference();
-                  }
-                }}
-              />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
+                <Input
+                  value={inputValue}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    startTransition(() => {
+                      setInputValue(nextValue);
+                    });
+                  }}
+                  className="pl-9"
+                  placeholder="Search, or paste a Notion page or data source URL or ID"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      applySearch();
+                    }
+                  }}
+                />
+              </div>
+              <Button
+                variant="secondary"
+                onClick={() => void addResourceByReference()}
+                disabled={!inputValue.trim() || resolvingManualResource}
+              >
+                {resolvingManualResource ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+                Add URL
+              </Button>
+              <Button onClick={() => applySearch()} disabled={!inputValue.trim() && !query.trim()}>
+                Search
+              </Button>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
               Newly shared pages and data sources may not appear right away because this list comes from Notion search. Click <strong>Refresh</strong>, or paste its URL or ID here.
             </div>
-            <div className="flex justify-end">
-              <Button variant="secondary" onClick={() => void addResourceByReference()} disabled={!query.trim() || resolvingManualResource}>
-                {resolvingManualResource ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
-                Add URL
-              </Button>
-            </div>
+            {truncated ? (
+              <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
+                The initial list hit the current page limit, so some resources may still be omitted until you search, refresh, or add a URL directly.
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
-            {visibleResources.length ? (
+            {visibleRows.length ? (
               <div className="space-y-2">
-                {visibleResources.map((resource) => {
+                {visibleRows.map(({ resource, depth }) => {
                   const selectedState = selectedRootIds.has(resource.resource_id)
                     ? "explicit"
                     : autoIncludedIds.has(resource.resource_id)
@@ -742,6 +798,7 @@ function SelectionApp({ baseUrl, state, selectionToken, workspaceName, resources
                       selectedState={selectedState}
                       loading={loadingRootIds.has(resource.resource_id)}
                       includedCount={resource.resource_type === "page" ? descendantCount(resource.resource_id) : 0}
+                      depth={depth}
                       disabled={selectedState === "descendant"}
                       onToggle={toggleResourceSelection}
                     />
