@@ -32,7 +32,7 @@ jobs:
           test "$TAG_VERSION" = "$PACKAGE_VERSION"
 
       - name: Run tests
-        run: python -m unittest tests/test_cli.py tests/test_mcp_server.py
+        run: python -m unittest tests/test_cli.py tests/test_mcp_server.py tests/test_service.py
 
       - name: Build distributions
         run: python -m build
