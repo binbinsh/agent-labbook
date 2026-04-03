@@ -76,3 +76,30 @@ test("oauth callback page supports remote search, on-demand expansion, and headl
   expect(consumePayload.payload.selected_resources[0].resource_id).toBe(TEST_IDS.PROJECT_HUB_ID);
   expect(consumePayload.payload.selected_resources[0].selection_scope).toBe("subtree");
 });
+
+test("local browser flow falls back to showing the handoff bundle when localhost callback is unreachable", async ({
+  page,
+}) => {
+  const sessionId = "e2e-session-local-fallback";
+  const returnTo = "http://127.0.0.1:8765/oauth/handoff";
+  const startResponse = await fetch(
+    `${testServer.baseUrl}/oauth/start?mode=local_browser&session_id=${sessionId}&project_name=agent-labbook-e2e&page_limit=25&return_to=${encodeURIComponent(returnTo)}`,
+    {
+      redirect: "manual",
+    },
+  );
+
+  expect(startResponse.status).toBe(302);
+  const location = startResponse.headers.get("location");
+  expect(location).toBeTruthy();
+  const state = new URL(location).searchParams.get("state");
+  expect(state).toBeTruthy();
+
+  await page.goto(`${testServer.baseUrl}/oauth/callback?code=fake-oauth-code&state=${encodeURIComponent(state)}`);
+  const projectHubRow = page.locator(`[data-resource-id="${TEST_IDS.PROJECT_HUB_ID}"]`);
+  await projectHubRow.getByRole("checkbox").click();
+  await page.getByRole("button", { name: "Connect Selected" }).click();
+
+  await expect(page.getByText("could not reach the MCP server on 127.0.0.1")).toBeVisible();
+  await expect(page.locator("textarea")).not.toHaveValue("");
+});

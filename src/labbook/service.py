@@ -287,7 +287,7 @@ def _build_setup_guide() -> str:
             "# Agent Labbook Public Integration Setup",
             "",
             "For MCP users:",
-            "1. Prefer `notion_start_headless_auth` for agent-driven setup. Use `notion_auth_browser` only when the browser and MCP server are running on the same machine.",
+            "1. Use `notion_auth_browser` when the browser and MCP server are running on the same machine. Otherwise use `notion_start_headless_auth`.",
             f"   For browser auth, prefer a long wait and pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` because users may need several minutes to finish consent and resource selection.",
             f"   `page_limit` now controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped, but remote search still searches the whole shared workspace.",
             "2. Complete the official Notion public integration consent page.",
@@ -649,10 +649,10 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     bindings_ready = bool(resources)
     remote_session_reason = _headless_session_reason()
 
-    if pending_auth and str(pending_auth.get("mode") or "") == "headless" and not authenticated:
+    if pending_auth and not authenticated:
         recommended_action = "notion_complete_headless_auth"
     elif not authenticated:
-        recommended_action = "notion_start_headless_auth"
+        recommended_action = "notion_auth_browser"
     elif not bindings_ready:
         recommended_action = "notion_bind_resources"
     else:
@@ -715,9 +715,8 @@ def auth_browser(
     session_id = uuid4().hex
     wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
-    remote_session_reason = _headless_session_reason()
 
-    if remote_session_reason:
+    if not open_browser:
         result = start_headless_auth(
             project_root=root,
             page_limit=normalized_page_limit,
@@ -725,8 +724,7 @@ def auth_browser(
         result["auth_mode"] = "headless"
         result["auto_switched_to_headless"] = True
         result["reason"] = (
-            "Detected an SSH or likely headless shell session. The browser handoff for notion_auth_browser posts back to "
-            "127.0.0.1 on the machine running the MCP server, so this request was switched to headless auth."
+            "notion_auth_browser was called with open_browser=false, so this request was switched to headless auth."
         )
         return result
 
@@ -837,9 +835,7 @@ def complete_headless_auth(
     root = resolve_project_root(project_root)
     pending_auth = load_pending_auth(root) or {}
     if not pending_auth:
-        raise LabbookError("No pending headless auth session was found for this project.")
-    if str(pending_auth.get("mode") or "") != "headless":
-        raise LabbookError("The pending auth session for this project is not a headless flow.")
+        raise LabbookError("No pending auth session was found for this project.")
     return _complete_auth_handoff(
         project_root=root,
         pending_auth=pending_auth,

@@ -360,6 +360,7 @@ function SelectionApp({
   const [searchingCatalog, setSearchingCatalog] = useState(false);
   const [remoteSearchIds, setRemoteSearchIds] = useState<Set<string>>(new Set());
   const [catalogLoaded, setCatalogLoaded] = useState(Boolean(initialCatalogLoaded));
+  const [localDeliveryStatus, setLocalDeliveryStatus] = useState<"idle" | "delivered" | "fallback">("idle");
   const [bundleStatus, setBundleStatus] = useState<"idle" | "ready" | "copied">("idle");
   const outputRef = useRef<HTMLDivElement | null>(null);
 
@@ -744,22 +745,36 @@ function SelectionApp({
     return handoffBundle;
   }
 
-  function submitToLocalhost(bundle: string) {
-    const form = document.createElement("form");
-    form.method = "POST";
-    form.action = String(state.return_to || "");
-    form.innerHTML = [
-      `<input type="hidden" name="session_id" value="${state.session_id}" />`,
-      `<input type="hidden" name="handoff_bundle" value="${bundle}" />`,
-    ].join("");
-    document.body.appendChild(form);
-    form.submit();
+  async function submitToLocalhost(bundle: string) {
+    if (!state.return_to) {
+      return false;
+    }
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+    try {
+      const body = new URLSearchParams({
+        session_id: state.session_id,
+        handoff_bundle: bundle,
+      });
+      await fetch(String(state.return_to), {
+        method: "POST",
+        body,
+        mode: "no-cors",
+        signal: controller.signal,
+      });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
   }
 
   async function finishBinding() {
     if (!finalBundle.length) {
       return;
     }
+    setLocalDeliveryStatus("idle");
     let bundle = "";
     try {
       bundle = await requestHandoffBundle(finalBundle);
@@ -768,8 +783,12 @@ function SelectionApp({
       return;
     }
     if (state.mode === "local_browser") {
-      submitToLocalhost(bundle);
-      return;
+      const delivered = await submitToLocalhost(bundle);
+      if (delivered) {
+        setLocalDeliveryStatus("delivered");
+        return;
+      }
+      setLocalDeliveryStatus("fallback");
     }
     setHandoffBundle(bundle);
     setBundleStatus("ready");
@@ -895,9 +914,11 @@ function SelectionApp({
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">
-                  {bundleStatus === "copied"
-                    ? "The handoff bundle is ready and has been copied to your clipboard."
-                    : "The handoff bundle is ready. Copy it and paste it into notion_complete_headless_auth."}
+                  {localDeliveryStatus === "fallback"
+                    ? "The local browser handoff could not reach the MCP server on 127.0.0.1. The handoff bundle is shown below so you can finish with notion_complete_headless_auth."
+                    : bundleStatus === "copied"
+                      ? "The handoff bundle is ready and has been copied to your clipboard."
+                      : "The handoff bundle is ready. Copy it and paste it into notion_complete_headless_auth."}
                 </div>
                 <textarea
                   readOnly
@@ -920,6 +941,8 @@ function SelectionApp({
               <p className="text-sm text-stone-500">
                 {searchingCatalog
                   ? "Searching Notion..."
+                  : localDeliveryStatus === "delivered"
+                    ? "The handoff was sent back to the local MCP server. You can close this tab."
                   : loadingRootIds.size
                   ? "Loading nested content..."
                   : handoffBundle
