@@ -928,8 +928,9 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
     if endpoint:
         curl_example = (
             "curl -sS "
-            f"-H 'Authorization: Bearer {access_token}' "
+            "-H 'Authorization: Bearer ${NOTION_TOKEN}' "
             f"-H 'Notion-Version: {DEFAULT_NOTION_VERSION}' "
+            "-H 'Content-Type: application/json' "
             f"'{endpoint}'"
         )
 
@@ -956,6 +957,6 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
         "session_path": str(session_path(root)),
         "refresh_supported": True,
         "refresh_tool": "notion_refresh_session",
-        "usage": "Use the official Notion REST API directly with this public integration access token and these bound resources. If the endpoint shape is uncertain, check the latest Notion API reference first.",
+        "usage": "Use the official Notion REST API directly with this public integration access token and these bound resources. Treat the bearer token like a password: keep it out of command history, logs, and chat transcripts. If the endpoint shape is uncertain, check the latest Notion API reference first.",
         "curl_example": curl_example,
     }

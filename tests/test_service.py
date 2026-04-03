@@ -128,6 +128,8 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["binding_model"], "explicit_roots_with_selection_scope")
         self.assertIn("selection_scope='subtree'", payload["selection_scope_note"])
         self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
+        self.assertIn("${NOTION_TOKEN}", payload["curl_example"])
+        self.assertNotIn("test-access-token", payload["curl_example"])
 
     def test_manual_bind_resources_can_request_subtree_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
