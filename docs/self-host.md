@@ -126,9 +126,3 @@ You can verify the local setup with:
 ```bash
 uvx agent-labbook doctor --probe-backend
 ```
-
-## 8. Understand the chooser limits
-
-The browser chooser is based on Notion's `search` API rather than a true "list every accessible resource" endpoint. That means a fresh OAuth session may need `Refresh` before every shared page or data source appears.
-
-If a specific page or data source still does not show up, bind it later from the MCP side with `notion_bind_resources` using its Notion URL or resource ID.
