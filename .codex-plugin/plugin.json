@@ -37,6 +37,7 @@
     "defaultPrompt": [
       "Check the current project's saved Notion session and bound resources before assuming Notion is available.",
       "If this project is not ready, start auth and bind the required Notion pages or data sources.",
+      "When using notion_auth_browser, pass a long timeout_seconds value such as 1800 and keep waiting for the browser handoff to finish before switching to a different auth method.",
       "Return the official Notion API headers and bound resource IDs for direct API calls."
     ],
     "brandColor": "#0f766e",

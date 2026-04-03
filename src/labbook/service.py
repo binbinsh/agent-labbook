@@ -41,10 +41,26 @@ LOCAL_CALLBACK_HOST = "127.0.0.1"
 LOCAL_CALLBACK_PORT = 8765
 LOCAL_CALLBACK_PATH = "/oauth/handoff"
 CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
+DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS = 1800
+MIN_BROWSER_AUTH_TIMEOUT_SECONDS = 30
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def normalize_browser_auth_timeout_seconds(timeout_seconds: int | str | None = None) -> int:
+    if timeout_seconds in (None, ""):
+        return DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS
+    try:
+        timeout = int(timeout_seconds)
+    except (TypeError, ValueError) as exc:
+        raise LabbookError("timeout_seconds must be an integer number of seconds.") from exc
+    if timeout < MIN_BROWSER_AUTH_TIMEOUT_SECONDS:
+        raise LabbookError(
+            f"timeout_seconds must be at least {MIN_BROWSER_AUTH_TIMEOUT_SECONDS} seconds."
+        )
+    return timeout
 
 
 def _rich_text_to_plain_text(items: Any) -> str | None:
@@ -195,6 +211,7 @@ def _build_setup_guide() -> str:
             "",
             "For MCP users:",
             "1. Call `notion_auth_browser` for a direct browser flow, or `notion_start_headless_auth` if the browser cannot be opened locally.",
+            f"   For browser auth, prefer a long wait and pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` because users may need several minutes to finish consent and resource selection.",
             "2. Complete the official Notion public integration consent page.",
             "3. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",
             "4. Call `notion_get_api_context` and use the official Notion API directly with the returned access token.",
@@ -333,7 +350,10 @@ class _LocalHandoffServer:
         try:
             return self._queue.get(timeout=timeout_seconds)
         except queue.Empty as exc:
-            raise LabbookError("Timed out waiting for the local browser handoff to complete.") from exc
+            raise LabbookError(
+                "Timed out waiting for the local browser handoff to complete. "
+                f"Re-run notion_auth_browser with a larger timeout_seconds value, for example {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+            ) from exc
 
     def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
         if parse.urlsplit(handler.path).path != LOCAL_CALLBACK_PATH:
@@ -492,6 +512,7 @@ def _pending_auth_payload(
     session_id: str,
     auth_url: str,
     return_to: str | None,
+    timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     return {
         "version": 1,
@@ -501,6 +522,7 @@ def _pending_auth_payload(
         "session_id": session_id,
         "auth_url": auth_url,
         "return_to": return_to,
+        "timeout_seconds": timeout_seconds,
         "started_at": _utc_now(),
     }
 
@@ -553,6 +575,11 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "backend_url": backend_url,
         "redirect_uri": backend_redirect_uri(backend_url),
         "auth_modes": ["local_browser", "headless"],
+        "recommended_browser_auth_timeout_seconds": DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
+        "browser_auth_hint": (
+            "When using notion_auth_browser, prefer a long timeout_seconds value and keep waiting for the browser handoff "
+            f"to complete. Recommended starting point: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+        ),
         "authenticated": authenticated,
         "refresh_supported": bool(str(session_payload.get("refresh_token") or "").strip()),
         "workspace_name": session_payload.get("workspace_name"),
@@ -574,13 +601,14 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
 def auth_browser(
     *,
     project_root: str | Path | None = None,
-    timeout_seconds: int = 300,
+    timeout_seconds: int | str | None = DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
     open_browser: bool = True,
     page_limit: int = 5000,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()
     session_id = uuid4().hex
+    wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
 
     handoff_server = _LocalHandoffServer(expected_session_id=session_id)
     handoff_server.start()
@@ -601,12 +629,13 @@ def auth_browser(
             session_id=session_id,
             auth_url=auth_url,
             return_to=handoff_server.return_to_url,
+            timeout_seconds=wait_timeout_seconds,
         ),
     )
 
     try:
         opened = webbrowser.open(auth_url) if open_browser else False
-        handoff_bundle = handoff_server.wait_for_bundle(timeout_seconds)
+        handoff_bundle = handoff_server.wait_for_bundle(wait_timeout_seconds)
         pending_auth = load_pending_auth(root) or {}
         result = _complete_auth_handoff(
             project_root=root,
@@ -615,6 +644,7 @@ def auth_browser(
         )
         result["auth_url"] = auth_url
         result["browser_opened"] = bool(opened)
+        result["timeout_seconds"] = wait_timeout_seconds
         return result
     except Exception:
         clear_pending_auth(root)

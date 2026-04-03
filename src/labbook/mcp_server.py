@@ -11,6 +11,7 @@ from mcp.server.stdio import stdio_server
 
 from . import __version__
 from .service import (
+    DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
     auth_browser,
     bind_resources,
     clear_project_auth,
@@ -63,7 +64,11 @@ def _tool_definitions() -> list[types.Tool]:
         ),
         types.Tool(
             name="notion_auth_browser",
-            description="Open the official Notion public-integration consent flow in a browser and wait for the selected bindings to be saved into this project.",
+            description=(
+                "Open the official Notion public-integration consent flow in a browser and wait for the selected "
+                f"bindings to be saved into this project. Browser auth can take several minutes; the default wait is "
+                f"{DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS} seconds."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -160,7 +165,7 @@ def _handlers() -> dict[str, ToolHandler]:
         "notion_setup_guide": lambda args: setup_guide(),
         "notion_auth_browser": lambda args: auth_browser(
             project_root=args.get("project_root"),
-            timeout_seconds=int(args.get("timeout_seconds") or 300),
+            timeout_seconds=args.get("timeout_seconds"),
             open_browser=bool(args.get("open_browser", True)),
             page_limit=int(args.get("page_limit") or 5000),
         ),
