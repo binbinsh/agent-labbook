@@ -512,7 +512,7 @@ def _oauth_start_url(
     session_id: str,
     mode: str,
     return_to: str | None = None,
-    page_limit: int = 50,
+    page_limit: int = 5000,
 ) -> str:
     query = {
         "mode": mode,
@@ -576,7 +576,7 @@ def auth_browser(
     project_root: str | Path | None = None,
     timeout_seconds: int = 300,
     open_browser: bool = True,
-    page_limit: int = 500,
+    page_limit: int = 5000,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()
@@ -626,7 +626,7 @@ def auth_browser(
 def start_headless_auth(
     *,
     project_root: str | Path | None = None,
-    page_limit: int = 500,
+    page_limit: int = 5000,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()

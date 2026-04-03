@@ -514,6 +514,58 @@ async function fetchSelectableResources(env, accessToken, pageLimit) {
   };
 }
 
+async function queryDataSourceEntries(env, accessToken, dataSourceId, remainingLimit) {
+  const resources = [];
+  const seenIds = new Set();
+  let nextCursor = null;
+  let truncated = false;
+
+  while (resources.length < remainingLimit) {
+    const body = {
+      page_size: Math.min(100, Math.max(1, remainingLimit - resources.length)),
+    };
+    if (nextCursor) {
+      body.start_cursor = nextCursor;
+    }
+
+    const payload = await notionJson(env, `/data_sources/${dataSourceId}/query`, {
+      method: "POST",
+      headers: notionBearerHeaders(env, accessToken),
+      body: JSON.stringify(body),
+    });
+
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    for (const item of results) {
+      if (!(item && typeof item === "object" && item.id)) {
+        continue;
+      }
+      const normalized = normalizeResource(item);
+      if (!normalized.resource_id || seenIds.has(normalized.resource_id)) {
+        continue;
+      }
+      seenIds.add(normalized.resource_id);
+      resources.push(normalized);
+      if (resources.length >= remainingLimit) {
+        break;
+      }
+    }
+
+    if (!payload.has_more || !payload.next_cursor) {
+      break;
+    }
+    if (resources.length >= remainingLimit) {
+      truncated = true;
+      break;
+    }
+    nextCursor = payload.next_cursor;
+  }
+
+  return {
+    truncated,
+    resources,
+  };
+}
+
 function mergeResources(...resourceLists) {
   const byId = new Map();
   for (const list of resourceLists) {
@@ -748,23 +800,89 @@ async function discoverChildPages(env, accessToken, pageIds, options = {}) {
   };
 }
 
+async function discoverDataSourceContents(env, accessToken, dataSourceIds, options = {}) {
+  const nodeLimit = clampInteger(options.node_limit, DEFAULT_DISCOVERY_NODE_LIMIT, 1, MAX_DISCOVERY_NODE_LIMIT);
+  const discovered = new Map();
+  const queue = [];
+  const visitedDataSources = new Set();
+  let truncated = false;
+
+  for (const dataSourceId of dataSourceIds) {
+    const cleanId = normalizeNotionIdLike(dataSourceId);
+    if (!cleanId || visitedDataSources.has(cleanId)) {
+      continue;
+    }
+    visitedDataSources.add(cleanId);
+    queue.push(cleanId);
+  }
+
+  while (queue.length && !truncated) {
+    const currentId = String(queue.shift() || "").trim();
+    if (!currentId) {
+      continue;
+    }
+
+    const remainingLimit = Math.max(1, nodeLimit - discovered.size);
+    const queryPayload = await queryDataSourceEntries(env, accessToken, currentId, remainingLimit);
+
+    for (const resource of queryPayload.resources) {
+      if (!resource.resource_id || discovered.has(resource.resource_id)) {
+        continue;
+      }
+      discovered.set(resource.resource_id, resource);
+
+      if (resource.resource_type === "data_source" && !visitedDataSources.has(resource.resource_id)) {
+        visitedDataSources.add(resource.resource_id);
+        queue.push(resource.resource_id);
+      }
+
+      if (discovered.size >= nodeLimit) {
+        truncated = true;
+        break;
+      }
+    }
+
+    if (queryPayload.truncated) {
+      truncated = true;
+    }
+  }
+
+  return {
+    truncated,
+    resources: Array.from(discovered.values()),
+  };
+}
+
 async function buildSelectionCatalog(env, accessToken, pageLimit) {
   const searchPayload = await fetchSelectableResources(env, accessToken, pageLimit);
-  const rootPageIds = searchPayload.resources
+  const seedDataSourceIds = searchPayload.resources
+    .filter((resource) => normalizeResourceType(resource.resource_type) === "data_source")
+    .map((resource) => resource.resource_id)
+    .filter(Boolean);
+
+  let dataSourceDiscovery = { truncated: false, resources: [] };
+  if (seedDataSourceIds.length) {
+    dataSourceDiscovery = await discoverDataSourceContents(env, accessToken, seedDataSourceIds, {
+      node_limit: pageLimit,
+    });
+  }
+
+  const mergedSeedResources = mergeResources(searchPayload.resources, dataSourceDiscovery.resources);
+  const pageIds = mergedSeedResources
     .filter((resource) => normalizeResourceType(resource.resource_type) === "page")
     .map((resource) => resource.resource_id)
     .filter(Boolean);
 
-  let discovery = { truncated: false, resources: [] };
-  if (rootPageIds.length) {
-    discovery = await discoverChildPages(env, accessToken, rootPageIds, {
+  let pageDiscovery = { truncated: false, resources: [] };
+  if (pageIds.length) {
+    pageDiscovery = await discoverChildPages(env, accessToken, pageIds, {
       node_limit: pageLimit,
     });
   }
 
   return {
-    truncated: Boolean(searchPayload.truncated || discovery.truncated),
-    resources: mergeResources(searchPayload.resources, discovery.resources),
+    truncated: Boolean(searchPayload.truncated || dataSourceDiscovery.truncated || pageDiscovery.truncated),
+    resources: mergeResources(mergedSeedResources, pageDiscovery.resources),
   };
 }
 

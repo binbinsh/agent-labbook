@@ -162,11 +162,11 @@ def _handlers() -> dict[str, ToolHandler]:
             project_root=args.get("project_root"),
             timeout_seconds=int(args.get("timeout_seconds") or 300),
             open_browser=bool(args.get("open_browser", True)),
-            page_limit=int(args.get("page_limit") or 500),
+            page_limit=int(args.get("page_limit") or 5000),
         ),
         "notion_start_headless_auth": lambda args: start_headless_auth(
             project_root=args.get("project_root"),
-            page_limit=int(args.get("page_limit") or 500),
+            page_limit=int(args.get("page_limit") or 5000),
         ),
         "notion_complete_headless_auth": lambda args: complete_headless_auth(
             project_root=args.get("project_root"),
