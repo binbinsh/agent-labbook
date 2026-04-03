@@ -9,6 +9,8 @@ export const TEST_IDS = {
   ROADMAP_DOC_ID: "44444444-4444-4444-4444-444444444444",
   CHILD_DATABASE_ID: "55555555-5555-5555-5555-555555555555",
   SPECS_DATA_SOURCE_ID: "66666666-6666-6666-6666-666666666666",
+  PYNINI_PAGE_ID: "77777777-7777-7777-7777-777777777777",
+  HIDDEN_PARENT_ID: "88888888-8888-8888-8888-888888888888",
 };
 
 function jsonResponse(payload, init = {}) {
@@ -88,6 +90,23 @@ async function handleNotionRequest(request, mockState) {
           makePage({
             id: TEST_IDS.ENGINEERING_HANDBOOK_ID,
             title: "Engineering Handbook",
+          }),
+        ],
+        has_more: false,
+        next_cursor: null,
+      });
+    }
+    if (query === "pynini") {
+      return jsonResponse({
+        object: "list",
+        results: [
+          makePage({
+            id: TEST_IDS.PYNINI_PAGE_ID,
+            title: "Pynini Notes",
+            parent: {
+              type: "page_id",
+              page_id: TEST_IDS.HIDDEN_PARENT_ID,
+            },
           }),
         ],
         has_more: false,

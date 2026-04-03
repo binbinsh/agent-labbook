@@ -37,6 +37,7 @@ test("oauth callback page supports remote search, on-demand expansion, and headl
   await expect(page.getByRole("heading", { name: "Choose Notion Content" })).toBeVisible();
   await expect(page.locator(`[data-resource-id="${TEST_IDS.PROJECT_HUB_ID}"]`)).toContainText("Project Hub");
   await expect(page.locator(`[data-resource-id="${TEST_IDS.ENGINEERING_HANDBOOK_ID}"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-resource-id="${TEST_IDS.PYNINI_PAGE_ID}"]`)).toHaveCount(0);
 
   const searchInput = page.getByPlaceholder("Search workspace by title, type, or ID");
   await searchInput.fill("Engineering");
@@ -44,6 +45,10 @@ test("oauth callback page supports remote search, on-demand expansion, and headl
     "Engineering Handbook",
   );
   expect(testServer.mockState.searchBodies.some((body) => body.query === "engineering")).toBeTruthy();
+
+  await searchInput.fill("pynini");
+  await expect(page.locator(`[data-resource-id="${TEST_IDS.PYNINI_PAGE_ID}"]`)).toContainText("Pynini Notes");
+  expect(testServer.mockState.searchBodies.some((body) => body.query === "pynini")).toBeTruthy();
 
   await searchInput.fill("");
   const projectHubRow = page.locator(`[data-resource-id="${TEST_IDS.PROJECT_HUB_ID}"]`);

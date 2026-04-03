@@ -1404,7 +1404,9 @@ function selectionPage({ baseUrl, state, selectionToken, workspaceName, resource
 }
 
 async function handleStart(request, env) {
-  if (!env.NOTION_CLIENT_ID || !env.NOTION_CLIENT_SECRET) {
+  const notionClientId = String(env.NOTION_CLIENT_ID || "").trim();
+  const notionClientSecret = String(env.NOTION_CLIENT_SECRET || "").trim();
+  if (!notionClientId || !notionClientSecret) {
     return jsonResponse(
       {
         ok: false,
@@ -1448,7 +1450,7 @@ async function handleStart(request, env) {
   });
 
   const notionUrl = new URL(NOTION_OAUTH_AUTHORIZE_URL);
-  notionUrl.searchParams.set("client_id", env.NOTION_CLIENT_ID);
+  notionUrl.searchParams.set("client_id", notionClientId);
   notionUrl.searchParams.set("redirect_uri", redirectUri);
   notionUrl.searchParams.set("response_type", "code");
   notionUrl.searchParams.set("owner", "user");

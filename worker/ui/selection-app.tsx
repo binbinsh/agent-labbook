@@ -505,6 +505,8 @@ function SelectionApp({
   const projectLabel = state.project_name || "this project";
   const title = "Choose Notion Content";
   const titleLine = `Pick the pages and data sources from ${workspaceLabel} that ${projectLabel} should be allowed to use.`;
+  const catalogNotice =
+    "Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click Refresh.";
 
   const childIndex = buildChildIndex(catalog);
   const parentIndex = new Map(catalog.map((resource) => [resource.resource_id, resolvedParentId(resource)]));
@@ -542,7 +544,7 @@ function SelectionApp({
   }
   for (const resourceId of Array.from(visibleIds)) {
     let currentParentId = parentIndex.get(resourceId);
-    while (currentParentId) {
+    while (currentParentId && rootIndex.has(currentParentId)) {
       if (visibleIds.has(currentParentId)) {
         currentParentId = parentIndex.get(currentParentId);
         continue;
@@ -558,7 +560,7 @@ function SelectionApp({
         return false;
       }
       const parentId = parentIndex.get(resource.resource_id);
-      return !parentId || !visibleIds.has(parentId);
+      return !parentId || !rootIndex.has(parentId) || !visibleIds.has(parentId);
     })
     .sort((left, right) => {
       const leftSelected = selectedRootIds.has(left.resource_id) ? 2 : autoIncludedIds.has(left.resource_id) ? 1 : 0;
@@ -836,16 +838,8 @@ function SelectionApp({
               </div>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
-              Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click <strong>Refresh</strong>.
+              {catalogNotice}
             </div>
-            <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
-              Expanding a row loads nested content for inspection. It does not change the binding scope of an already selected root.
-            </div>
-            {truncated ? (
-              <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-600">
-                This workspace is large, so the first pass was trimmed. Use the filter above or click <strong>Refresh</strong> after opening up access to more content.
-              </div>
-            ) : null}
           </CardHeader>
           <CardContent>
             {!catalogLoaded && refreshingCatalog ? (
