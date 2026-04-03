@@ -8,6 +8,7 @@
     "url": "https://github.com/binbinsh/"
   },
   "homepage": "https://github.com/binbinsh/agent-labbook/",
+  "repository": "https://github.com/binbinsh/agent-labbook",
   "license": "MIT",
   "keywords": [
     "codex",
@@ -38,6 +39,8 @@
       "If this project is not ready, start auth and bind the required Notion pages or data sources.",
       "Return the official Notion API headers and bound resource IDs for direct API calls."
     ],
-    "brandColor": "#0f766e"
+    "brandColor": "#0f766e",
+    "composerIcon": "./assets/agent-labbook.png",
+    "logo": "./assets/agent-labbook.png"
   }
 }
