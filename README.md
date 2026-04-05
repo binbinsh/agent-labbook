@@ -36,11 +36,13 @@ claude mcp add --scope project labbook -- uvx agent-labbook mcp
 3. If status shows saved shared credentials for this integration, run `notion_list_saved_credentials` and then `notion_attach_saved_credential` for the workspace you want to reuse.
 4. Use `notion_status.connect_decision` to decide whether you need fresh OAuth scope or only project bindings within the current scope.
    Clients with chooser UIs can map `connect_decision.questions` directly into those prompts; text-only clients can show `connect_decision.manual_prompt_markdown`.
+   Treat this as a blocking choice: do not silently pick `scope_mode` or `browser_mode` for the user unless they already supplied both values explicitly.
 5. If you only need to bind content that the current integration can already access, run `notion_selection_browser`.
 6. Check `notion_status.preferred_browser_flow`, `notion_status.recommended_open_browser`, and `notion_status.browser_environment_hint` before you start a browser flow.
 7. Otherwise run `notion_auth_browser`, or `notion_start_headless_auth` if connecting through SSH or another headless environment.
    For browser auth, pass a long `timeout_seconds` such as `1800` so the background localhost listener stays alive while you finish Notion consent and resource selection.
 8. Choose the Notion pages or data sources for this project.
+   If you need to relay a headless `auth_url` or `selection_url`, print the raw URL exactly once on its own line.
 9. Run `notion_status` again after the browser says the project is connected, after attaching the saved credential, or after reopening the selection UI.
 10. If `notion_status` reports `pending_handoff_ready=true`, run `notion_finalize_pending_auth`.
 11. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` if you want a read-only snapshot of the explicit project roots.

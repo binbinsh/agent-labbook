@@ -81,7 +81,9 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("recommended_action", result.structuredContent)
         self.assertIn("scope_choice_hint", result.structuredContent)
         self.assertIn("connect_decision", result.structuredContent)
+        self.assertTrue(result.structuredContent["connect_decision"]["requires_user_choice"])
         self.assertEqual(len(result.structuredContent["connect_decision"]["questions"]), 2)
+        self.assertIn("blocking_hint", result.structuredContent["connect_decision"])
         self.assertIn("manual_prompt_markdown", result.structuredContent["connect_decision"])
         self.assertIn("route_templates", result.structuredContent["connect_decision"])
         self.assertTrue(result.content)
@@ -117,6 +119,8 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("notion_finalize_pending_auth", prompt.messages[0].content.text)
         self.assertIn("saved_credentials_error", prompt.messages[0].content.text)
         self.assertIn("connect_decision.questions", prompt.messages[0].content.text)
+        self.assertIn("Do not choose scope_mode or browser_mode on the user's behalf", prompt.messages[0].content.text)
+        self.assertIn("exactly once on its own line", prompt.messages[0].content.text)
         self.assertIn("manual_prompt_markdown", prompt.messages[0].content.text)
 
 

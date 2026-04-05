@@ -129,6 +129,13 @@ def normalize_browser_auth_page_limit(page_limit: int | str | None = None) -> in
     return min(limit, DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
 
 
+def _url_relay_hint(url_field_name: str) -> str:
+    return (
+        f"When relaying {url_field_name} to the user, print the raw URL exactly once on its own line. "
+        "Do not repeat the same URL in markdown link syntax, angle brackets, or parentheses."
+    )
+
+
 def _parse_optional_bool_env(name: str) -> bool | None:
     raw = str(os.environ.get(name) or "").strip().lower()
     if not raw:
@@ -1289,9 +1296,18 @@ def _connect_decision_payload(
 ) -> dict[str, Any]:
     recommended_scope_mode = "bind_existing_scope" if (authenticated or available_saved_credentials) else "expand_oauth_scope"
     recommended_browser_mode = str(browser_environment.get("preferred_browser_flow") or "local_browser").strip() or "local_browser"
+    client_prompt_hint = (
+        "This is a blocking decision. If the client supports interactive question pickers, map `questions` directly "
+        "into those prompts and wait for the user's response before choosing tools. Otherwise show "
+        "`manual_prompt_markdown` and wait for a plain-text answer before choosing tools."
+    )
+    blocking_hint = (
+        "Do not choose between bind_existing_scope vs expand_oauth_scope or local_browser vs headless until the user "
+        "answers both questions explicitly. Only skip these questions when the user already provided both values."
+    )
     manual_prompt_markdown = "\n".join(
         [
-            "Before choosing a Notion connect flow, ask the user two short questions:",
+            "Please answer two short questions so the agent can choose the right Notion connect flow:",
             "1. Scope",
             f"   - `bind_existing_scope` ({'recommended' if recommended_scope_mode == 'bind_existing_scope' else 'available'}): only choose project bindings from pages or databases the current integration can already access.",
             f"   - `expand_oauth_scope` ({'recommended' if recommended_scope_mode == 'expand_oauth_scope' else 'available'}): reopen the official Notion OAuth root-page chooser to expand what this integration can access.",
@@ -1303,6 +1319,8 @@ def _connect_decision_payload(
     )
 
     return {
+        "requires_user_choice": True,
+        "blocking_hint": blocking_hint,
         "questions": [
             {
                 "header": "Scope",
@@ -1345,10 +1363,7 @@ def _connect_decision_payload(
             "scope_mode": recommended_scope_mode,
             "browser_mode": recommended_browser_mode,
         },
-        "client_prompt_hint": (
-            "If the client supports interactive question pickers, map `questions` directly into those prompts. "
-            "Otherwise show `manual_prompt_markdown` and wait for a plain-text answer before choosing tools."
-        ),
+        "client_prompt_hint": client_prompt_hint,
         "manual_prompt_markdown": manual_prompt_markdown,
         "manual_response_hint": "Reply with `scope_mode=<bind_existing_scope|expand_oauth_scope> browser_mode=<local_browser|headless>`.",
         "route_templates": [
@@ -1675,6 +1690,7 @@ def auth_browser(
         "browser_opened": bool(opened),
         "local_handoff_server": server_payload,
         "recommended_next_action": "notion_status",
+        "agent_response_hint": _url_relay_hint("auth_url"),
         "instructions": (
             "Finish the Notion consent and selection flow in the browser. The localhost handoff listener will keep "
             "running in the background even if this MCP tool call returns early. After the browser says the project "
@@ -1767,8 +1783,10 @@ def selection_browser(
             "credential_provider": resolved.get("credential_provider"),
             "credential_ref": resolved.get("credential_ref"),
             "replaces_existing_bindings": bool(existing_resources),
+            "agent_response_hint": _url_relay_hint("selection_url"),
             "instructions": (
-                "Open selection_url in any browser, choose the Notion pages or data sources for this project, "
+                "Open selection_url in any browser. When relaying it to the user, print that raw URL exactly once on "
+                "its own line. Then choose the Notion pages or data sources for this project, "
                 "then finish with notion_complete_headless_auth if the browser shows a handoff bundle."
             ),
         }
@@ -1838,6 +1856,7 @@ def selection_browser(
         "local_handoff_server": server_payload,
         "replaces_existing_bindings": bool(existing_resources),
         "recommended_next_action": "notion_status",
+        "agent_response_hint": _url_relay_hint("selection_url"),
         "instructions": (
             "Finish the Notion resource selection flow in the browser. After the browser says the project is connected, "
             "call notion_status. If pending_handoff_ready is true, call notion_finalize_pending_auth. If the browser "
@@ -1887,8 +1906,10 @@ def start_headless_auth(
         "auth_url": auth_url,
         "session_id": session_id,
         "page_limit": normalized_page_limit,
+        "agent_response_hint": _url_relay_hint("auth_url"),
         "instructions": (
-            "Open auth_url in any browser, finish the Notion consent screen, choose project bindings on the "
+            "Open auth_url in any browser. When relaying it to the user, print that raw URL exactly once on its own "
+            "line. Then finish the Notion consent screen, choose project bindings on the "
             "Labbook page, then paste the resulting handoff bundle into notion_complete_headless_auth."
         ),
     }

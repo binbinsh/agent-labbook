@@ -25,7 +25,7 @@ Before choosing any connect flow yourself:
 
 1. Call `notion_status`.
 2. Inspect `notion_status.connect_decision`.
-3. If the user has not already chosen `scope_mode` and `browser_mode`, ask those two questions first.
+3. Treat that decision as blocking. If the user has not already chosen `scope_mode` and `browser_mode`, ask those two questions first and wait.
 4. If the client supports interactive prompts, map `connect_decision.questions` into those prompts.
 5. Otherwise show `connect_decision.manual_prompt_markdown` verbatim and wait for the user's answer.
 
@@ -35,6 +35,8 @@ Do not silently choose between:
 - `local_browser` and `headless`
 
 Only skip these questions when the user has already made the choice explicitly.
+
+When you need to relay `auth_url` or `selection_url` from a headless flow, print the raw URL exactly once on its own line. Do not repeat it in markdown link syntax or parentheses.
 
 ## Workflow
 
