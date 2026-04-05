@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 import os
 from unittest import mock
+import webbrowser
 
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -24,6 +25,7 @@ from labbook.service import (
     _post_backend_json,
     _bindings_from_selected_resources,
     _candidate_notion_access_broker_src_paths,
+    _open_browser_url,
     attach_saved_credential,
     auth_browser,
     bind_resources,
@@ -306,7 +308,7 @@ class ServiceTests(unittest.TestCase):
                 "labbook.service._spawn_persistent_local_handoff_server",
                 return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "test-session"},
             ):
-                with mock.patch("labbook.service.webbrowser.open", return_value=False):
+                with mock.patch("labbook.service._open_browser_url", return_value=False):
                     payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
                     pending_auth = load_pending_auth(tmpdir)
 
@@ -326,7 +328,7 @@ class ServiceTests(unittest.TestCase):
                     "pid": 12345,
                 },
             ):
-                with mock.patch("labbook.service.webbrowser.open", return_value=True):
+                with mock.patch("labbook.service._open_browser_url", return_value=True):
                     payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
                     pending_auth = load_pending_auth(tmpdir)
 
@@ -724,7 +726,7 @@ class ServiceTests(unittest.TestCase):
                                 "continue_url": "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session",
                             },
                         ) as post_backend_mock:
-                            with mock.patch("labbook.service.webbrowser.open", return_value=True):
+                            with mock.patch("labbook.service._open_browser_url", return_value=True):
                                 payload = selection_browser(project_root=root, replace_existing_bindings=False)
                                 pending_auth = load_pending_auth(root)
 
@@ -737,6 +739,37 @@ class ServiceTests(unittest.TestCase):
             post_backend_mock.call_args[0][0],
             "https://superplanner.ai/notion/oauth/api/create-session",
         )
+
+    def test_open_browser_url_prefers_graphical_launcher_over_text_browser_default(self) -> None:
+        process = mock.Mock()
+        process.poll.return_value = None
+
+        def which_side_effect(name: str) -> str | None:
+            return "/usr/bin/xdg-open" if name == "xdg-open" else None
+
+        with mock.patch("labbook.service.shutil.which", side_effect=which_side_effect):
+            with mock.patch("labbook.service.subprocess.Popen", return_value=process) as popen_mock:
+                with mock.patch("labbook.service.webbrowser.get") as get_mock:
+                    opened = _open_browser_url("https://example.com")
+
+        self.assertTrue(opened)
+        get_mock.assert_not_called()
+        popen_mock.assert_called_once()
+        self.assertEqual(
+            popen_mock.call_args[0][0],
+            ["/usr/bin/xdg-open", "https://example.com"],
+        )
+
+    def test_open_browser_url_rejects_text_browser_controller_without_graphical_launcher(self) -> None:
+        controller = mock.Mock(spec=webbrowser.GenericBrowser)
+        controller.name = "www-browser"
+        controller.args = ["%s"]
+
+        with mock.patch("labbook.service.shutil.which", return_value=None):
+            with mock.patch("labbook.service.webbrowser.get", return_value=controller):
+                opened = _open_browser_url("https://example.com")
+
+        self.assertFalse(opened)
 
     def test_selection_browser_requires_explicit_binding_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -6,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -62,6 +63,23 @@ BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
 STATUS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/status{?project_root}"
 BINDINGS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/bindings{?project_root}"
 NOTION_ACCESS_BROKER_SRC_ENV_VAR = "NOTION_ACCESS_BROKER_SRC"
+_GRAPHICAL_BROWSER_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("xdg-open",),
+    ("open",),
+    ("gio", "open"),
+)
+_TEXT_BROWSER_NAMES = frozenset(
+    {
+        "www-browser",
+        "lynx",
+        "links",
+        "links2",
+        "elinks",
+        "w3m",
+        "eww",
+        "browsh",
+    }
+)
 
 
 def _utc_now() -> str:
@@ -105,6 +123,70 @@ def normalize_browser_auth_page_limit(page_limit: int | str | None = None) -> in
     if limit < MIN_BROWSER_AUTH_PAGE_LIMIT:
         return MIN_BROWSER_AUTH_PAGE_LIMIT
     return min(limit, DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
+
+
+def _launch_detached_command(command: list[str]) -> bool:
+    popen_kwargs: dict[str, Any] = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "stdin": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        creationflags = 0
+        creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        popen_kwargs["creationflags"] = creationflags
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        process = subprocess.Popen(command, **popen_kwargs)
+    except OSError:
+        return False
+    if process.poll() is None:
+        return True
+    return process.returncode == 0
+
+
+def _is_text_browser_controller(controller: Any) -> bool:
+    raw_name = str(getattr(controller, "name", "") or "").strip()
+    if not raw_name:
+        return False
+    resolved_name = shutil.which(raw_name) or raw_name
+    candidates = {
+        Path(raw_name).name.lower(),
+        Path(resolved_name).name.lower(),
+    }
+    return any(candidate in _TEXT_BROWSER_NAMES for candidate in candidates)
+
+
+def _open_browser_url(url: str) -> bool:
+    for launcher_parts in _GRAPHICAL_BROWSER_COMMANDS:
+        launcher = shutil.which(launcher_parts[0])
+        if not launcher:
+            continue
+        if _launch_detached_command([launcher, *launcher_parts[1:], url]):
+            return True
+
+    try:
+        controller = webbrowser.get()
+    except webbrowser.Error:
+        return False
+
+    if _is_text_browser_controller(controller):
+        return False
+
+    if isinstance(controller, webbrowser.GenericBrowser):
+        raw_name = str(getattr(controller, "name", "") or "").strip()
+        args = list(getattr(controller, "args", []) or [])
+        if not raw_name:
+            return False
+        executable = shutil.which(raw_name) or raw_name
+        command = [executable] + [str(arg).replace("%s", url) for arg in args]
+        return _launch_detached_command(command)
+
+    return bool(controller.open(url))
 
 
 def pending_auth_is_stale(pending_auth: dict[str, Any] | None) -> bool:
@@ -1323,7 +1405,7 @@ def auth_browser(
         ),
     )
 
-    opened = webbrowser.open(auth_url) if open_browser else False
+    opened = _open_browser_url(auth_url) if open_browser else False
     if open_browser and not opened:
         clear_pending_auth(root)
         _clear_local_browser_handoff_state(root, terminate_server=True)
@@ -1468,7 +1550,7 @@ def selection_browser(
         ),
     )
 
-    opened = webbrowser.open(continue_url)
+    opened = _open_browser_url(continue_url)
     if not opened:
         clear_pending_auth(root)
         _clear_local_browser_handoff_state(root, terminate_server=True)

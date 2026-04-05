@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-labbook"
-version = "0.14.1"
+version = "0.14.2"
 description = "Notion auth and project binding for Codex, Claude Code, and other MCP clients."
 readme = "README.md"
 requires-python = ">=3.10"
