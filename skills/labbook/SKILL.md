@@ -7,32 +7,49 @@ description: Authorize the hosted Notion public integration, bind project-local 
 
 ## Purpose
 
-This integration is only responsible for:
+Agent Labbook handles Notion auth and project bindings for agents.
 
-- completing a Notion public integration flow through the hosted app Worker at `https://superplanner.ai/notion/agent-labbook`
-- relying on the shared OAuth backend at `https://superplanner.ai/notion/oauth`
-- storing project bindings in the local project while keeping long-lived tokens in a shared local credential provider
-- binding one or more Notion pages or data sources to the current project
-- returning direct API context such as the access token, headers, and bound resource IDs
-- relying on a privacy-friendly hosted service that only handles OAuth and token refresh
+Use it to:
 
-It is not a note-taking or task-management wrapper.
+- complete the hosted Notion public-integration flow through `https://superplanner.ai/notion/agent-labbook`
+- rely on the shared OAuth backend at `https://superplanner.ai/notion/oauth`
+- keep long-lived tokens in a shared local credential provider instead of the repo
+- store project-local bindings under `.labbook/`
+- return API context such as the access token, headers, and bound resource IDs
 
-## Default Workflow
+It is not a general Notion wrapper or task-management layer.
 
-1. Read `labbook://agent-labbook/project/status` or call `notion_status` for the current project before assuming any Notion session or bindings exist.
-2. If `notion_status` reports `saved_credentials_error` or `credential_provider_diagnostics_error`, fix the local `notion-access-broker` helper setup before starting OAuth. A fresh OAuth flow cannot persist shared credentials without it.
-3. If `notion_status` reports saved shared credentials for this integration, prefer `notion_list_saved_credentials` and `notion_attach_saved_credential` before re-running OAuth.
-4. If the project needs the browser-based root-page chooser again, call `notion_selection_browser` instead of re-running OAuth.
-5. If the project is not authorized yet, call `notion_auth_browser`. It starts a localhost handoff listener and the browser flow completes asynchronously, so call `notion_status` again after the browser says the project is connected.
-6. If `notion_status` reports `pending_handoff_ready=true`, call `notion_finalize_pending_auth`. If the browser cannot be opened locally, call `notion_start_headless_auth` and later `notion_complete_headless_auth`.
-7. Read `labbook://agent-labbook/project/bindings` or call `notion_list_bindings` when you need a read-only snapshot of the explicit roots and aliases.
-8. If the project still needs more bindings, call `notion_bind_resources`.
-9. Call `notion_get_api_context`.
-10. Use the official Notion REST API directly with the returned headers and resource IDs.
-11. If the exact endpoint is unclear, check the latest official Notion API reference first:
-   - `https://developers.notion.com/reference/intro`
-   - `https://developers.notion.com/reference/versioning`
+## Connect Decision Rule
+
+Before choosing any connect flow yourself:
+
+1. Call `notion_status`.
+2. Inspect `notion_status.connect_decision`.
+3. If the user has not already chosen `scope_mode` and `browser_mode`, ask those two questions first.
+4. If the client supports interactive prompts, map `connect_decision.questions` into those prompts.
+5. Otherwise show `connect_decision.manual_prompt_markdown` verbatim and wait for the user's answer.
+
+Do not silently choose between:
+
+- `bind_existing_scope` and `expand_oauth_scope`
+- `local_browser` and `headless`
+
+Only skip these questions when the user has already made the choice explicitly.
+
+## Workflow
+
+1. Call `notion_status` or read `labbook://agent-labbook/project/status`.
+2. If `saved_credentials_error` or `credential_provider_diagnostics_error` is present, stop and fix the local `notion-access-broker` setup before starting OAuth.
+3. If reusable saved credentials exist, prefer `notion_list_saved_credentials` and `notion_attach_saved_credential` before starting a new OAuth flow.
+4. If the user chose `bind_existing_scope`, use `notion_selection_browser` to reopen the hosted chooser within the current integration scope.
+5. If the user chose `expand_oauth_scope`, use `notion_auth_browser` for same-machine browser flows or `notion_start_headless_auth` for remote/headless flows.
+6. After the browser says the project is connected, call `notion_status` again.
+7. If `pending_handoff_ready=true`, call `notion_finalize_pending_auth`.
+8. If the browser shows a handoff bundle instead, call `notion_complete_headless_auth`.
+9. Read `labbook://agent-labbook/project/bindings` or call `notion_list_bindings` when you need the current explicit roots and aliases.
+10. If the project still needs more bindings, call `notion_bind_resources`.
+11. Call `notion_get_api_context`.
+12. Use the official Notion API directly with the returned token, headers, and resource IDs.
 
 ## Direct API Rules
 
@@ -46,17 +63,3 @@ It is not a note-taking or task-management wrapper.
 - Use `notion_refresh_session` when a saved token needs to be rotated.
 - Reuse aliases from `notion_list_bindings` so later sessions stay consistent.
 - Project-local auth state lives under `.labbook/` and should never be committed. Token secrets themselves should come from the shared keyring or 1Password provider, not `.labbook/session.json`.
-
-## Common Pattern
-
-1. `labbook://agent-labbook/project/status` or `notion_status`
-2. inspect `saved_credentials_error` and `credential_provider_diagnostics_error` before deciding whether OAuth is even safe
-3. `notion_list_saved_credentials` or `notion_auth_browser`
-4. `notion_attach_saved_credential` when a reusable shared credential exists
-5. `notion_selection_browser` when you want the hosted chooser again without new OAuth consent
-6. `notion_status`
-7. `notion_finalize_pending_auth` when `pending_handoff_ready=true`
-8. `labbook://agent-labbook/project/bindings` or `notion_list_bindings`
-9. `notion_bind_resources`
-10. `notion_get_api_context`
-11. direct Notion API read or write

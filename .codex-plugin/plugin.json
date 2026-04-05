@@ -36,6 +36,8 @@
     "termsOfServiceURL": "https://www.notion.so/policies/terms-of-use",
     "defaultPrompt": [
       "Check the current project's saved Notion session and bound resources before assuming Notion is available.",
+      "Before choosing a Notion connect flow, inspect notion_status.connect_decision and ask the user the two follow-up questions for scope mode and browser mode.",
+      "If the client cannot render interactive question pickers, show notion_status.connect_decision.manual_prompt_markdown verbatim and wait for the user's answer before choosing tools.",
       "If this project is not ready, start auth and bind the required Notion pages or data sources.",
       "When using notion_auth_browser, pass a long timeout_seconds value such as 1800 and keep waiting for the browser handoff to finish before switching to a different auth method.",
       "Return the official Notion API headers and bound resource IDs for direct API calls."
