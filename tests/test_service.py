@@ -55,6 +55,17 @@ from labbook.state import (
 )
 
 
+LOCAL_BROWSER_ENVIRONMENT = {
+    "preferred_browser_flow": "local_browser",
+    "recommended_open_browser": True,
+    "ssh_session_detected": False,
+    "display_detected": True,
+    "graphical_launcher_available": True,
+    "override_source": None,
+    "reason": "No remote-session warning was detected, so a same-machine browser flow is acceptable.",
+}
+
+
 class ServiceTests(unittest.TestCase):
     def test_default_backend_uses_prefixed_superplanner_url(self) -> None:
         self.assertEqual(DEFAULT_BACKEND_URL, "https://superplanner.ai/notion/agent-labbook")
@@ -82,10 +93,13 @@ class ServiceTests(unittest.TestCase):
 
     def test_status_recommends_browser_by_default(self) -> None:
         with mock.patch("labbook.service._list_saved_token_credentials", return_value=[]):
-            with tempfile.TemporaryDirectory() as tmpdir:
-                payload = status(tmpdir)
+            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    payload = status(tmpdir)
 
         self.assertEqual(payload["recommended_action"], "notion_auth_browser")
+        self.assertEqual(payload["preferred_browser_flow"], "local_browser")
+        self.assertTrue(payload["recommended_open_browser"])
         self.assertEqual(payload["backend_url"], DEFAULT_BACKEND_URL)
         self.assertEqual(payload["oauth_base_url"], DEFAULT_OAUTH_BASE_URL)
         self.assertEqual(payload["redirect_uri"], f"{DEFAULT_OAUTH_BASE_URL}/callback")
@@ -96,30 +110,43 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("same machine", payload["browser_auth_hint"])
         self.assertIn("notion_complete_headless_auth", payload["headless_auth_hint"])
 
+    def test_status_prefers_headless_when_ssh_detected(self) -> None:
+        with mock.patch("labbook.service._list_saved_token_credentials", return_value=[]):
+            with mock.patch.dict(os.environ, {"SSH_CONNECTION": "client 123 server 22"}, clear=False):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    payload = status(tmpdir)
+
+        self.assertEqual(payload["recommended_action"], "notion_start_headless_auth")
+        self.assertEqual(payload["preferred_browser_flow"], "headless")
+        self.assertFalse(payload["recommended_open_browser"])
+        self.assertTrue(payload["browser_environment"]["ssh_session_detected"])
+        self.assertIn("SSH session variables were detected", payload["browser_environment_hint"])
+
     def test_page_limit_is_clamped_to_minimum(self) -> None:
         self.assertEqual(normalize_browser_auth_page_limit(None), DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
         self.assertEqual(normalize_browser_auth_page_limit(5), MIN_BROWSER_AUTH_PAGE_LIMIT)
 
     def test_status_reports_stale_pending_auth_without_clearing(self) -> None:
         with mock.patch("labbook.service._list_saved_token_credentials", return_value=[]):
-            with tempfile.TemporaryDirectory() as tmpdir:
-                state_dir = Path(tmpdir) / ".labbook"
-                state_dir.mkdir(parents=True, exist_ok=True)
-                pending_auth_path = state_dir / "pending-auth.json"
-                pending_auth_path.write_text(
-                    json.dumps(
-                        {
-                            "mode": "local_browser",
-                            "session_id": "stale-session",
-                            "started_at": "2026-01-01T00:00:00+00:00",
-                            "timeout_seconds": 30,
-                        }
-                    ),
-                    encoding="utf-8",
-                )
+            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    state_dir = Path(tmpdir) / ".labbook"
+                    state_dir.mkdir(parents=True, exist_ok=True)
+                    pending_auth_path = state_dir / "pending-auth.json"
+                    pending_auth_path.write_text(
+                        json.dumps(
+                            {
+                                "mode": "local_browser",
+                                "session_id": "stale-session",
+                                "started_at": "2026-01-01T00:00:00+00:00",
+                                "timeout_seconds": 30,
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
 
-                payload = status(tmpdir)
-                pending_auth = load_pending_auth(tmpdir)
+                    payload = status(tmpdir)
+                    pending_auth = load_pending_auth(tmpdir)
 
         self.assertIsNotNone(payload["pending_auth"])
         self.assertTrue(payload["pending_auth_stale"])
@@ -304,13 +331,14 @@ class ServiceTests(unittest.TestCase):
 
     def test_auth_browser_falls_back_to_headless_when_browser_cannot_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch(
-                "labbook.service._spawn_persistent_local_handoff_server",
-                return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "test-session"},
-            ):
-                with mock.patch("labbook.service._open_browser_url", return_value=False):
-                    payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
-                    pending_auth = load_pending_auth(tmpdir)
+            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
+                with mock.patch(
+                    "labbook.service._spawn_persistent_local_handoff_server",
+                    return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "test-session"},
+                ):
+                    with mock.patch("labbook.service._open_browser_url", return_value=False):
+                        payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
+                        pending_auth = load_pending_auth(tmpdir)
 
         self.assertEqual(payload["auth_mode"], "headless")
         self.assertTrue(payload["auto_switched_to_headless"])
@@ -318,19 +346,34 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNotNone(pending_auth)
         self.assertEqual(pending_auth["mode"], "headless")
 
-    def test_auth_browser_starts_async_local_browser_flow(self) -> None:
+    def test_auth_browser_auto_switches_to_headless_when_ssh_detected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch(
-                "labbook.service._spawn_persistent_local_handoff_server",
-                return_value={
-                    "return_to": "http://127.0.0.1:8765/oauth/handoff",
-                    "session_id": "test-session",
-                    "pid": 12345,
-                },
-            ):
-                with mock.patch("labbook.service._open_browser_url", return_value=True):
+            with mock.patch.dict(os.environ, {"SSH_CONNECTION": "client 123 server 22"}, clear=False):
+                with mock.patch("labbook.service._spawn_persistent_local_handoff_server") as spawn_mock:
                     payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
                     pending_auth = load_pending_auth(tmpdir)
+
+        spawn_mock.assert_not_called()
+        self.assertEqual(payload["auth_mode"], "headless")
+        self.assertTrue(payload["auto_switched_to_headless"])
+        self.assertIn("SSH session variables were detected", payload["reason"])
+        self.assertIsNotNone(pending_auth)
+        self.assertEqual(pending_auth["mode"], "headless")
+
+    def test_auth_browser_starts_async_local_browser_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
+                with mock.patch(
+                    "labbook.service._spawn_persistent_local_handoff_server",
+                    return_value={
+                        "return_to": "http://127.0.0.1:8765/oauth/handoff",
+                        "session_id": "test-session",
+                        "pid": 12345,
+                    },
+                ):
+                    with mock.patch("labbook.service._open_browser_url", return_value=True):
+                        payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
+                        pending_auth = load_pending_auth(tmpdir)
 
         self.assertEqual(payload["auth_mode"], "local_browser")
         self.assertEqual(payload["recommended_next_action"], "notion_status")
@@ -692,6 +735,58 @@ class ServiceTests(unittest.TestCase):
     def test_selection_browser_reuses_saved_credential_without_oauth(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
+                with mock.patch(
+                    "labbook.service._list_saved_token_credentials",
+                    return_value=[
+                        {
+                            "provider": "keyring",
+                            "credential_ref": "cred-1",
+                            "workspace_name": "Workspace One",
+                            "workspace_id": "workspace-1",
+                            "metadata": {"service_name": "notion-access-broker/agent-labbook"},
+                        }
+                    ],
+                ):
+                    with mock.patch(
+                        "labbook.service._load_token_credential",
+                        return_value={
+                            "access_token": "access-1",
+                            "refresh_token": "refresh-1",
+                            "workspace_name": "Workspace One",
+                            "workspace_id": "workspace-1",
+                        },
+                    ):
+                        with mock.patch(
+                            "labbook.service._spawn_persistent_local_handoff_server",
+                            return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "server-session"},
+                        ):
+                            with mock.patch(
+                                "labbook.service._post_backend_json",
+                                return_value={
+                                    "ok": True,
+                                    "api_version": BROKER_API_VERSION,
+                                    "supported_api_versions": [BROKER_API_VERSION],
+                                    "continue_url": "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session",
+                                },
+                            ) as post_backend_mock:
+                                with mock.patch("labbook.service._open_browser_url", return_value=True):
+                                    payload = selection_browser(project_root=root, replace_existing_bindings=False)
+                                    pending_auth = load_pending_auth(root)
+
+        self.assertEqual(payload["selection_mode"], "local_browser")
+        self.assertEqual(payload["credential_ref"], "cred-1")
+        self.assertIsNotNone(pending_auth)
+        self.assertEqual(pending_auth["auth_url"], "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session")
+        post_backend_mock.assert_called_once()
+        self.assertEqual(
+            post_backend_mock.call_args[0][0],
+            "https://superplanner.ai/notion/oauth/api/create-session",
+        )
+
+    def test_selection_browser_auto_switches_to_headless_when_ssh_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
             with mock.patch(
                 "labbook.service._list_saved_token_credentials",
                 return_value=[
@@ -700,7 +795,6 @@ class ServiceTests(unittest.TestCase):
                         "credential_ref": "cred-1",
                         "workspace_name": "Workspace One",
                         "workspace_id": "workspace-1",
-                        "metadata": {"service_name": "notion-access-broker/agent-labbook"},
                     }
                 ],
             ):
@@ -714,31 +808,25 @@ class ServiceTests(unittest.TestCase):
                     },
                 ):
                     with mock.patch(
-                        "labbook.service._spawn_persistent_local_handoff_server",
-                        return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "server-session"},
+                        "labbook.service._post_backend_json",
+                        return_value={
+                            "ok": True,
+                            "api_version": BROKER_API_VERSION,
+                            "supported_api_versions": [BROKER_API_VERSION],
+                            "continue_url": "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session",
+                        },
                     ):
-                        with mock.patch(
-                            "labbook.service._post_backend_json",
-                            return_value={
-                                "ok": True,
-                                "api_version": BROKER_API_VERSION,
-                                "supported_api_versions": [BROKER_API_VERSION],
-                                "continue_url": "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session",
-                            },
-                        ) as post_backend_mock:
-                            with mock.patch("labbook.service._open_browser_url", return_value=True):
+                        with mock.patch.dict(os.environ, {"SSH_CONNECTION": "client 123 server 22"}, clear=False):
+                            with mock.patch("labbook.service._spawn_persistent_local_handoff_server") as spawn_mock:
                                 payload = selection_browser(project_root=root, replace_existing_bindings=False)
                                 pending_auth = load_pending_auth(root)
 
-        self.assertEqual(payload["selection_mode"], "local_browser")
-        self.assertEqual(payload["credential_ref"], "cred-1")
+        spawn_mock.assert_not_called()
+        self.assertEqual(payload["selection_mode"], "headless")
+        self.assertTrue(payload["auto_switched_to_headless"])
+        self.assertIn("SSH session variables were detected", payload["reason"])
         self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["auth_url"], "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session")
-        post_backend_mock.assert_called_once()
-        self.assertEqual(
-            post_backend_mock.call_args[0][0],
-            "https://superplanner.ai/notion/oauth/api/create-session",
-        )
+        self.assertEqual(pending_auth["mode"], "headless")
 
     def test_open_browser_url_prefers_graphical_launcher_over_text_browser_default(self) -> None:
         process = mock.Mock()

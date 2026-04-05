@@ -35,14 +35,15 @@ claude mcp add --scope project labbook -- uvx agent-labbook mcp
 2. If `notion_status` reports `saved_credentials_error` or `credential_provider_diagnostics_error`, fix the local `notion-access-broker` helper installation before starting OAuth. A fresh OAuth flow cannot persist shared credentials without it.
 3. If status shows saved shared credentials for this integration, run `notion_list_saved_credentials` and then `notion_attach_saved_credential` for the workspace you want to reuse.
 4. If you want to reopen the hosted root-page selection UI without re-running OAuth, run `notion_selection_browser`.
-5. Otherwise run `notion_auth_browser`, or `notion_start_headless_auth` if connecting through SSH or another headless environment.
+5. Check `notion_status.preferred_browser_flow`, `notion_status.recommended_open_browser`, and `notion_status.browser_environment_hint` before you start a browser flow.
+6. Otherwise run `notion_auth_browser`, or `notion_start_headless_auth` if connecting through SSH or another headless environment.
    For browser auth, pass a long `timeout_seconds` such as `1800` so the background localhost listener stays alive while you finish Notion consent and resource selection.
-6. Choose the Notion pages or data sources for this project.
-7. Run `notion_status` again after the browser says the project is connected, after attaching the saved credential, or after reopening the selection UI.
-8. If `notion_status` reports `pending_handoff_ready=true`, run `notion_finalize_pending_auth`.
-9. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` if you want a read-only snapshot of the explicit project roots.
-10. Run `notion_get_api_context`.
-11. Use the returned token, headers, and resource IDs with the official Notion API.
+7. Choose the Notion pages or data sources for this project.
+8. Run `notion_status` again after the browser says the project is connected, after attaching the saved credential, or after reopening the selection UI.
+9. If `notion_status` reports `pending_handoff_ready=true`, run `notion_finalize_pending_auth`.
+10. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` if you want a read-only snapshot of the explicit project roots.
+11. Run `notion_get_api_context`.
+12. Use the returned token, headers, and resource IDs with the official Notion API.
 
 ## MCP Design
 
@@ -56,6 +57,7 @@ claude mcp add --scope project labbook -- uvx agent-labbook mcp
 - Mutating actions stay in tools. In particular, `notion_status` is now read-only and `notion_finalize_pending_auth` is the explicit step that persists a pending browser handoff.
 - Tools now declare `outputSchema` as well as `inputSchema`, so MCP clients can discover stable structured outputs and the low-level server can validate successful tool payloads before returning them.
 - `notion_status` also reports credential provider diagnostics so you can tell whether `1Password` or `keyring` is currently available and which one would be selected by default.
+- `notion_status` now also reports browser-environment hints so SSH and other headless sessions can prefer headless auth or `open_browser=false` before a localhost callback flow is attempted.
 
 ## Hosted Backend
 

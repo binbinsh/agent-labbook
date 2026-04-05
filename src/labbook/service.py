@@ -63,6 +63,8 @@ BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
 STATUS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/status{?project_root}"
 BINDINGS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/bindings{?project_root}"
 NOTION_ACCESS_BROKER_SRC_ENV_VAR = "NOTION_ACCESS_BROKER_SRC"
+FORCE_HEADLESS_ENV_VAR = "AGENT_LABBOOK_FORCE_HEADLESS"
+FORCE_LOCAL_BROWSER_ENV_VAR = "AGENT_LABBOOK_FORCE_LOCAL_BROWSER"
 _GRAPHICAL_BROWSER_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("xdg-open",),
     ("open",),
@@ -80,6 +82,8 @@ _TEXT_BROWSER_NAMES = frozenset(
         "browsh",
     }
 )
+_SSH_ENV_VARS: tuple[str, ...] = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
+_DISPLAY_ENV_VARS: tuple[str, ...] = ("DISPLAY", "WAYLAND_DISPLAY", "MIR_SOCKET")
 
 
 def _utc_now() -> str:
@@ -123,6 +127,70 @@ def normalize_browser_auth_page_limit(page_limit: int | str | None = None) -> in
     if limit < MIN_BROWSER_AUTH_PAGE_LIMIT:
         return MIN_BROWSER_AUTH_PAGE_LIMIT
     return min(limit, DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
+
+
+def _parse_optional_bool_env(name: str) -> bool | None:
+    raw = str(os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return None
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def _browser_environment() -> dict[str, Any]:
+    ssh_session_detected = any(str(os.environ.get(name) or "").strip() for name in _SSH_ENV_VARS)
+    display_detected = any(str(os.environ.get(name) or "").strip() for name in _DISPLAY_ENV_VARS)
+    graphical_launcher_available = any(shutil.which(parts[0]) for parts in _GRAPHICAL_BROWSER_COMMANDS)
+    force_headless = bool(_parse_optional_bool_env(FORCE_HEADLESS_ENV_VAR))
+    force_local_browser = bool(_parse_optional_bool_env(FORCE_LOCAL_BROWSER_ENV_VAR))
+
+    preferred_browser_flow = "local_browser"
+    recommended_open_browser = True
+    override_source: str | None = None
+    reason = "No remote-session warning was detected, so a same-machine browser flow is acceptable."
+
+    if force_headless:
+        preferred_browser_flow = "headless"
+        recommended_open_browser = False
+        override_source = FORCE_HEADLESS_ENV_VAR
+        reason = (
+            f"{FORCE_HEADLESS_ENV_VAR} is set, so browser-based localhost handoff flows are being forced into headless mode."
+        )
+    elif force_local_browser:
+        preferred_browser_flow = "local_browser"
+        recommended_open_browser = True
+        override_source = FORCE_LOCAL_BROWSER_ENV_VAR
+        reason = (
+            f"{FORCE_LOCAL_BROWSER_ENV_VAR} is set, so browser-based localhost handoff flows are being treated as same-machine."
+        )
+    elif ssh_session_detected:
+        preferred_browser_flow = "headless"
+        recommended_open_browser = False
+        reason = (
+            "SSH session variables were detected. Local browser flows use a localhost callback, so unless the browser is truly "
+            "running on this host and can reach its 127.0.0.1 listener, headless is safer."
+        )
+    elif os.name != "nt" and sys.platform != "darwin" and not display_detected:
+        preferred_browser_flow = "headless"
+        recommended_open_browser = False
+        reason = "No graphical display session was detected in this environment, so headless is safer."
+    elif os.name != "nt" and sys.platform != "darwin" and not graphical_launcher_available:
+        preferred_browser_flow = "headless"
+        recommended_open_browser = False
+        reason = "No graphical browser launcher was detected in this environment, so headless is safer."
+
+    return {
+        "preferred_browser_flow": preferred_browser_flow,
+        "recommended_open_browser": recommended_open_browser,
+        "ssh_session_detected": ssh_session_detected,
+        "display_detected": display_detected,
+        "graphical_launcher_available": graphical_launcher_available,
+        "override_source": override_source,
+        "reason": reason,
+    }
 
 
 def _launch_detached_command(command: list[str]) -> bool:
@@ -1213,6 +1281,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()
     oauth_base_url = effective_oauth_base_url()
+    browser_environment = _browser_environment()
     session_payload = load_project_session(root) or {}
     pending_auth = load_pending_auth(root) or {}
     pending_handoff = load_pending_handoff(root) or {}
@@ -1260,7 +1329,11 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     elif not authenticated and available_saved_credentials:
         recommended_action = "notion_list_saved_credentials"
     elif not authenticated:
-        recommended_action = "notion_auth_browser"
+        recommended_action = (
+            "notion_start_headless_auth"
+            if browser_environment["preferred_browser_flow"] == "headless"
+            else "notion_auth_browser"
+        )
     elif not bindings_ready:
         recommended_action = "notion_bind_resources"
     else:
@@ -1276,6 +1349,16 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     elif pending_auth_stale:
         pending_handoff_hint = "The saved pending auth state has expired. Start a new auth flow or attach a saved credential."
 
+    browser_auth_hint = (
+        "Use notion_auth_browser only when the browser and MCP server are on the same machine. It starts a "
+        "localhost handoff listener, so after the browser says the project is connected, call notion_status. "
+        f"If pending_handoff_ready is true, finish with notion_finalize_pending_auth. Recommended browser auth timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+    )
+    if not browser_environment["recommended_open_browser"]:
+        browser_auth_hint += (
+            f" Current environment note: {browser_environment['reason']} Prefer notion_start_headless_auth or pass open_browser=false."
+        )
+
     return {
         "project_root": str(root),
         "integration": INTEGRATION_ID,
@@ -1283,13 +1366,13 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "oauth_base_url": oauth_base_url,
         "redirect_uri": oauth_callback_uri(oauth_base_url),
         "auth_modes": ["local_browser", "headless"],
+        "preferred_browser_flow": browser_environment["preferred_browser_flow"],
+        "recommended_open_browser": browser_environment["recommended_open_browser"],
+        "browser_environment_hint": browser_environment["reason"],
+        "browser_environment": browser_environment,
         "recommended_browser_auth_timeout_seconds": DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         "recommended_browser_auth_page_limit": DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
-        "browser_auth_hint": (
-            "Use notion_auth_browser only when the browser and MCP server are on the same machine. It starts a "
-            "localhost handoff listener, so after the browser says the project is connected, call notion_status. "
-            f"If pending_handoff_ready is true, finish with notion_finalize_pending_auth. Recommended browser auth timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
-        ),
+        "browser_auth_hint": browser_auth_hint,
         "headless_auth_hint": (
             "If the browser handoff cannot get back to the MCP server, finish the flow with notion_complete_headless_auth "
             "using the handoff bundle shown on the page."
@@ -1356,9 +1439,22 @@ def auth_browser(
     _clear_stale_pending_auth_if_needed(root)
     backend_url = effective_backend_url()
     oauth_base_url = effective_oauth_base_url()
+    browser_environment = _browser_environment()
     session_id = uuid4().hex
     wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
+
+    if open_browser and not browser_environment["recommended_open_browser"]:
+        result = start_headless_auth(
+            project_root=root,
+            page_limit=normalized_page_limit,
+        )
+        result["auth_mode"] = "headless"
+        result["auto_switched_to_headless"] = True
+        result["reason"] = (
+            f"{browser_environment['reason']} This request was switched to headless auth instead of starting a localhost browser handoff."
+        )
+        return result
 
     if not open_browser:
         result = start_headless_auth(
@@ -1458,6 +1554,7 @@ def selection_browser(
     _clear_stale_pending_auth_if_needed(root)
     backend_url = effective_backend_url()
     oauth_base_url = effective_oauth_base_url()
+    browser_environment = _browser_environment()
     session_id = uuid4().hex
     wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
@@ -1474,6 +1571,22 @@ def selection_browser(
         credential_provider=credential_provider,
     )
     token_payload = dict(resolved.get("token_payload") or {})
+
+    if open_browser and not browser_environment["recommended_open_browser"]:
+        result = selection_browser(
+            project_root=root,
+            timeout_seconds=wait_timeout_seconds,
+            open_browser=False,
+            page_limit=normalized_page_limit,
+            credential_ref=str(resolved.get("credential_ref") or "").strip() or None,
+            credential_provider=str(resolved.get("credential_provider") or "").strip() or None,
+            replace_existing_bindings=replace_existing_bindings,
+        )
+        result["auto_switched_to_headless"] = True
+        result["reason"] = (
+            f"{browser_environment['reason']} This request was switched to a headless selection URL instead of starting a localhost browser handoff."
+        )
+        return result
 
     if not open_browser:
         continue_url = _create_selection_continue_url(

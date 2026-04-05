@@ -229,6 +229,28 @@ def _pending_handoff_schema() -> dict[str, Any]:
     )
 
 
+def _browser_environment_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "preferred_browser_flow": _string_schema(enum=["local_browser", "headless"]),
+            "recommended_open_browser": _boolean_schema(),
+            "ssh_session_detected": _boolean_schema(),
+            "display_detected": _boolean_schema(),
+            "graphical_launcher_available": _boolean_schema(),
+            "override_source": _nullable(_string_schema()),
+            "reason": _string_schema(),
+        },
+        required=[
+            "preferred_browser_flow",
+            "recommended_open_browser",
+            "ssh_session_detected",
+            "display_detected",
+            "graphical_launcher_available",
+            "reason",
+        ],
+    )
+
+
 def _status_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
@@ -250,6 +272,10 @@ def _status_output_schema() -> dict[str, Any]:
             "pending_handoff_ready": _boolean_schema(),
             "pending_handoff": _nullable(_pending_handoff_schema()),
             "pending_handoff_hint": _nullable(_string_schema()),
+            "preferred_browser_flow": _string_schema(enum=["local_browser", "headless"]),
+            "recommended_open_browser": _boolean_schema(),
+            "browser_environment_hint": _string_schema(),
+            "browser_environment": _browser_environment_schema(),
             "credential_provider_diagnostics": _nullable(_credential_provider_diagnostics_schema()),
             "credential_provider_diagnostics_error": _nullable(_string_schema()),
             "setup_guide_resource_uri": _string_schema(),
@@ -268,6 +294,10 @@ def _status_output_schema() -> dict[str, Any]:
             "resources",
             "pending_auth_stale",
             "pending_handoff_ready",
+            "preferred_browser_flow",
+            "recommended_open_browser",
+            "browser_environment_hint",
+            "browser_environment",
             "setup_guide_resource_uri",
             "status_resource_uri",
             "bindings_resource_uri",
@@ -360,6 +390,8 @@ def _selection_browser_output_schema() -> dict[str, Any]:
             "credential_ref": _nullable(_string_schema()),
             "browser_opened": _boolean_schema(),
             "recommended_next_action": _string_schema(),
+            "auto_switched_to_headless": _boolean_schema(),
+            "reason": _string_schema(),
             "replaces_existing_bindings": _boolean_schema(),
             "instructions": _string_schema(),
         },
@@ -930,11 +962,13 @@ def _prompt_result(name: str, arguments: dict[str, str] | None) -> types.GetProm
                 f"1. Read {STATUS_RESOURCE_URI} or call notion_status.",
                 "2. If notion_status reports saved_credentials_error or credential_provider_diagnostics_error, stop and fix the local notion-access-broker helper setup before starting OAuth.",
                 "3. If saved shared credentials already exist, prefer notion_list_saved_credentials and notion_attach_saved_credential before starting OAuth again.",
-                "4. If no reusable credential exists, use notion_auth_browser for same-machine browser flows or notion_start_headless_auth for remote/headless flows.",
-                "5. After the browser says the project is connected, call notion_status again.",
-                "6. If notion_status reports pending_handoff_ready=true, call notion_finalize_pending_auth.",
-                "7. If the browser shows a handoff bundle instead, call notion_complete_headless_auth with that bundle.",
-                "8. Once authenticated, bind additional resources only when needed.",
+                "4. Check notion_status.preferred_browser_flow and notion_status.recommended_open_browser before starting any browser flow.",
+                "5. If no reusable credential exists, use notion_auth_browser for same-machine browser flows or notion_start_headless_auth for remote/headless flows.",
+                "6. If you reopen notion_selection_browser in a remote or SSH session, pass open_browser=false unless you are sure the browser can reach the MCP host's localhost callback.",
+                "7. After the browser says the project is connected, call notion_status again.",
+                "8. If notion_status reports pending_handoff_ready=true, call notion_finalize_pending_auth.",
+                "9. If the browser shows a handoff bundle instead, call notion_complete_headless_auth with that bundle.",
+                "10. Once authenticated, bind additional resources only when needed.",
             ]
         )
     elif name == "notion_use_bound_resources":
