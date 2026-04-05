@@ -251,6 +251,88 @@ def _browser_environment_schema() -> dict[str, Any]:
     )
 
 
+def _connect_question_option_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "id": _string_schema(),
+            "label": _string_schema(),
+            "description": _string_schema(),
+        },
+        required=["id", "label", "description"],
+    )
+
+
+def _connect_question_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "header": _string_schema(),
+            "id": _string_schema(),
+            "question": _string_schema(),
+            "recommended_option_id": _string_schema(),
+            "options": _array_schema(_connect_question_option_schema()),
+        },
+        required=["header", "id", "question", "recommended_option_id", "options"],
+    )
+
+
+def _connect_route_step_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "tool": _string_schema(),
+            "arguments": _object_schema({}, additional_properties=True),
+        },
+        required=["tool", "arguments"],
+    )
+
+
+def _connect_route_template_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "scope_mode": _string_schema(enum=["bind_existing_scope", "expand_oauth_scope"]),
+            "browser_mode": _string_schema(enum=["local_browser", "headless"]),
+            "action_sequence": _array_schema(_connect_route_step_schema()),
+        },
+        required=["scope_mode", "browser_mode", "action_sequence"],
+    )
+
+
+def _connect_decision_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "questions": _array_schema(_connect_question_schema()),
+            "recommended_answers": _object_schema(
+                {
+                    "scope_mode": _string_schema(enum=["bind_existing_scope", "expand_oauth_scope"]),
+                    "browser_mode": _string_schema(enum=["local_browser", "headless"]),
+                },
+                required=["scope_mode", "browser_mode"],
+            ),
+            "client_prompt_hint": _string_schema(),
+            "manual_prompt_markdown": _string_schema(),
+            "manual_response_hint": _string_schema(),
+            "route_templates": _array_schema(_connect_route_template_schema()),
+            "known_authorized_root_pages": _array_schema(_binding_resource_schema()),
+            "known_authorized_root_pages_available": _boolean_schema(),
+            "known_authorized_root_pages_hint": _string_schema(),
+            "known_project_bindings": _array_schema(_binding_resource_schema()),
+            "next_step_hint": _string_schema(),
+        },
+        required=[
+            "questions",
+            "recommended_answers",
+            "client_prompt_hint",
+            "manual_prompt_markdown",
+            "manual_response_hint",
+            "route_templates",
+            "known_authorized_root_pages",
+            "known_authorized_root_pages_available",
+            "known_authorized_root_pages_hint",
+            "known_project_bindings",
+            "next_step_hint",
+        ],
+    )
+
+
 def _status_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
@@ -276,6 +358,8 @@ def _status_output_schema() -> dict[str, Any]:
             "recommended_open_browser": _boolean_schema(),
             "browser_environment_hint": _string_schema(),
             "browser_environment": _browser_environment_schema(),
+            "scope_choice_hint": _string_schema(),
+            "connect_decision": _connect_decision_schema(),
             "credential_provider_diagnostics": _nullable(_credential_provider_diagnostics_schema()),
             "credential_provider_diagnostics_error": _nullable(_string_schema()),
             "setup_guide_resource_uri": _string_schema(),
@@ -298,6 +382,8 @@ def _status_output_schema() -> dict[str, Any]:
             "recommended_open_browser",
             "browser_environment_hint",
             "browser_environment",
+            "scope_choice_hint",
+            "connect_decision",
             "setup_guide_resource_uri",
             "status_resource_uri",
             "bindings_resource_uri",
@@ -646,8 +732,9 @@ def _tool_definitions() -> list[types.Tool]:
                 "listener for this project. The browser flow completes asynchronously, so call notion_status after "
                 "you finish consent and selection. The default localhost listener timeout is "
                 f"{DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS} seconds, and the default page_limit is "
-                f"{DEFAULT_BROWSER_AUTH_PAGE_LIMIT}. If called with open_browser=false, this tool switches to the "
-                "headless flow instead."
+                f"{DEFAULT_BROWSER_AUTH_PAGE_LIMIT}. Use this when you need the official Notion OAuth/root-page chooser "
+                "again to expand what the integration can access. If called with open_browser=false, this tool switches "
+                "to the headless flow instead."
             ),
             properties={
                 "project_root": {"type": "string"},
@@ -664,7 +751,7 @@ def _tool_definitions() -> list[types.Tool]:
         _tool(
             name="notion_start_headless_auth",
             title="Start Headless Auth",
-            description="Create a headless public-integration auth URL. The user can finish auth in any browser and then paste the returned handoff bundle back into Codex.",
+            description="Create a headless public-integration auth URL. Use this when you need the official Notion OAuth/root-page chooser again from SSH or another headless environment. The user can finish auth in any browser and then paste the returned handoff bundle back into Codex.",
             properties={
                 "project_root": {"type": "string"},
                 "page_limit": {"type": "integer"},
@@ -744,9 +831,11 @@ def _tool_definitions() -> list[types.Tool]:
             title="Reopen Selection UI",
             description=(
                 "Open the hosted Notion resource-selection UI using the current saved session or a saved shared "
-                "credential, without re-running OAuth consent. This can replace the project's current bindings, so "
-                "pass replace_existing_bindings=true when rebinding an already-configured project. If called with "
-                "open_browser=false, this tool switches to a headless selection URL."
+                "credential, without re-running OAuth consent. Use this only when the current Notion OAuth scope already "
+                "includes the content you need and you only want to choose project bindings. This can replace the "
+                "project's current bindings, so pass replace_existing_bindings=true when rebinding an already-configured "
+                "project. If you actually need to expand root-page access, use notion_auth_browser or notion_start_headless_auth instead. "
+                "If called with open_browser=false, this tool switches to a headless selection URL."
             ),
             properties={
                 "project_root": {"type": "string"},
@@ -962,13 +1051,17 @@ def _prompt_result(name: str, arguments: dict[str, str] | None) -> types.GetProm
                 f"1. Read {STATUS_RESOURCE_URI} or call notion_status.",
                 "2. If notion_status reports saved_credentials_error or credential_provider_diagnostics_error, stop and fix the local notion-access-broker helper setup before starting OAuth.",
                 "3. If saved shared credentials already exist, prefer notion_list_saved_credentials and notion_attach_saved_credential before starting OAuth again.",
-                "4. Check notion_status.preferred_browser_flow and notion_status.recommended_open_browser before starting any browser flow.",
-                "5. If no reusable credential exists, use notion_auth_browser for same-machine browser flows or notion_start_headless_auth for remote/headless flows.",
-                "6. If you reopen notion_selection_browser in a remote or SSH session, pass open_browser=false unless you are sure the browser can reach the MCP host's localhost callback.",
-                "7. After the browser says the project is connected, call notion_status again.",
-                "8. If notion_status reports pending_handoff_ready=true, call notion_finalize_pending_auth.",
-                "9. If the browser shows a handoff bundle instead, call notion_complete_headless_auth with that bundle.",
-                "10. Once authenticated, bind additional resources only when needed.",
+                "4. If your client can ask the user follow-up questions, map notion_status.connect_decision.questions into those prompts before choosing a browser flow.",
+                "5. If it cannot, show notion_status.connect_decision.manual_prompt_markdown to the user and wait for a plain-text answer before choosing tools.",
+                "6. Use notion_status.scope_choice_hint and notion_status.connect_decision.route_templates to decide whether you need fresh OAuth scope or only project bindings within the existing scope.",
+                "7. If you need the official Notion root-page chooser again to expand access, use notion_auth_browser for same-machine browser flows or notion_start_headless_auth for remote/headless flows.",
+                "8. If the current integration access scope is already enough and you only need to pick which authorized pages or databases this project should bind, use notion_selection_browser instead of re-running OAuth.",
+                "9. Check notion_status.preferred_browser_flow and notion_status.recommended_open_browser before starting any browser flow.",
+                "10. If you reopen notion_selection_browser in a remote or SSH session, pass open_browser=false unless you are sure the browser can reach the MCP host's localhost callback.",
+                "11. After the browser says the project is connected, call notion_status again.",
+                "12. If notion_status reports pending_handoff_ready=true, call notion_finalize_pending_auth.",
+                "13. If the browser shows a handoff bundle instead, call notion_complete_headless_auth with that bundle.",
+                "14. Once authenticated, bind additional resources only when needed.",
             ]
         )
     elif name == "notion_use_bound_resources":

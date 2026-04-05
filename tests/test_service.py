@@ -109,6 +109,13 @@ class ServiceTests(unittest.TestCase):
         )
         self.assertIn("same machine", payload["browser_auth_hint"])
         self.assertIn("notion_complete_headless_auth", payload["headless_auth_hint"])
+        self.assertIn("Use notion_selection_browser only", payload["scope_choice_hint"])
+        self.assertEqual(payload["connect_decision"]["recommended_answers"]["scope_mode"], "expand_oauth_scope")
+        self.assertEqual(payload["connect_decision"]["recommended_answers"]["browser_mode"], "local_browser")
+        self.assertEqual(len(payload["connect_decision"]["questions"]), 2)
+        self.assertIn("manual_prompt_markdown", payload["connect_decision"])
+        self.assertIn("scope_mode=<bind_existing_scope|expand_oauth_scope>", payload["connect_decision"]["manual_prompt_markdown"])
+        self.assertFalse(payload["connect_decision"]["known_authorized_root_pages_available"])
 
     def test_status_prefers_headless_when_ssh_detected(self) -> None:
         with mock.patch("labbook.service._list_saved_token_credentials", return_value=[]):
@@ -257,6 +264,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["available_saved_credentials_count"], 1)
         self.assertEqual(payload["available_saved_credentials"][0]["display_name"], "Workspace One")
         self.assertEqual(payload["credential_provider_diagnostics"]["resolved_provider"], "1password")
+        self.assertEqual(payload["connect_decision"]["recommended_answers"]["scope_mode"], "bind_existing_scope")
 
     def test_status_recommends_setup_guide_when_saved_credential_lookup_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

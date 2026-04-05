@@ -79,6 +79,11 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.isError)
         self.assertEqual(result.structuredContent["integration"], "agent-labbook")
         self.assertIn("recommended_action", result.structuredContent)
+        self.assertIn("scope_choice_hint", result.structuredContent)
+        self.assertIn("connect_decision", result.structuredContent)
+        self.assertEqual(len(result.structuredContent["connect_decision"]["questions"]), 2)
+        self.assertIn("manual_prompt_markdown", result.structuredContent["connect_decision"])
+        self.assertIn("route_templates", result.structuredContent["connect_decision"])
         self.assertTrue(result.content)
 
     async def test_resources_expose_status_and_setup_guide(self) -> None:
@@ -111,6 +116,8 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(prompt.messages[0].content, types.TextContent)
         self.assertIn("notion_finalize_pending_auth", prompt.messages[0].content.text)
         self.assertIn("saved_credentials_error", prompt.messages[0].content.text)
+        self.assertIn("connect_decision.questions", prompt.messages[0].content.text)
+        self.assertIn("manual_prompt_markdown", prompt.messages[0].content.text)
 
 
 if __name__ == "__main__":

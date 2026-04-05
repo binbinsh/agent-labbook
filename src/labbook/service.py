@@ -420,7 +420,10 @@ def _build_setup_guide() -> str:
             "For MCP users:",
             "1. Call `notion_status` or read the `labbook://agent-labbook/project/status` resource first. If it reports saved shared credentials for this integration, prefer `notion_list_saved_credentials` and `notion_attach_saved_credential` before re-running OAuth.",
             "   If `saved_credentials_error` or `credential_provider_diagnostics_error` is non-null, fix the local notion-access-broker helper installation before re-running OAuth.",
-            "   If you want the hosted root-page chooser again without new OAuth consent, use `notion_selection_browser`.",
+            "   If your client supports ask-user-question style prompts, you can map `notion_status.connect_decision.questions` directly into those prompts.",
+            "   If it does not, show `notion_status.connect_decision.manual_prompt_markdown` to the user and wait for a reply before choosing tools.",
+            "   Use `notion_selection_browser` only when the integration's current Notion access scope already includes the pages or databases you want and you only need to choose project bindings.",
+            "   If you need the official Notion root-page chooser again to expand what the integration can access, start a fresh OAuth flow instead.",
             "2. If you still need OAuth, start with `notion_auth_browser` if you want the simplest flow. It starts a localhost handoff listener and returns immediately so the browser flow can finish asynchronously.",
             f"   For browser auth, pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` or longer so the background localhost listener stays available while you finish consent and resource selection.",
             "   After the browser says the project is connected, call `notion_status`. If `pending_handoff_ready` is true, call `notion_finalize_pending_auth` to persist the session and bindings. If the browser handoff cannot get back to the MCP server, use `notion_complete_headless_auth` with the handoff bundle shown on the page.",
@@ -1277,6 +1280,134 @@ def _public_pending_auth_payload(pending_auth: dict[str, Any] | None) -> dict[st
     }
 
 
+def _connect_decision_payload(
+    *,
+    authenticated: bool,
+    available_saved_credentials: list[dict[str, Any]],
+    browser_environment: dict[str, Any],
+    resources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    recommended_scope_mode = "bind_existing_scope" if (authenticated or available_saved_credentials) else "expand_oauth_scope"
+    recommended_browser_mode = str(browser_environment.get("preferred_browser_flow") or "local_browser").strip() or "local_browser"
+    manual_prompt_markdown = "\n".join(
+        [
+            "Before choosing a Notion connect flow, ask the user two short questions:",
+            "1. Scope",
+            f"   - `bind_existing_scope` ({'recommended' if recommended_scope_mode == 'bind_existing_scope' else 'available'}): only choose project bindings from pages or databases the current integration can already access.",
+            f"   - `expand_oauth_scope` ({'recommended' if recommended_scope_mode == 'expand_oauth_scope' else 'available'}): reopen the official Notion OAuth root-page chooser to expand what this integration can access.",
+            "2. Browser",
+            f"   - `local_browser` ({'recommended' if recommended_browser_mode == 'local_browser' else 'available'}): open a browser on the same machine as the MCP server.",
+            f"   - `headless` ({'recommended' if recommended_browser_mode == 'headless' else 'available'}): return a URL or handoff-bundle flow for SSH, remote terminals, or another device.",
+            "Ask the user to reply with: `scope_mode=<bind_existing_scope|expand_oauth_scope> browser_mode=<local_browser|headless>`.",
+        ]
+    )
+
+    return {
+        "questions": [
+            {
+                "header": "Scope",
+                "id": "scope_mode",
+                "question": "Do you need to expand the Notion root pages this integration can access, or only choose project bindings from the current access scope?",
+                "recommended_option_id": recommended_scope_mode,
+                "options": [
+                    {
+                        "id": "bind_existing_scope",
+                        "label": "Bind Existing Scope",
+                        "description": "Only choose which already-authorized pages or databases this project should bind.",
+                    },
+                    {
+                        "id": "expand_oauth_scope",
+                        "label": "Reauthorize Scope",
+                        "description": "Reopen the official Notion OAuth root-page chooser to expand what this integration can access.",
+                    },
+                ],
+            },
+            {
+                "header": "Browser",
+                "id": "browser_mode",
+                "question": "Should this flow open a browser on the MCP host, or stay headless and return a URL or handoff-bundle flow?",
+                "recommended_option_id": recommended_browser_mode,
+                "options": [
+                    {
+                        "id": "local_browser",
+                        "label": "Open Browser",
+                        "description": "Use only when the browser is running on the same machine and can reach the MCP host's localhost callback.",
+                    },
+                    {
+                        "id": "headless",
+                        "label": "Headless",
+                        "description": "Return a URL or handoff-bundle flow that works better for SSH, remote terminals, and browser-on-another-device setups.",
+                    },
+                ],
+            },
+        ],
+        "recommended_answers": {
+            "scope_mode": recommended_scope_mode,
+            "browser_mode": recommended_browser_mode,
+        },
+        "client_prompt_hint": (
+            "If the client supports interactive question pickers, map `questions` directly into those prompts. "
+            "Otherwise show `manual_prompt_markdown` and wait for a plain-text answer before choosing tools."
+        ),
+        "manual_prompt_markdown": manual_prompt_markdown,
+        "manual_response_hint": "Reply with `scope_mode=<bind_existing_scope|expand_oauth_scope> browser_mode=<local_browser|headless>`.",
+        "route_templates": [
+            {
+                "scope_mode": "bind_existing_scope",
+                "browser_mode": "local_browser",
+                "action_sequence": [
+                    {
+                        "tool": "notion_selection_browser",
+                        "arguments": {"open_browser": True},
+                    }
+                ],
+            },
+            {
+                "scope_mode": "bind_existing_scope",
+                "browser_mode": "headless",
+                "action_sequence": [
+                    {
+                        "tool": "notion_selection_browser",
+                        "arguments": {"open_browser": False},
+                    }
+                ],
+            },
+            {
+                "scope_mode": "expand_oauth_scope",
+                "browser_mode": "local_browser",
+                "action_sequence": [
+                    {
+                        "tool": "notion_auth_browser",
+                        "arguments": {"open_browser": True},
+                    }
+                ],
+            },
+            {
+                "scope_mode": "expand_oauth_scope",
+                "browser_mode": "headless",
+                "action_sequence": [
+                    {
+                        "tool": "notion_start_headless_auth",
+                        "arguments": {},
+                    }
+                ],
+            },
+        ],
+        "known_authorized_root_pages": [],
+        "known_authorized_root_pages_available": False,
+        "known_authorized_root_pages_hint": (
+            "Agent Labbook cannot currently list the integration's full authorized Notion root pages from local project state alone. "
+            "The only local evidence available here is the project's current bindings and whatever appears in the hosted selection UI. "
+            "If the page or database you need is missing there, choose Reauthorize Scope."
+        ),
+        "known_project_bindings": list(resources),
+        "next_step_hint": (
+            "If you choose Bind Existing Scope but the project is not authenticated yet, attach a saved credential first when one is available. "
+            "If the hosted selection UI still does not show the content you need, switch to Reauthorize Scope."
+        ),
+    }
+
+
 def status(project_root: str | Path | None = None) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()
@@ -1358,6 +1489,17 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         browser_auth_hint += (
             f" Current environment note: {browser_environment['reason']} Prefer notion_start_headless_auth or pass open_browser=false."
         )
+    scope_choice_hint = (
+        "Use notion_selection_browser only to choose project bindings from Notion content that the current integration is already authorized to access. "
+        "If the page or database you need is missing because the integration was not granted that root page yet, re-run OAuth with notion_auth_browser "
+        "or notion_start_headless_auth instead of notion_selection_browser."
+    )
+    connect_decision = _connect_decision_payload(
+        authenticated=authenticated,
+        available_saved_credentials=available_saved_credentials,
+        browser_environment=browser_environment,
+        resources=resources,
+    )
 
     return {
         "project_root": str(root),
@@ -1370,6 +1512,8 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "recommended_open_browser": browser_environment["recommended_open_browser"],
         "browser_environment_hint": browser_environment["reason"],
         "browser_environment": browser_environment,
+        "scope_choice_hint": scope_choice_hint,
+        "connect_decision": connect_decision,
         "recommended_browser_auth_timeout_seconds": DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         "recommended_browser_auth_page_limit": DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
         "browser_auth_hint": browser_auth_hint,
