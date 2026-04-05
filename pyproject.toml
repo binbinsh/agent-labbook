@@ -4,22 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-labbook"
-version = "0.13.14"
+version = "0.14.0"
 description = "Notion auth and project binding for Codex, Claude Code, and other MCP clients."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
   { name = "Binbin Shen", email = "binbinsh@gmail.com" }
 ]
 keywords = ["codex", "claude-code", "mcp", "notion", "oauth"]
 dependencies = [
+  "keyring>=25.6.0,<26",
   "mcp>=1.26.0,<2",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",

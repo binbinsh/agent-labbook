@@ -12,8 +12,10 @@ from . import __version__
 from .service import status
 from .state import (
     DEFAULT_BACKEND_URL,
+    DEFAULT_OAUTH_BASE_URL,
     bindings_path,
     effective_backend_url,
+    effective_oauth_base_url,
     local_handoff_server_path,
     load_project_bindings,
     load_project_session,
@@ -88,6 +90,7 @@ def _mcp_server_config(*, server_name: str) -> dict[str, Any]:
 def _doctor_command(args: argparse.Namespace) -> int:
     project_root = resolve_project_root(args.project_root)
     backend_url = effective_backend_url()
+    oauth_base_url = effective_oauth_base_url()
     pending_path = pending_auth_path(project_root)
     payload: dict[str, Any] = {
         "version": __version__,
@@ -99,6 +102,8 @@ def _doctor_command(args: argparse.Namespace) -> int:
         "project_root": str(project_root),
         "backend_url": backend_url,
         "backend_url_overridden": backend_url != DEFAULT_BACKEND_URL,
+        "oauth_base_url": oauth_base_url,
+        "oauth_base_url_overridden": oauth_base_url != DEFAULT_OAUTH_BASE_URL,
         "state": {
             "session_path": str(session_path(project_root)),
             "session_exists": load_project_session(project_root) is not None,
@@ -122,6 +127,7 @@ def _doctor_command(args: argparse.Namespace) -> int:
     }
     if args.probe_backend:
         payload["backend_probe"] = _probe_backend_health(backend_url)
+        payload["oauth_backend_probe"] = _probe_backend_health(oauth_base_url)
     _json_dump(payload)
     return 0
 

@@ -55,9 +55,19 @@ async function readRequestJson(request) {
   return raw ? JSON.parse(raw) : {};
 }
 
-async function handleNotionRequest(request, mockState) {
+async function handleNotionRequest(request, mockState, options = {}) {
   const url = new URL(request.url);
   const pathname = url.pathname;
+
+  if (options.forceUnauthorized && pathname !== "/v1/oauth/token") {
+    return jsonResponse(
+      {
+        code: "unauthorized",
+        message: "API token is invalid.",
+      },
+      { status: 401 },
+    );
+  }
 
   if (pathname === "/v1/oauth/token" && request.method === "POST") {
     mockState.tokenExchangeCount += 1;
@@ -213,7 +223,8 @@ async function toNodeResponse(response, res) {
   res.end(body);
 }
 
-export async function startWorkerTestServer() {
+export async function startWorkerTestServer(options = {}) {
+  const basePath = String(options.basePath || "").replace(/\/+$/, "");
   const originalFetch = globalThis.fetch;
   const mockState = {
     tokenExchangeCount: 0,
@@ -224,13 +235,16 @@ export async function startWorkerTestServer() {
     NOTION_CLIENT_ID: "test-client-id",
     NOTION_CLIENT_SECRET: "test-client-secret",
     NOTION_VERSION: "2026-03-11",
+    NOTION_OAUTH_BASE_URL: String(options.oauthBaseUrl || ""),
     PUBLIC_BASE_URL: "",
   };
 
   globalThis.fetch = async (input, init) => {
     const request = input instanceof Request && init === undefined ? input : new Request(input, init);
     if (request.url.startsWith("https://api.notion.com/")) {
-      return handleNotionRequest(request, mockState);
+      return handleNotionRequest(request, mockState, {
+        forceUnauthorized: Boolean(options.forceUnauthorized),
+      });
     }
     return originalFetch(input, init);
   };
@@ -242,7 +256,7 @@ export async function startWorkerTestServer() {
         chunks.push(chunk);
       }
       const bodyBuffer = chunks.length ? Buffer.concat(chunks) : null;
-      const request = new Request(`${env.PUBLIC_BASE_URL}${req.url}`, {
+      const request = new Request(`${env.ORIGIN_URL}${req.url}`, {
         method: req.method,
         headers: req.headers,
         body: bodyBuffer && !["GET", "HEAD"].includes(String(req.method || "").toUpperCase()) ? bodyBuffer : undefined,
@@ -265,7 +279,8 @@ export async function startWorkerTestServer() {
     throw new Error("Could not determine test server address.");
   }
 
-  env.PUBLIC_BASE_URL = `http://${address.address}:${address.port}`;
+  env.ORIGIN_URL = `http://${address.address}:${address.port}`;
+  env.PUBLIC_BASE_URL = `${env.ORIGIN_URL}${basePath}`;
 
   return {
     baseUrl: env.PUBLIC_BASE_URL,

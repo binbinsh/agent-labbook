@@ -49,10 +49,11 @@ type SelectionState = {
 type SelectionConfig = {
   baseUrl: string;
   state: SelectionState;
-  selectionToken: string;
+  oauthSession: string;
   workspaceName: string | null;
   resources: Resource[];
   catalogLoaded: boolean;
+  catalogError?: string | null;
 };
 
 const LOCAL_HANDOFF_SUCCESS_MESSAGE = "agent-labbook-local-handoff-success";
@@ -344,10 +345,11 @@ function ResourceRow({
 function SelectionApp({
   baseUrl,
   state,
-  selectionToken,
+  oauthSession,
   workspaceName,
   resources,
   catalogLoaded: initialCatalogLoaded,
+  catalogError: initialCatalogError,
 }: SelectionConfig) {
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
   const rootIndex = new Map(catalog.map((resource) => [resource.resource_id, resource]));
@@ -361,13 +363,22 @@ function SelectionApp({
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [searchingCatalog, setSearchingCatalog] = useState(false);
   const [remoteSearchIds, setRemoteSearchIds] = useState<Set<string>>(new Set());
-  const [catalogLoaded, setCatalogLoaded] = useState(Boolean(initialCatalogLoaded));
+  const [catalogLoaded, setCatalogLoaded] = useState(Boolean(initialCatalogLoaded || initialCatalogError));
+  const [catalogError, setCatalogError] = useState<string | null>(initialCatalogError || null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [localDeliveryStatus, setLocalDeliveryStatus] = useState<"idle" | "delivering" | "delivered" | "fallback">(
     "idle",
   );
   const outputRef = useRef<HTMLDivElement | null>(null);
 
   const deferredQuery = useDeferredValue(inputValue.trim().toLowerCase());
+
+  function buildSessionPayload(extra: Record<string, unknown> = {}) {
+    return {
+      ...extra,
+      oauth_session: oauthSession,
+    };
+  }
 
   function getRootResource(resourceId: string) {
     return rootIndex.get(normalizeNotionIdLike(resourceId));
@@ -399,14 +410,12 @@ function SelectionApp({
         },
         body: JSON.stringify(
           normalizedType === "page"
-            ? {
-                selection_token: selectionToken,
+            ? buildSessionPayload({
                 page_ids: [normalizedId],
-              }
-            : {
-                selection_token: selectionToken,
+              })
+            : buildSessionPayload({
                 data_source_ids: [normalizedId],
-              },
+              }),
         ),
       });
       const payload = await response.json();
@@ -603,16 +612,18 @@ function SelectionApp({
 
   async function refreshCatalog() {
     setRefreshingCatalog(true);
+    setCatalogError(null);
     try {
       const response = await fetch(`${baseUrl}/api/catalog`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          selection_token: selectionToken,
-          page_limit: pageLimit,
-        }),
+        body: JSON.stringify(
+          buildSessionPayload({
+            page_limit: pageLimit,
+          }),
+        ),
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
@@ -632,8 +643,9 @@ function SelectionApp({
         ]),
       );
       setCatalogLoaded(true);
+      setCatalogError(null);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : String(error));
+      setCatalogError(error instanceof Error ? error.message : String(error));
     } finally {
       setRefreshingCatalog(false);
     }
@@ -646,17 +658,16 @@ function SelectionApp({
   }, [catalogLoaded]);
 
   useEffect(() => {
-    if (!catalogLoaded) {
-      return;
-    }
     if (!deferredQuery) {
       setRemoteSearchIds(new Set());
       setSearchingCatalog(false);
+      setSearchError(null);
       return;
     }
 
     setRemoteSearchIds(new Set());
     setSearchingCatalog(true);
+    setSearchError(null);
 
     let cancelled = false;
     const timeoutId = window.setTimeout(async () => {
@@ -666,10 +677,11 @@ function SelectionApp({
           headers: {
             "content-type": "application/json",
           },
-          body: JSON.stringify({
-            selection_token: selectionToken,
-            query: deferredQuery,
-          }),
+          body: JSON.stringify(
+            buildSessionPayload({
+              query: deferredQuery,
+            }),
+          ),
         });
         const payload = await response.json();
         if (cancelled) {
@@ -682,10 +694,12 @@ function SelectionApp({
         const results = dedupeSortResources(Array.isArray(payload.resources) ? payload.resources : []);
         setCatalog((current) => dedupeSortResources([...current, ...results]));
         setRemoteSearchIds(new Set(results.map((resource) => resource.resource_id)));
+        setSearchError(null);
       } catch (error) {
         if (!cancelled) {
           console.error("Remote Notion search failed", error);
           setRemoteSearchIds(new Set());
+          setSearchError(error instanceof Error ? error.message : String(error));
         }
       } finally {
         if (!cancelled) {
@@ -698,7 +712,7 @@ function SelectionApp({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [baseUrl, catalogLoaded, deferredQuery, selectionToken]);
+  }, [baseUrl, deferredQuery, oauthSession]);
 
   async function toggleCollapsed(resource: Resource) {
     const resourceId = normalizeNotionIdLike(resource.resource_id);
@@ -732,10 +746,11 @@ function SelectionApp({
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        selection_token: selectionToken,
-        selected_resources: chosen,
-      }),
+      body: JSON.stringify(
+        buildSessionPayload({
+          selected_resources: chosen,
+        }),
+      ),
     });
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
@@ -932,6 +947,16 @@ function SelectionApp({
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
               {catalogNotice}
             </div>
+            {catalogError ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-900">
+                Could not load available resources from Notion. {catalogError}
+              </div>
+            ) : null}
+            {searchError && searchActive ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-900">
+                Search could not reach Notion. {searchError}
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
             {!catalogLoaded && refreshingCatalog ? (

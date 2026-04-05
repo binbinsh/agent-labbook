@@ -1,19 +1,17 @@
 import { SELECTION_UI_CSS, SELECTION_UI_JS } from "../generated/selection_ui_bundle.js";
 
 const DEFAULT_NOTION_VERSION = "2026-03-11";
+const DEFAULT_OAUTH_BASE_URL = "https://superplanner.ai/notion/oauth";
+const BROKER_API_VERSION = 1;
+const SUPPORTED_BROKER_API_VERSIONS = Object.freeze([BROKER_API_VERSION]);
 const DEFAULT_PAGE_LIMIT = 200;
 const MIN_PAGE_LIMIT = 25;
 const MAX_PAGE_LIMIT = 1000;
 const DEFAULT_SEARCH_LIMIT = 50;
 const MAX_SEARCH_LIMIT = 100;
-const STATE_TTL_SECONDS = 3600;
-const SELECTION_TOKEN_TTL_SECONDS = 3600;
-const HANDOFF_BUNDLE_TTL_SECONDS = 3600;
-const PRIVATE_PAYLOAD_VERSION = "v1";
 const DEFAULT_DISCOVERY_NODE_LIMIT = 2000;
 const MAX_DISCOVERY_NODE_LIMIT = 5000;
 const MAX_BLOCK_SCAN_LIMIT = 20000;
-const NOTION_OAUTH_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_API_BASE = "https://api.notion.com/v1";
 
 function jsonResponse(payload, init = {}) {
@@ -69,124 +67,12 @@ function inlineScriptText(value) {
   return String(value).replaceAll("</script>", "<\\/script>");
 }
 
-function encodeBase64Url(value) {
-  const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(String(value));
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
-
-function decodeBase64Url(value) {
-  const bytes = decodeBase64UrlBytes(value);
-  return new TextDecoder().decode(bytes);
-}
-
-function decodeBase64UrlBytes(value) {
-  const padded = `${value}${"=".repeat((4 - (value.length % 4)) % 4)}`
-    .replaceAll("-", "+")
-    .replaceAll("_", "/");
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
 function clampInteger(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(String(value ?? fallback), 10);
   if (!Number.isFinite(parsed)) {
     return fallback;
   }
   return Math.min(Math.max(parsed, minimum), maximum);
-}
-
-async function hmacSha256(secret, value) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
-  return new Uint8Array(signature);
-}
-
-async function signSignedPayload(env, payload) {
-  const body = encodeBase64Url(JSON.stringify(payload));
-  const signature = encodeBase64Url(await hmacSha256(env.NOTION_CLIENT_SECRET, body));
-  return `${body}.${signature}`;
-}
-
-async function verifySignedPayload(env, signedValue) {
-  const [body, signature] = String(signedValue || "").split(".");
-  if (!body || !signature) {
-    throw new Error("Missing or malformed signed payload.");
-  }
-  const expectedSignature = encodeBase64Url(await hmacSha256(env.NOTION_CLIENT_SECRET, body));
-  if (expectedSignature !== signature) {
-    throw new Error("Signed payload signature mismatch.");
-  }
-  return JSON.parse(decodeBase64Url(body));
-}
-
-async function privatePayloadKey(env) {
-  const secret = new TextEncoder().encode(`${env.NOTION_CLIENT_SECRET}:agent-labbook-private-payload:${PRIVATE_PAYLOAD_VERSION}`);
-  const digest = await crypto.subtle.digest("SHA-256", secret);
-  return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
-}
-
-async function encryptPrivatePayload(env, payload) {
-  const key = await privatePayloadKey(env);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext));
-  return [PRIVATE_PAYLOAD_VERSION, encodeBase64Url(iv), encodeBase64Url(ciphertext)].join(".");
-}
-
-async function decryptPrivatePayload(env, encryptedValue) {
-  const [version, ivPart, ciphertextPart] = String(encryptedValue || "").split(".");
-  if (version !== PRIVATE_PAYLOAD_VERSION || !ivPart || !ciphertextPart) {
-    throw new Error("Missing or malformed encrypted payload.");
-  }
-
-  const key = await privatePayloadKey(env);
-  const iv = decodeBase64UrlBytes(ivPart);
-  const ciphertext = decodeBase64UrlBytes(ciphertextPart);
-  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
-  const decoded = JSON.parse(new TextDecoder().decode(plaintext));
-  if (!(decoded && typeof decoded === "object")) {
-    throw new Error("Encrypted payload did not decode to an object.");
-  }
-  return decoded;
-}
-
-function ensureRecentPayload(payload, ttlSeconds, errorMessage) {
-  const now = Math.floor(Date.now() / 1000);
-  if (typeof payload?.issued_at !== "number" || now - payload.issued_at > ttlSeconds) {
-    throw new Error(errorMessage);
-  }
-}
-
-async function signState(env, payload) {
-  return signSignedPayload(env, payload);
-}
-
-async function verifyState(env, signedState) {
-  const payload = await verifySignedPayload(env, signedState);
-  ensureRecentPayload(payload, STATE_TTL_SECONDS, "Authorization state expired.");
-  return payload;
-}
-
-async function resolveSelectionSession(env, selectionToken) {
-  const payload = await decryptPrivatePayload(env, selectionToken);
-  ensureRecentPayload(payload, SELECTION_TOKEN_TTL_SECONDS, "Selection session expired.");
-  if (payload?.purpose !== "selection_session") {
-    throw new Error("Invalid selection token.");
-  }
-  if (!(payload.token && typeof payload.token === "object")) {
-    throw new Error("Selection token did not contain a token payload.");
-  }
-  return payload;
 }
 
 function getBaseUrl(request, env) {
@@ -197,18 +83,136 @@ function getBaseUrl(request, env) {
   return new URL(request.url).origin;
 }
 
+function normalizeBasePath(pathname) {
+  let normalized = String(pathname || "").trim();
+  if (!normalized || normalized === "/") {
+    return "";
+  }
+  if (!normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  }
+  normalized = normalized.replace(/\/+$/, "");
+  return normalized === "/" ? "" : normalized;
+}
+
+function getBasePath(request, env) {
+  const configured = String(env.PUBLIC_BASE_URL || "").trim();
+  if (!configured) {
+    return "";
+  }
+  try {
+    return normalizeBasePath(new URL(configured).pathname);
+  } catch {
+    return "";
+  }
+}
+
+function getWorkerPath(request, env) {
+  const pathname = new URL(request.url).pathname || "/";
+  const basePath = getBasePath(request, env);
+  if (!basePath) {
+    return pathname;
+  }
+  if (pathname === basePath || pathname === `${basePath}/`) {
+    return "/";
+  }
+  if (pathname.startsWith(`${basePath}/`)) {
+    return pathname.slice(basePath.length) || "/";
+  }
+  return null;
+}
+
 function getNotionVersion(env) {
   return String(env.NOTION_VERSION || DEFAULT_NOTION_VERSION).trim() || DEFAULT_NOTION_VERSION;
 }
 
-function validateLocalReturnUrl(value) {
-  const parsed = new URL(value);
-  const hostname = parsed.hostname.toLowerCase();
-  const allowedHosts = new Set(["127.0.0.1", "localhost"]);
-  if (parsed.protocol !== "http:" || !allowedHosts.has(hostname)) {
-    throw new Error("return_to must point at a localhost HTTP address.");
+function getOauthBaseUrl(env) {
+  const configured = String(env.NOTION_OAUTH_BASE_URL || DEFAULT_OAUTH_BASE_URL).trim();
+  return configured.replace(/\/+$/, "") || DEFAULT_OAUTH_BASE_URL;
+}
+
+function oauthInternalUrl(env, path) {
+  const pathname = normalizeBasePath(new URL(getOauthBaseUrl(env)).pathname);
+  return new URL(`${pathname}${path}`, "https://notion-access-broker").toString();
+}
+
+async function postOauthJson(env, path, payload) {
+  function validateOauthPayload(decoded) {
+    if (!(decoded && typeof decoded === "object" && !Array.isArray(decoded))) {
+      throw new Error("OAuth backend returned an unexpected payload.");
+    }
+    if (!Array.isArray(decoded.supported_api_versions) || decoded.supported_api_versions.length === 0) {
+      throw new Error("OAuth backend did not declare supported_api_versions.");
+    }
+    if (!decoded.supported_api_versions.includes(decoded.api_version)) {
+      throw new Error(
+        `OAuth backend returned a malformed compatibility envelope. api_version=${JSON.stringify(decoded.api_version)}, supported_api_versions=${JSON.stringify(decoded.supported_api_versions)}.`,
+      );
+    }
+    if (!SUPPORTED_BROKER_API_VERSIONS.includes(decoded.api_version)) {
+      throw new Error(
+        `OAuth backend API version mismatch. Client supports ${JSON.stringify(SUPPORTED_BROKER_API_VERSIONS)}, broker reported api_version=${JSON.stringify(decoded.api_version)} and supported_api_versions=${JSON.stringify(decoded.supported_api_versions)}.`,
+      );
+    }
+    return decoded;
   }
-  return parsed.toString();
+
+  const requestInit = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      "x-notion-access-broker-accept-api-versions": SUPPORTED_BROKER_API_VERSIONS.join(","),
+    },
+    body: JSON.stringify(payload),
+  };
+  const response =
+    env.NOTION_OAUTH_SERVICE && typeof env.NOTION_OAUTH_SERVICE.fetch === "function"
+      ? await env.NOTION_OAUTH_SERVICE.fetch(oauthInternalUrl(env, path), requestInit)
+      : await fetch(`${getOauthBaseUrl(env)}${path}`, requestInit);
+  const raw = await response.text();
+  let decoded = {};
+  if (raw.trim()) {
+    try {
+      decoded = JSON.parse(raw);
+    } catch {
+      decoded = {
+        error: raw.trim(),
+      };
+    }
+  }
+  decoded = validateOauthPayload(decoded);
+  if (!response.ok) {
+    throw new Error(String(decoded.error || `OAuth backend returned HTTP ${response.status}`));
+  }
+  return decoded;
+}
+
+async function resolveSharedOauthSession(env, oauthSession) {
+  const payload = await postOauthJson(env, "/api/resolve-session", {
+    integration: "agent-labbook",
+    oauth_session: oauthSession,
+  });
+  if (!payload.ok || !(payload.session && typeof payload.session === "object")) {
+    throw new Error(String(payload.error || "OAuth backend could not resolve the OAuth session."));
+  }
+  return payload.session;
+}
+
+async function resolveAuthContext(env, payload) {
+  const oauthSession = String(payload?.oauth_session || "").trim();
+  if (oauthSession) {
+    const sharedSession = await resolveSharedOauthSession(env, oauthSession);
+    return {
+      kind: "shared",
+      accessToken: String(sharedSession.access_token || "").trim(),
+      mode: sharedSession.mode || null,
+      sharedSession,
+      oauthSession,
+    };
+  }
+
+  throw new Error("oauth_session is required.");
 }
 
 function normalizePageLimit(value) {
@@ -407,11 +411,6 @@ async function notionJson(env, path, init = {}) {
   return payload;
 }
 
-function basicAuthHeader(env) {
-  const encoded = btoa(`${env.NOTION_CLIENT_ID}:${env.NOTION_CLIENT_SECRET}`);
-  return `Basic ${encoded}`;
-}
-
 function notionBearerHeaders(env, accessToken) {
   return {
     authorization: `Bearer ${accessToken}`,
@@ -419,41 +418,6 @@ function notionBearerHeaders(env, accessToken) {
     "content-type": "application/json",
     "notion-version": getNotionVersion(env),
   };
-}
-
-async function exchangeCode(env, redirectUri, code) {
-  const body = JSON.stringify({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: redirectUri,
-  });
-  return notionJson(env, "/oauth/token", {
-    method: "POST",
-    headers: {
-      authorization: basicAuthHeader(env),
-      "content-type": "application/json",
-      accept: "application/json",
-      "notion-version": getNotionVersion(env),
-    },
-    body,
-  });
-}
-
-async function refreshAccessToken(env, refreshToken) {
-  const body = JSON.stringify({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-  });
-  return notionJson(env, "/oauth/token", {
-    method: "POST",
-    headers: {
-      authorization: basicAuthHeader(env),
-      "content-type": "application/json",
-      accept: "application/json",
-      "notion-version": getNotionVersion(env),
-    },
-    body,
-  });
 }
 
 async function fetchSelectableResources(env, accessToken, pageLimit, options = {}) {
@@ -1343,17 +1307,17 @@ function errorPage(title, message) {
         </div>
         <h1 class="title">${escapeHtml(title)}</h1>
         <p class="lede">${escapeHtml(message)}</p>
-        <div class="notice">You can restart the authorization flow from the plugin when you are ready.</div>
+        <div class="notice">You can restart the authorization flow from the integration when you are ready.</div>
       </div>
     `,
   });
 }
 
-function selectionPage({ baseUrl, state, selectionToken, workspaceName, resources, catalogLoaded }) {
+function selectionPage({ baseUrl, state, oauthSession, workspaceName, resources, catalogLoaded }) {
   const bootstrap = {
     baseUrl,
     state,
-    selectionToken,
+    oauthSession,
     workspaceName,
     resources,
     catalogLoaded: Boolean(catalogLoaded),
@@ -1384,138 +1348,61 @@ function selectionPage({ baseUrl, state, selectionToken, workspaceName, resource
 </html>`;
 }
 
-async function handleStart(request, env) {
-  const notionClientId = String(env.NOTION_CLIENT_ID || "").trim();
-  const notionClientSecret = String(env.NOTION_CLIENT_SECRET || "").trim();
-  if (!notionClientId || !notionClientSecret) {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "Worker is missing one or more required secrets: NOTION_CLIENT_ID, NOTION_CLIENT_SECRET.",
-      },
-      { status: 500 },
-    );
-  }
-
+async function handleOauthContinue(request, env) {
   const url = new URL(request.url);
-  const mode = String(url.searchParams.get("mode") || "local_browser").trim();
-  const sessionId = String(url.searchParams.get("session_id") || "").trim();
-  const projectName = String(url.searchParams.get("project_name") || "").trim() || null;
-  const pageLimit = normalizePageLimit(url.searchParams.get("page_limit"));
-  if (!sessionId) {
-    return jsonResponse({ ok: false, error: "session_id is required." }, { status: 400 });
-  }
-  if (!["local_browser", "headless"].includes(mode)) {
-    return jsonResponse({ ok: false, error: "mode must be local_browser or headless." }, { status: 400 });
-  }
-
-  let returnTo = null;
-  if (mode === "local_browser") {
-    try {
-      returnTo = validateLocalReturnUrl(String(url.searchParams.get("return_to") || ""));
-    } catch (exc) {
-      return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 400 });
-    }
-  }
-
-  const baseUrl = getBaseUrl(request, env);
-  const redirectUri = `${baseUrl}/oauth/callback`;
-  const state = await signState(env, {
-    version: 1,
-    mode,
-    session_id: sessionId,
-    return_to: returnTo,
-    project_name: projectName,
-    page_limit: pageLimit,
-    issued_at: Math.floor(Date.now() / 1000),
-  });
-
-  const notionUrl = new URL(NOTION_OAUTH_AUTHORIZE_URL);
-  notionUrl.searchParams.set("client_id", notionClientId);
-  notionUrl.searchParams.set("redirect_uri", redirectUri);
-  notionUrl.searchParams.set("response_type", "code");
-  notionUrl.searchParams.set("owner", "user");
-  notionUrl.searchParams.set("state", state);
-
-  return Response.redirect(notionUrl.toString(), 302);
-}
-
-async function handleCallback(request, env) {
-  const url = new URL(request.url);
-  const baseUrl = getBaseUrl(request, env);
-  const redirectUri = `${baseUrl}/oauth/callback`;
-
-  if (url.searchParams.get("error")) {
-    return htmlResponse(
-      errorPage(
-        "Authorization Cancelled",
-        String(url.searchParams.get("error_description") || url.searchParams.get("error") || "Notion did not complete the authorization."),
-      ),
-      { status: 400 },
-    );
-  }
-
-  const code = String(url.searchParams.get("code") || "").trim();
-  const rawState = String(url.searchParams.get("state") || "").trim();
-  if (!code || !rawState) {
-    return htmlResponse(errorPage("Missing Parameters", "Both code and state are required."), { status: 400 });
+  const oauthSession = String(url.searchParams.get("oauth_session") || "").trim();
+  if (!oauthSession) {
+    return htmlResponse(errorPage("Missing Parameters", "oauth_session is required."), { status: 400 });
   }
 
   try {
-    const state = await verifyState(env, rawState);
-    const tokenPayload = await exchangeCode(env, redirectUri, code);
-    const sanitizedTokenPayload = {
-      access_token: tokenPayload.access_token,
-      refresh_token: tokenPayload.refresh_token,
-      token_type: tokenPayload.token_type,
-      bot_id: tokenPayload.bot_id,
-      workspace_id: tokenPayload.workspace_id,
-      workspace_name: tokenPayload.workspace_name,
-      workspace_icon: tokenPayload.workspace_icon,
-      duplicated_template_id: tokenPayload.duplicated_template_id,
-      owner: tokenPayload.owner || null,
-    };
-    const selectionToken = await encryptPrivatePayload(env, {
-      version: 1,
-      purpose: "selection_session",
-      issued_at: Math.floor(Date.now() / 1000),
-      session_id: state.session_id,
-      backend_url: baseUrl,
-      token: sanitizedTokenPayload,
-    });
+    const sharedSession = await resolveSharedOauthSession(env, oauthSession);
+    const accessToken = String(sharedSession.access_token || "").trim();
+    const pageLimit = normalizePageLimit(sharedSession.page_limit);
 
     let initialCatalog = {
       resources: [],
       catalogLoaded: false,
+      catalogError: null,
     };
     try {
-      const pageLimit = normalizePageLimit(state.page_limit);
-      const preloadedCatalog = await buildSelectionCatalog(
-        env,
-        String(sanitizedTokenPayload.access_token || "").trim(),
-        pageLimit,
-      );
-      initialCatalog = {
-        resources: preloadedCatalog,
-        catalogLoaded: true,
-      };
+      if (accessToken) {
+        const preloadedCatalog = await buildSelectionCatalog(env, accessToken, pageLimit);
+        initialCatalog = {
+          resources: preloadedCatalog,
+          catalogLoaded: true,
+          catalogError: null,
+        };
+      }
     } catch (preloadError) {
-      console.error("Selection catalog preload failed", preloadError);
+      const message = String(preloadError?.message || preloadError || "Could not load the initial Notion catalog.");
+      console.warn("Selection catalog preload failed:", message);
+      initialCatalog = {
+        resources: [],
+        catalogLoaded: false,
+        catalogError: message,
+      };
     }
 
     return htmlResponse(
       selectionPage({
-        baseUrl,
-        state,
-        selectionToken,
-        workspaceName: sanitizedTokenPayload.workspace_name || null,
+        baseUrl: getBaseUrl(request, env),
+        state: {
+          mode: sharedSession.mode || "headless",
+          session_id: sharedSession.session_id || "",
+          return_to: sharedSession.return_to || null,
+          project_name: sharedSession.project_name || null,
+          page_limit: pageLimit,
+        },
+        oauthSession,
+        workspaceName: sharedSession.workspace_name || null,
         resources: initialCatalog.resources,
         catalogLoaded: initialCatalog.catalogLoaded,
+        catalogError: initialCatalog.catalogError,
       }),
     );
-  } catch (exc) {
-    console.error("OAuth callback failed", exc);
-    return htmlResponse(errorPage("Authorization Failed", String(exc.message || exc)), { status: 500 });
+  } catch (error) {
+    return htmlResponse(errorPage("OAuth Session Failed", String(error.message || error)), { status: 500 });
   }
 }
 
@@ -1526,12 +1413,8 @@ async function handleDiscoverChildren(request, env) {
 
   try {
     const payload = await request.json();
-    const selectionToken = String(payload?.selection_token || "").trim();
-    if (!selectionToken) {
-      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
-    }
-    const selectionSession = await resolveSelectionSession(env, selectionToken);
-    const accessToken = String(selectionSession.token.access_token || "").trim();
+    const authContext = await resolveAuthContext(env, payload);
+    const accessToken = authContext.accessToken;
 
     const pageIds = Array.from(
       new Set(
@@ -1584,12 +1467,8 @@ async function handleCatalog(request, env) {
 
   try {
     const payload = await request.json();
-    const selectionToken = String(payload?.selection_token || "").trim();
-    if (!selectionToken) {
-      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
-    }
-    const selectionSession = await resolveSelectionSession(env, selectionToken);
-    const accessToken = String(selectionSession.token.access_token || "").trim();
+    const authContext = await resolveAuthContext(env, payload);
+    const accessToken = authContext.accessToken;
 
     const pageLimit = normalizePageLimit(payload?.page_limit);
     const searchPayload = await buildSelectionCatalog(env, accessToken, pageLimit);
@@ -1609,17 +1488,13 @@ async function handleSearch(request, env) {
 
   try {
     const payload = await request.json();
-    const selectionToken = String(payload?.selection_token || "").trim();
-    if (!selectionToken) {
-      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
-    }
     const query = String(payload?.query || "").trim();
     if (!query) {
       return jsonResponse({ ok: true, resources: [] });
     }
 
-    const selectionSession = await resolveSelectionSession(env, selectionToken);
-    const accessToken = String(selectionSession.token.access_token || "").trim();
+    const authContext = await resolveAuthContext(env, payload);
+    const accessToken = authContext.accessToken;
     const limit = normalizeSearchLimit(payload?.limit);
     const searchPayload = await searchSelectableResources(env, accessToken, query, limit);
     return jsonResponse({
@@ -1638,101 +1513,28 @@ async function handleFinalizeSelection(request, env) {
 
   try {
     const payload = await request.json();
-    const selectionToken = String(payload?.selection_token || "").trim();
-    if (!selectionToken) {
-      return jsonResponse({ ok: false, error: "selection_token is required." }, { status: 400 });
-    }
-
-    const selectionSession = await resolveSelectionSession(env, selectionToken);
-
     const selectedResources = Array.isArray(payload?.selected_resources)
       ? payload.selected_resources.filter((item) => item && typeof item === "object")
       : [];
 
-    const handoffBundle = await encryptPrivatePayload(env, {
-      version: 1,
-      purpose: "handoff_bundle",
-      issued_at: Math.floor(Date.now() / 1000),
-      session_id: String(selectionSession.session_id || "").trim(),
-      backend_url: String(selectionSession.backend_url || getBaseUrl(request, env)).trim(),
-      token: selectionSession.token,
+    const oauthSession = String(payload?.oauth_session || "").trim();
+    if (!oauthSession) {
+      return jsonResponse({ ok: false, error: "oauth_session is required." }, { status: 400 });
+    }
+    const finalizePayload = await postOauthJson(env, "/api/finalize-handoff", {
+      oauth_session: oauthSession,
       selected_resources: selectedResources,
     });
-
-    return jsonResponse({
-      ok: true,
-      handoff_bundle: handoffBundle,
-    });
-  } catch (exc) {
-    return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
-  }
-}
-
-async function handleConsumeHandoff(request, env) {
-  if (request.method !== "POST") {
-    return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
-  }
-
-  try {
-    const payload = await request.json();
-    const handoffBundle = String(payload?.handoff_bundle || "").trim();
-    const sessionId = String(payload?.session_id || "").trim();
-    if (!sessionId) {
-      return jsonResponse({ ok: false, error: "session_id is required." }, { status: 400 });
-    }
-    if (!handoffBundle) {
-      return jsonResponse({ ok: false, error: "handoff_bundle is required." }, { status: 400 });
-    }
-
-    const signedHandoff = await decryptPrivatePayload(env, handoffBundle);
-    ensureRecentPayload(signedHandoff, HANDOFF_BUNDLE_TTL_SECONDS, "Handoff bundle expired.");
-    if (signedHandoff?.purpose !== "handoff_bundle") {
-      return jsonResponse({ ok: false, error: "Invalid handoff bundle." }, { status: 400 });
-    }
-    if (String(signedHandoff.session_id || "").trim() !== sessionId) {
-      return jsonResponse({ ok: false, error: "Handoff bundle session mismatch." }, { status: 400 });
+    if (!finalizePayload.ok) {
+      return jsonResponse(
+        { ok: false, error: String(finalizePayload.error || "OAuth backend could not finalize the handoff.") },
+        { status: 500 },
+      );
     }
 
     return jsonResponse({
       ok: true,
-      payload: {
-        session_id: String(signedHandoff.session_id || "").trim(),
-        backend_url: String(signedHandoff.backend_url || getBaseUrl(request, env)).trim(),
-        token: signedHandoff.token && typeof signedHandoff.token === "object" ? signedHandoff.token : {},
-        selected_resources: Array.isArray(signedHandoff.selected_resources)
-          ? signedHandoff.selected_resources.filter((item) => item && typeof item === "object")
-          : [],
-      },
-    });
-  } catch (exc) {
-    return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
-  }
-}
-
-async function handleRefresh(request, env) {
-  if (request.method !== "POST") {
-    return jsonResponse({ ok: false, error: "Method not allowed." }, { status: 405 });
-  }
-  try {
-    const payload = await request.json();
-    const refreshToken = String(payload.refresh_token || "").trim();
-    if (!refreshToken) {
-      return jsonResponse({ ok: false, error: "refresh_token is required." }, { status: 400 });
-    }
-    const tokenPayload = await refreshAccessToken(env, refreshToken);
-    return jsonResponse({
-      ok: true,
-      token: {
-        access_token: tokenPayload.access_token,
-        refresh_token: tokenPayload.refresh_token,
-        token_type: tokenPayload.token_type,
-        bot_id: tokenPayload.bot_id,
-        workspace_id: tokenPayload.workspace_id,
-        workspace_name: tokenPayload.workspace_name,
-        workspace_icon: tokenPayload.workspace_icon,
-        duplicated_template_id: tokenPayload.duplicated_template_id,
-        owner: tokenPayload.owner || null,
-      },
+      handoff_bundle: String(finalizePayload.handoff_bundle || "").trim(),
     });
   } catch (exc) {
     return jsonResponse({ ok: false, error: String(exc.message || exc) }, { status: 500 });
@@ -1743,42 +1545,34 @@ async function handleHealth(request, env) {
   const baseUrl = getBaseUrl(request, env);
   return jsonResponse({
     ok: true,
-    configured: Boolean(env.NOTION_CLIENT_ID && env.NOTION_CLIENT_SECRET),
+    configured: Boolean(getOauthBaseUrl(env)),
     base_url: baseUrl,
-    redirect_uri: `${baseUrl}/oauth/callback`,
+    oauth_base_url: getOauthBaseUrl(env),
+    continue_url: `${baseUrl}/oauth/continue`,
     notion_version: getNotionVersion(env),
   });
 }
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname === "/" || url.pathname === "/health") {
+    const workerPath = getWorkerPath(request, env);
+    if (workerPath === "/" || workerPath === "/health") {
       return handleHealth(request, env);
     }
-    if (url.pathname === "/oauth/start") {
-      return handleStart(request, env);
+    if (workerPath === "/oauth/continue") {
+      return handleOauthContinue(request, env);
     }
-    if (url.pathname === "/oauth/callback") {
-      return handleCallback(request, env);
-    }
-    if (url.pathname === "/api/discover-children") {
+    if (workerPath === "/api/discover-children") {
       return handleDiscoverChildren(request, env);
     }
-    if (url.pathname === "/api/catalog") {
+    if (workerPath === "/api/catalog") {
       return handleCatalog(request, env);
     }
-    if (url.pathname === "/api/search") {
+    if (workerPath === "/api/search") {
       return handleSearch(request, env);
     }
-    if (url.pathname === "/api/finalize-selection") {
+    if (workerPath === "/api/finalize-selection") {
       return handleFinalizeSelection(request, env);
-    }
-    if (url.pathname === "/api/consume-handoff") {
-      return handleConsumeHandoff(request, env);
-    }
-    if (url.pathname === "/api/refresh") {
-      return handleRefresh(request, env);
     }
     return jsonResponse({ ok: false, error: "Not found." }, { status: 404 });
   },

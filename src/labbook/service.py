@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import base64
 from datetime import datetime, timezone
+import importlib
 import json
 import os
 import re
@@ -19,7 +19,6 @@ from .notion_api import NOTION_API_BASE, NotionClient
 from . import __version__
 from .state import (
     DEFAULT_NOTION_VERSION,
-    backend_redirect_uri,
     bindings_path,
     clear_pending_auth,
     clear_pending_handoff,
@@ -27,6 +26,7 @@ from .state import (
     clear_project_bindings,
     clear_project_session,
     effective_backend_url,
+    effective_oauth_base_url,
     LabbookError,
     load_local_handoff_server,
     load_pending_handoff,
@@ -35,8 +35,10 @@ from .state import (
     load_pending_auth,
     local_handoff_server_path,
     normalize_notion_id,
+    oauth_callback_uri,
     pending_auth_path,
     pending_handoff_path,
+    INTEGRATION_ID,
     resolve_project_root,
     save_project_bindings,
     save_project_session,
@@ -46,11 +48,19 @@ from .state import (
 
 
 CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
+BROKER_API_VERSION = 1
+SUPPORTED_BROKER_API_VERSIONS = (BROKER_API_VERSION,)
+BROKER_API_VERSIONS_HEADER = ",".join(str(version) for version in SUPPORTED_BROKER_API_VERSIONS)
 DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS = 1800
 MIN_BROWSER_AUTH_TIMEOUT_SECONDS = 30
 DEFAULT_BROWSER_AUTH_PAGE_LIMIT = 200
 MIN_BROWSER_AUTH_PAGE_LIMIT = 25
 LOCAL_HANDOFF_SERVER_STARTUP_TIMEOUT_SECONDS = 5
+SETUP_GUIDE_RESOURCE_URI = "labbook://agent-labbook/setup-guide"
+STATUS_RESOURCE_URI = "labbook://agent-labbook/project/status"
+BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
+STATUS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/status{?project_root}"
+BINDINGS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/bindings{?project_root}"
 
 
 def _utc_now() -> str:
@@ -113,6 +123,15 @@ def pending_auth_is_stale(pending_auth: dict[str, Any] | None) -> bool:
     return age_seconds > timeout_seconds
 
 
+def _clear_stale_pending_auth_if_needed(project_root: str | Path | None = None) -> bool:
+    pending_auth = load_pending_auth(project_root) or {}
+    if not pending_auth_is_stale(pending_auth):
+        return False
+    clear_pending_auth(project_root)
+    _clear_local_browser_handoff_state(project_root, terminate_server=True)
+    return True
+
+
 def _rich_text_to_plain_text(items: Any) -> str | None:
     if not isinstance(items, list):
         return None
@@ -162,37 +181,14 @@ def _default_resource_alias(resources: list[dict[str, Any]]) -> str | None:
     return str(resources[0].get("alias") or "").strip() or None
 
 
-def _padding(value: str) -> str:
-    return "=" * ((4 - len(value) % 4) % 4)
-
-
-def _decode_handoff_bundle(handoff_bundle: str) -> dict[str, Any]:
-    raw_bundle = str(handoff_bundle or "").strip()
-    if not raw_bundle:
-        raise LabbookError("handoff_bundle cannot be empty.")
-
-    if raw_bundle.startswith("{"):
-        payload = json.loads(raw_bundle)
-    else:
-        try:
-            decoded = base64.urlsafe_b64decode(raw_bundle + _padding(raw_bundle)).decode("utf-8")
-        except Exception as exc:  # noqa: BLE001
-            raise LabbookError("handoff_bundle is not valid base64url JSON.") from exc
-        payload = json.loads(decoded)
-
-    if not isinstance(payload, dict):
-        raise LabbookError("handoff_bundle must decode to an object.")
-    return payload
-
-
 def _resolve_handoff_bundle(
     *,
-    backend_url: str,
+    oauth_base_url: str,
     expected_session_id: str,
     handoff_bundle: str,
 ) -> dict[str, Any]:
     payload = _post_backend_json(
-        f"{backend_url}/api/consume-handoff",
+        f"{oauth_base_url}/api/consume-handoff",
         {
             "session_id": expected_session_id,
             "handoff_bundle": handoff_bundle,
@@ -265,34 +261,188 @@ def _bindings_payload(
 
 def _build_setup_guide() -> str:
     backend_url = effective_backend_url()
+    oauth_base_url = effective_oauth_base_url()
     return "\n".join(
         [
             "# Agent Labbook Public Integration Setup",
             "",
             "For MCP users:",
-            "1. Start with `notion_auth_browser` if you want the simplest flow. It starts a localhost handoff listener and returns immediately so the browser flow can finish asynchronously.",
+            "1. Call `notion_status` or read the `labbook://agent-labbook/project/status` resource first. If it reports saved shared credentials for this integration, prefer `notion_list_saved_credentials` and `notion_attach_saved_credential` before re-running OAuth.",
+            "   If you want the hosted root-page chooser again without new OAuth consent, use `notion_selection_browser`.",
+            "2. If you still need OAuth, start with `notion_auth_browser` if you want the simplest flow. It starts a localhost handoff listener and returns immediately so the browser flow can finish asynchronously.",
             f"   For browser auth, pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` or longer so the background localhost listener stays available while you finish consent and resource selection.",
-            "   After the browser says the project is connected, call `notion_status`. If the browser handoff cannot get back to the MCP server, use `notion_complete_headless_auth` with the handoff bundle shown on the page.",
+            "   After the browser says the project is connected, call `notion_status`. If `pending_handoff_ready` is true, call `notion_finalize_pending_auth` to persist the session and bindings. If the browser handoff cannot get back to the MCP server, use `notion_complete_headless_auth` with the handoff bundle shown on the page.",
             f"   `page_limit` now controls the size of the initial recent-items catalog. Values below {MIN_BROWSER_AUTH_PAGE_LIMIT} are clamped, but remote search still searches the whole shared workspace.",
-            "2. Complete the official Notion public integration consent page.",
-            "3. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",
-            "4. Call `notion_get_api_context` and use the official Notion API directly with the returned access token.",
+            "3. Complete the official Notion public integration consent page.",
+            "4. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",
+            "5. Call `notion_get_api_context` and use the official Notion API directly with the returned access token.",
             "",
             "For backend maintainers:",
-            "1. Create a Notion Public integration named `Agent Labbook`.",
-            f"2. Add this redirect URI in the Notion integration settings: {backend_redirect_uri(backend_url)}",
-            "3. Deploy the Cloudflare Worker with Wrangler.",
-            "4. Set the Worker secrets `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET`.",
+            f"1. Deploy or reuse a shared Notion OAuth service such as {oauth_base_url}.",
+            f"2. Add this redirect URI in the Notion integration settings: {oauth_callback_uri(oauth_base_url)}",
+            f"3. Configure Agent Labbook to use the shared OAuth service with `AGENT_LABBOOK_OAUTH_BASE_URL={oauth_base_url}`.",
+            "4. Configure shared local credential storage through the notion-access-broker Python helpers.",
+            "   If the local `op` CLI is available and can access 1Password, the default provider automatically prefers",
+            "   `1password`. Set `NOTION_ACCESS_BROKER_1PASSWORD_VAULT=YOUR_VAULT` only if you want to pin a specific",
+            "   vault; otherwise the default 1Password vault is used. If 1Password is unavailable, it falls back to `keyring`.",
+            f"5. Deploy the Agent Labbook app Worker at {backend_url}.",
             "",
             "Privacy:",
-            f"- The hosted service at {backend_url} is privacy-friendly. It only handles OAuth and token refresh.",
-            "- Long-lived tokens and project bindings stay in `.labbook/` inside the current project.",
+            f"- The hosted OAuth service at {oauth_base_url} is privacy-friendly. It only handles OAuth and token refresh.",
+            "- Project bindings stay in `.labbook/`, but long-lived tokens move into the configured shared credential provider.",
         ]
     )
 
 
-def _notion_client(session_payload: dict[str, Any]) -> NotionClient:
+def _load_notion_access_broker_credentials_module():
+    module_name = "notion_access_broker.credentials"
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"notion_access_broker", module_name}:
+            raise
+        sibling_src = Path(__file__).resolve().parents[3] / "notion-access-broker" / "src"
+        if sibling_src.exists() and str(sibling_src) not in sys.path:
+            sys.path.insert(0, str(sibling_src))
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError as sibling_exc:
+            raise LabbookError(
+                "The shared notion-access-broker Python helpers are not installed. Install the notion-access-broker package or "
+                f"keep the repo available at {sibling_src}."
+            ) from sibling_exc
+
+
+def _store_token_credential(*, integration_id: str, token_payload: dict[str, Any]) -> dict[str, Any]:
+    module = _load_notion_access_broker_credentials_module()
+    try:
+        return module.store_token(integration_id=integration_id, token_payload=token_payload)
+    except Exception as exc:  # noqa: BLE001
+        raise LabbookError(str(exc)) from exc
+
+
+def _load_token_credential(
+    *,
+    integration_id: str,
+    credential_provider: str,
+    credential_ref: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    module = _load_notion_access_broker_credentials_module()
+    try:
+        return module.load_token(
+            integration_id=integration_id,
+            credential_provider=credential_provider,
+            credential_ref=credential_ref,
+            metadata=metadata or {},
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise LabbookError(str(exc)) from exc
+
+
+def _list_saved_token_credentials(
+    *,
+    integration_id: str,
+    credential_provider: str | None = None,
+) -> list[dict[str, Any]]:
+    module = _load_notion_access_broker_credentials_module()
+    provider_name = str(credential_provider or "").strip()
+    if provider_name:
+        try:
+            payload = module.list_credentials(integration_id=integration_id, provider_name=provider_name)
+        except Exception as exc:  # noqa: BLE001
+            raise LabbookError(str(exc)) from exc
+        return [item for item in list(payload or []) if isinstance(item, dict)]
+
+    collected: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    last_error: Exception | None = None
+    for candidate_provider in ("1password", "keyring"):
+        try:
+            payload = module.list_credentials(integration_id=integration_id, provider_name=candidate_provider)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            continue
+        for item in list(payload or []):
+            if not isinstance(item, dict):
+                continue
+            provider = str(item.get("provider") or candidate_provider).strip() or candidate_provider
+            credential_ref = str(item.get("credential_ref") or "").strip()
+            if not credential_ref:
+                continue
+            key = (provider, credential_ref)
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(item)
+
+    if collected:
+        return collected
+    if last_error is not None:
+        raise LabbookError(str(last_error)) from last_error
+    return []
+
+
+def _credential_provider_diagnostics(
+    *,
+    provider_name: str | None = None,
+) -> dict[str, Any] | None:
+    module = _load_notion_access_broker_credentials_module()
+    diagnostics_fn = getattr(module, "provider_diagnostics", None)
+    if not callable(diagnostics_fn):
+        return None
+    try:
+        payload = diagnostics_fn(provider_name=provider_name)
+    except Exception as exc:  # noqa: BLE001
+        raise LabbookError(str(exc)) from exc
+    return payload if isinstance(payload, dict) else None
+
+
+def _session_is_authenticated(session_payload: dict[str, Any]) -> bool:
+    credential_ref = str(session_payload.get("credential_ref") or "").strip()
     access_token = str(session_payload.get("access_token") or "").strip()
+    return bool(credential_ref or access_token)
+
+
+def _session_supports_refresh(session_payload: dict[str, Any]) -> bool:
+    credential_ref = str(session_payload.get("credential_ref") or "").strip()
+    refresh_token = str(session_payload.get("refresh_token") or "").strip()
+    return bool(credential_ref or refresh_token)
+
+
+def _session_token_payload(session_payload: dict[str, Any]) -> dict[str, Any]:
+    credential_provider = str(session_payload.get("credential_provider") or "").strip()
+    credential_ref = str(session_payload.get("credential_ref") or "").strip()
+    metadata = session_payload.get("credential_metadata") if isinstance(session_payload.get("credential_metadata"), dict) else None
+    if credential_provider and credential_ref:
+        return _load_token_credential(
+            integration_id=INTEGRATION_ID,
+            credential_provider=credential_provider,
+            credential_ref=credential_ref,
+            metadata=metadata,
+        )
+
+    access_token = str(session_payload.get("access_token") or "").strip()
+    refresh_token = str(session_payload.get("refresh_token") or "").strip()
+    if access_token and refresh_token:
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": str(session_payload.get("token_type") or "bearer").strip() or "bearer",
+            "bot_id": session_payload.get("bot_id"),
+            "workspace_id": session_payload.get("workspace_id"),
+            "workspace_name": session_payload.get("workspace_name"),
+            "workspace_icon": session_payload.get("workspace_icon"),
+            "duplicated_template_id": session_payload.get("duplicated_template_id"),
+            "owner": session_payload.get("owner") if isinstance(session_payload.get("owner"), dict) else None,
+        }
+
+    raise LabbookError("No Notion access token is configured for this project.")
+
+
+def _notion_client(session_payload: dict[str, Any]) -> NotionClient:
+    token_payload = _session_token_payload(session_payload)
+    access_token = str(token_payload.get("access_token") or "").strip()
     if not access_token:
         raise LabbookError("No Notion access token is configured for this project.")
     return NotionClient(token=access_token)
@@ -335,6 +485,62 @@ def _merge_bindings(
 
 
 def _post_backend_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def normalize_supported_versions(raw_value: Any) -> tuple[int, ...]:
+        if not isinstance(raw_value, list) or not raw_value:
+            raise LabbookError("Worker backend did not declare supported_api_versions.")
+        versions: list[int] = []
+        for item in raw_value:
+            try:
+                version = int(item)
+            except (TypeError, ValueError) as exc:
+                raise LabbookError(
+                    f"Worker backend returned an invalid supported API version: {item!r}."
+                ) from exc
+            versions.append(version)
+        return tuple(versions)
+
+    def decode_payload(raw: str, *, status_code: int | None = None) -> dict[str, Any]:
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            if status_code is None:
+                raise LabbookError("Worker backend returned invalid JSON.") from exc
+            raise LabbookError(f"Backend returned HTTP {status_code} with invalid JSON.") from exc
+        if not isinstance(decoded, dict):
+            if status_code is None:
+                raise LabbookError("Worker backend returned an unexpected payload.")
+            raise LabbookError(f"Backend returned HTTP {status_code} with an unexpected payload.")
+
+        supported_api_versions = normalize_supported_versions(decoded.get("supported_api_versions"))
+        api_version = decoded.get("api_version")
+        if api_version not in supported_api_versions:
+            found = repr(api_version)
+            if status_code is None:
+                raise LabbookError(
+                    "Worker backend returned a malformed compatibility envelope. "
+                    f"api_version={found}, supported_api_versions={list(supported_api_versions)!r}."
+                )
+            raise LabbookError(
+                f"Backend returned HTTP {status_code} with a malformed compatibility envelope. "
+                f"api_version={found}, supported_api_versions={list(supported_api_versions)!r}."
+            )
+        if api_version not in SUPPORTED_BROKER_API_VERSIONS:
+            found = repr(api_version)
+            local_supported = list(SUPPORTED_BROKER_API_VERSIONS)
+            remote_supported = list(supported_api_versions)
+            if status_code is None:
+                raise LabbookError(
+                    "Worker backend API version mismatch. "
+                    f"Client supports {local_supported!r}; backend reported api_version={found} "
+                    f"and supported_api_versions={remote_supported!r}."
+                )
+            raise LabbookError(
+                f"Backend returned HTTP {status_code} with incompatible API version. "
+                f"Client supports {local_supported!r}; backend reported api_version={found} "
+                f"and supported_api_versions={remote_supported!r}."
+            )
+        return decoded
+
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = request.Request(
         url,
@@ -343,6 +549,7 @@ def _post_backend_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": CLIENT_USER_AGENT,
+            "X-Notion-Access-Broker-Accept-Api-Versions": BROKER_API_VERSIONS_HEADER,
         },
         method="POST",
     )
@@ -351,17 +558,13 @@ def _post_backend_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             raw = response.read().decode("utf-8")
     except error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
-        raise LabbookError(f"Backend returned HTTP {exc.code}: {raw or exc.reason}") from exc
+        decoded = decode_payload(raw, status_code=exc.code)
+        message = str(decoded.get("error") or decoded.get("error_code") or exc.reason or "").strip()
+        raise LabbookError(f"Backend returned HTTP {exc.code}: {message or exc.reason}") from exc
     except error.URLError as exc:
         raise LabbookError(f"Could not reach the Worker backend: {exc.reason}") from exc
 
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise LabbookError("Worker backend returned invalid JSON.") from exc
-    if not isinstance(decoded, dict):
-        raise LabbookError("Worker backend returned an unexpected payload.")
-    return decoded
+    return decode_payload(raw)
 
 
 def _terminate_local_handoff_server(project_root: str | Path | None = None) -> bool:
@@ -446,25 +649,38 @@ def _spawn_persistent_local_handoff_server(
     raise LabbookError("Could not start the local browser handoff listener.")
 
 
-def _maybe_complete_saved_local_browser_handoff(
+def _pending_handoff_matches_pending_auth(
+    *,
+    pending_auth: dict[str, Any] | None,
+    pending_handoff: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(pending_auth, dict) or not isinstance(pending_handoff, dict):
+        return False
+    expected_session_id = str(pending_auth.get("session_id") or "").strip()
+    handoff_session_id = str(pending_handoff.get("session_id") or "").strip()
+    handoff_bundle = str(pending_handoff.get("handoff_bundle") or "").strip()
+    return bool(expected_session_id and handoff_session_id == expected_session_id and handoff_bundle)
+
+
+def _finalize_saved_local_browser_handoff(
     *,
     project_root: Path,
     pending_auth: dict[str, Any],
-) -> tuple[dict[str, Any] | None, str | None]:
+) -> dict[str, Any]:
     pending_handoff = load_pending_handoff(project_root) or {}
     if not pending_handoff:
-        return None, None
+        raise LabbookError("No saved local browser handoff bundle was found for this project.")
 
     expected_session_id = str(pending_auth.get("session_id") or "").strip()
     handoff_session_id = str(pending_handoff.get("session_id") or "").strip()
     if not expected_session_id or handoff_session_id != expected_session_id:
         clear_pending_handoff(project_root)
-        return None, "Ignored a saved local handoff bundle because it did not match the active pending auth session."
+        raise LabbookError("The saved local browser handoff bundle did not match the active pending auth session.")
 
     handoff_bundle = str(pending_handoff.get("handoff_bundle") or "").strip()
     if not handoff_bundle:
         clear_pending_handoff(project_root)
-        return None, "Saved local handoff state did not contain a handoff bundle."
+        raise LabbookError("The saved local browser handoff state did not contain a handoff bundle.")
 
     result = _complete_auth_handoff(
         project_root=project_root,
@@ -472,23 +688,34 @@ def _maybe_complete_saved_local_browser_handoff(
         handoff_bundle=handoff_bundle,
     )
     clear_pending_handoff(project_root)
-    return result, None
+    return result
 
 
-def _save_session_payload(project_root: Path, *, backend_url: str, token_payload: dict[str, Any]) -> Path:
+def _save_session_payload(
+    project_root: Path,
+    *,
+    app_url: str,
+    oauth_base_url: str,
+    token_payload: dict[str, Any],
+) -> Path:
     access_token = str(token_payload.get("access_token") or "").strip()
     refresh_token = str(token_payload.get("refresh_token") or "").strip()
     if not access_token or not refresh_token:
         raise LabbookError("The OAuth handoff did not contain both access_token and refresh_token.")
+    stored = _store_token_credential(integration_id=INTEGRATION_ID, token_payload=token_payload)
 
     payload = {
         "version": 1,
         "project_root": str(project_root),
-        "backend_url": backend_url,
+        "integration": INTEGRATION_ID,
+        "backend_url": app_url,
+        "app_url": app_url,
+        "oauth_base_url": oauth_base_url,
         "authorized_at": _utc_now(),
         "last_refreshed_at": _utc_now(),
-        "access_token": access_token,
-        "refresh_token": refresh_token,
+        "credential_provider": str(stored.get("provider") or "").strip(),
+        "credential_ref": str(stored.get("credential_ref") or "").strip(),
+        "credential_metadata": stored.get("metadata") if isinstance(stored.get("metadata"), dict) else None,
         "token_type": str(token_payload.get("token_type") or "bearer").strip() or "bearer",
         "bot_id": str(token_payload.get("bot_id") or "").strip() or None,
         "workspace_id": str(token_payload.get("workspace_id") or "").strip() or None,
@@ -496,6 +723,49 @@ def _save_session_payload(project_root: Path, *, backend_url: str, token_payload
         "workspace_icon": str(token_payload.get("workspace_icon") or "").strip() or None,
         "duplicated_template_id": str(token_payload.get("duplicated_template_id") or "").strip() or None,
         "owner": token_payload.get("owner") if isinstance(token_payload.get("owner"), dict) else None,
+        "session_source": "oauth_handoff",
+    }
+    return save_project_session(project_root, payload)
+
+
+def _save_attached_credential_session(
+    project_root: Path,
+    *,
+    app_url: str,
+    oauth_base_url: str,
+    credential_provider: str,
+    credential_ref: str,
+    credential_metadata: dict[str, Any] | None,
+    token_payload: dict[str, Any],
+    authorized_at: str | None = None,
+    last_refreshed_at: str | None = None,
+) -> Path:
+    access_token = str(token_payload.get("access_token") or "").strip()
+    refresh_token = str(token_payload.get("refresh_token") or "").strip()
+    if not access_token or not refresh_token:
+        raise LabbookError("The saved credential did not contain both access_token and refresh_token.")
+
+    payload = {
+        "version": 1,
+        "project_root": str(project_root),
+        "integration": INTEGRATION_ID,
+        "backend_url": app_url,
+        "app_url": app_url,
+        "oauth_base_url": oauth_base_url,
+        "authorized_at": str(authorized_at or "").strip() or _utc_now(),
+        "last_refreshed_at": str(last_refreshed_at or "").strip() or _utc_now(),
+        "attached_at": _utc_now(),
+        "credential_provider": str(credential_provider or "").strip(),
+        "credential_ref": str(credential_ref or "").strip(),
+        "credential_metadata": credential_metadata if isinstance(credential_metadata, dict) else None,
+        "token_type": str(token_payload.get("token_type") or "bearer").strip() or "bearer",
+        "bot_id": str(token_payload.get("bot_id") or "").strip() or None,
+        "workspace_id": str(token_payload.get("workspace_id") or "").strip() or None,
+        "workspace_name": str(token_payload.get("workspace_name") or "").strip() or None,
+        "workspace_icon": str(token_payload.get("workspace_icon") or "").strip() or None,
+        "duplicated_template_id": str(token_payload.get("duplicated_template_id") or "").strip() or None,
+        "owner": token_payload.get("owner") if isinstance(token_payload.get("owner"), dict) else None,
+        "session_source": "saved_credential",
     }
     return save_project_session(project_root, payload)
 
@@ -538,15 +808,19 @@ def _complete_auth_handoff(
     handoff_bundle: str,
 ) -> dict[str, Any]:
     expected_session_id = str(pending_auth.get("session_id") or "").strip()
-    backend_url = effective_backend_url()
+    app_url = str(pending_auth.get("backend_url") or "").strip() or effective_backend_url()
+    oauth_base_url = str(pending_auth.get("oauth_base_url") or "").strip() or effective_oauth_base_url()
     decoded = _resolve_handoff_bundle(
-        backend_url=backend_url,
+        oauth_base_url=oauth_base_url,
         expected_session_id=expected_session_id,
         handoff_bundle=handoff_bundle,
     )
     session_id = str(decoded.get("session_id") or "").strip()
     if not session_id or session_id != expected_session_id:
         raise LabbookError("The OAuth handoff session_id did not match the pending auth request.")
+    integration = str(decoded.get("integration") or INTEGRATION_ID).strip() or INTEGRATION_ID
+    if integration != INTEGRATION_ID:
+        raise LabbookError(f"The OAuth handoff was issued for integration {integration!r}, not {INTEGRATION_ID!r}.")
     token_payload = decoded.get("token")
     if not isinstance(token_payload, dict):
         raise LabbookError("The OAuth handoff did not contain token details.")
@@ -554,7 +828,12 @@ def _complete_auth_handoff(
     selected_resources_raw = decoded.get("selected_resources")
     selected_resources = [item for item in list(selected_resources_raw or []) if isinstance(item, dict)]
 
-    session_file = _save_session_payload(project_root, backend_url=backend_url, token_payload=token_payload)
+    session_file = _save_session_payload(
+        project_root,
+        app_url=app_url,
+        oauth_base_url=oauth_base_url,
+        token_payload=token_payload,
+    )
     bindings_payload = _bindings_from_selected_resources(
         selected_resources=selected_resources,
         project_root=project_root,
@@ -566,7 +845,10 @@ def _complete_auth_handoff(
 
     return {
         "project_root": str(project_root),
-        "backend_url": backend_url,
+        "integration": integration,
+        "backend_url": app_url,
+        "app_url": app_url,
+        "oauth_base_url": oauth_base_url,
         "auth_mode": pending_auth.get("mode"),
         "workspace_name": str(token_payload.get("workspace_name") or "").strip() or None,
         "workspace_id": str(token_payload.get("workspace_id") or "").strip() or None,
@@ -581,6 +863,7 @@ def _pending_auth_payload(
     *,
     project_root: Path,
     backend_url: str,
+    oauth_base_url: str,
     mode: str,
     session_id: str,
     auth_url: str,
@@ -591,7 +874,9 @@ def _pending_auth_payload(
     return {
         "version": 1,
         "project_root": str(project_root),
+        "integration": INTEGRATION_ID,
         "backend_url": backend_url,
+        "oauth_base_url": oauth_base_url,
         "mode": mode,
         "session_id": session_id,
         "auth_url": auth_url,
@@ -604,7 +889,8 @@ def _pending_auth_payload(
 
 def _oauth_start_url(
     *,
-    backend_url: str,
+    oauth_base_url: str,
+    app_url: str,
     project_root: Path,
     session_id: str,
     mode: str,
@@ -612,62 +898,221 @@ def _oauth_start_url(
     page_limit: int = 5000,
 ) -> str:
     query = {
+        "integration": INTEGRATION_ID,
         "mode": mode,
         "session_id": session_id,
         "project_name": project_root.name,
         "page_limit": str(page_limit),
+        "continue_to": f"{app_url}/oauth/continue",
     }
     if return_to:
         query["return_to"] = return_to
-    return f"{backend_url}/oauth/start?{parse.urlencode(query)}"
+    return f"{oauth_base_url}/start?{parse.urlencode(query)}"
+
+
+def _create_selection_continue_url(
+    *,
+    oauth_base_url: str,
+    app_url: str,
+    project_root: Path,
+    session_id: str,
+    mode: str,
+    token_payload: dict[str, Any],
+    return_to: str | None = None,
+    page_limit: int = DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
+) -> str:
+    payload = _post_backend_json(
+        f"{oauth_base_url}/api/create-session",
+        {
+            "integration": INTEGRATION_ID,
+            "mode": mode,
+            "session_id": session_id,
+            "project_name": project_root.name,
+            "page_limit": page_limit,
+            "continue_to": f"{app_url}/oauth/continue",
+            "return_to": return_to,
+            "token": token_payload,
+        },
+    )
+    if not payload.get("ok"):
+        raise LabbookError(str(payload.get("error") or "The access broker could not create a reusable selection session."))
+    continue_url = str(payload.get("continue_url") or "").strip()
+    if not continue_url:
+        raise LabbookError("The access broker did not return a selection continue_url.")
+    return continue_url
 
 
 def setup_guide() -> str:
     return _build_setup_guide()
 
 
+def _annotated_saved_credentials(
+    *,
+    project_root: Path,
+    session_payload: dict[str, Any],
+    credential_provider: str | None = None,
+) -> list[dict[str, Any]]:
+    active_ref = str(session_payload.get("credential_ref") or "").strip()
+    active_provider = str(session_payload.get("credential_provider") or "").strip()
+    annotated: list[dict[str, Any]] = []
+    for item in _list_saved_token_credentials(integration_id=INTEGRATION_ID, credential_provider=credential_provider):
+        credential_ref = str(item.get("credential_ref") or "").strip()
+        provider = str(item.get("provider") or "").strip()
+        display_name = (
+            str(item.get("workspace_name") or "").strip()
+            or str(item.get("workspace_id") or "").strip()
+            or str(item.get("bot_id") or "").strip()
+            or credential_ref
+        )
+        annotated.append(
+            {
+                **item,
+                "display_name": display_name,
+                "attached_to_project": bool(
+                    active_ref
+                    and active_provider
+                    and credential_ref == active_ref
+                    and provider == active_provider
+                ),
+            }
+        )
+    return annotated
+
+
+def _resolve_project_or_saved_credential(
+    *,
+    project_root: Path,
+    credential_ref: str | None = None,
+    credential_provider: str | None = None,
+) -> dict[str, Any]:
+    session_payload = load_project_session(project_root) or {}
+    selected_ref = str(credential_ref or "").strip()
+    selected_provider = str(credential_provider or "").strip()
+
+    if not selected_ref and not selected_provider and _session_is_authenticated(session_payload):
+        token_payload = _session_token_payload(session_payload)
+        return {
+            "session_payload": session_payload,
+            "credential_provider": str(session_payload.get("credential_provider") or "").strip() or None,
+            "credential_ref": str(session_payload.get("credential_ref") or "").strip() or None,
+            "credential_metadata": session_payload.get("credential_metadata")
+            if isinstance(session_payload.get("credential_metadata"), dict)
+            else None,
+            "token_payload": token_payload,
+            "authorized_at": str(session_payload.get("authorized_at") or "").strip() or None,
+            "updated_at": str(session_payload.get("last_refreshed_at") or "").strip() or None,
+            "source": "project_session",
+        }
+
+    credentials = _annotated_saved_credentials(
+        project_root=project_root,
+        session_payload=session_payload,
+        credential_provider=selected_provider or None,
+    )
+    if not credentials:
+        raise LabbookError("No saved Notion credentials were found in the configured shared credential providers.")
+
+    selected = None
+    if selected_ref:
+        selected = next(
+            (
+                item
+                for item in credentials
+                if str(item.get("credential_ref") or "").strip() == selected_ref
+                and (
+                    not selected_provider
+                    or str(item.get("provider") or "").strip() == selected_provider
+                )
+            ),
+            None,
+        )
+        if selected is None:
+            raise LabbookError(f"Saved credential {selected_ref!r} was not found for {INTEGRATION_ID}.")
+    elif len(credentials) == 1:
+        selected = credentials[0]
+    else:
+        raise LabbookError(
+            "Multiple saved credentials are available. Call notion_list_saved_credentials first and pass credential_ref explicitly."
+        )
+
+    resolved_provider = str(selected.get("provider") or "").strip()
+    resolved_ref = str(selected.get("credential_ref") or "").strip()
+    resolved_metadata = selected.get("metadata") if isinstance(selected.get("metadata"), dict) else None
+    token_payload = _load_token_credential(
+        integration_id=INTEGRATION_ID,
+        credential_provider=resolved_provider,
+        credential_ref=resolved_ref,
+        metadata=resolved_metadata,
+    )
+    return {
+        "session_payload": session_payload,
+        "credential_provider": resolved_provider,
+        "credential_ref": resolved_ref,
+        "credential_metadata": resolved_metadata,
+        "token_payload": token_payload,
+        "authorized_at": str(selected.get("authorized_at") or "").strip() or None,
+        "updated_at": str(selected.get("updated_at") or "").strip() or None,
+        "source": "saved_credential",
+    }
+
+
+def _public_pending_auth_payload(pending_auth: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(pending_auth, dict) or not pending_auth:
+        return None
+    return {
+        **pending_auth,
+        "integration": str(pending_auth.get("integration") or INTEGRATION_ID).strip() or INTEGRATION_ID,
+    }
+
+
 def status(project_root: str | Path | None = None) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     backend_url = effective_backend_url()
+    oauth_base_url = effective_oauth_base_url()
     session_payload = load_project_session(root) or {}
     pending_auth = load_pending_auth(root) or {}
-    pending_handoff_completion_error: str | None = None
-    pending_handoff_notice: str | None = None
-    auto_completed_from_pending_handoff = False
-    stale_pending_auth_cleared = False
-    if pending_auth_is_stale(pending_auth):
-        clear_pending_auth(root)
-        _clear_local_browser_handoff_state(root, terminate_server=True)
-        pending_auth = {}
-        stale_pending_auth_cleared = True
-
-    authenticated = bool(str(session_payload.get("access_token") or "").strip())
-    if pending_auth and not authenticated:
-        try:
-            completion_result, pending_handoff_notice = _maybe_complete_saved_local_browser_handoff(
-                project_root=root,
-                pending_auth=pending_auth,
-            )
-        except LabbookError as exc:
-            pending_handoff_completion_error = str(exc)
-        else:
-            auto_completed_from_pending_handoff = completion_result is not None
-            if auto_completed_from_pending_handoff:
-                session_payload = load_project_session(root) or {}
-                pending_auth = load_pending_auth(root) or {}
-
     pending_handoff = load_pending_handoff(root) or {}
     local_handoff_server = load_local_handoff_server(root) or {}
     bindings = load_project_bindings(root) or {}
     resources = list(bindings.get("resources") or [])
-    authenticated = bool(str(session_payload.get("access_token") or "").strip())
-    bindings_ready = bool(resources)
 
-    pending_auth_mode = str(pending_auth.get("mode") or "").strip()
-    if pending_auth and not authenticated and pending_auth_mode == "local_browser":
+    pending_auth_stale = pending_auth_is_stale(pending_auth)
+    active_pending_auth = {} if pending_auth_stale else pending_auth
+    pending_handoff_ready = _pending_handoff_matches_pending_auth(
+        pending_auth=active_pending_auth,
+        pending_handoff=pending_handoff,
+    )
+
+    authenticated = _session_is_authenticated(session_payload)
+    bindings_ready = bool(resources)
+    available_saved_credentials: list[dict[str, Any]] = []
+    saved_credentials_error: str | None = None
+    credential_provider_diagnostics: dict[str, Any] | None = None
+    credential_provider_diagnostics_error: str | None = None
+    try:
+        credential_provider_diagnostics = _credential_provider_diagnostics()
+    except LabbookError as exc:
+        credential_provider_diagnostics_error = str(exc)
+    if not active_pending_auth:
+        try:
+            available_saved_credentials = _annotated_saved_credentials(
+                project_root=root,
+                session_payload=session_payload,
+            )
+        except LabbookError as exc:
+            saved_credentials_error = str(exc)
+
+    pending_auth_mode = str(active_pending_auth.get("mode") or "").strip()
+    if active_pending_auth and not authenticated and pending_handoff_ready:
+        recommended_action = "notion_finalize_pending_auth"
+    elif active_pending_auth and not authenticated and pending_auth_mode == "local_browser":
         recommended_action = "notion_status"
-    elif pending_auth and not authenticated:
+    elif active_pending_auth and not authenticated:
         recommended_action = "notion_complete_headless_auth"
+    elif not authenticated and len(available_saved_credentials) == 1:
+        recommended_action = "notion_attach_saved_credential"
+    elif not authenticated and available_saved_credentials:
+        recommended_action = "notion_list_saved_credentials"
     elif not authenticated:
         recommended_action = "notion_auth_browser"
     elif not bindings_ready:
@@ -675,17 +1120,29 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     else:
         recommended_action = "notion_get_api_context"
 
+    pending_handoff_hint = None
+    if pending_handoff_ready:
+        pending_handoff_hint = "A browser handoff bundle is ready. Call notion_finalize_pending_auth to persist the session and bindings."
+    elif active_pending_auth and pending_auth_mode == "local_browser":
+        pending_handoff_hint = "The local browser flow is still waiting for the browser handoff. Call notion_status again after the browser says the project is connected."
+    elif active_pending_auth and pending_auth_mode == "headless":
+        pending_handoff_hint = "Finish the headless auth flow with notion_complete_headless_auth after the browser shows a handoff bundle."
+    elif pending_auth_stale:
+        pending_handoff_hint = "The saved pending auth state has expired. Start a new auth flow or attach a saved credential."
+
     return {
         "project_root": str(root),
+        "integration": INTEGRATION_ID,
         "backend_url": backend_url,
-        "redirect_uri": backend_redirect_uri(backend_url),
+        "oauth_base_url": oauth_base_url,
+        "redirect_uri": oauth_callback_uri(oauth_base_url),
         "auth_modes": ["local_browser", "headless"],
         "recommended_browser_auth_timeout_seconds": DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
         "recommended_browser_auth_page_limit": DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
         "browser_auth_hint": (
-            "Use notion_auth_browser only when the browser and MCP server are on the same machine. It now starts a "
-            "localhost handoff listener that can survive past the initial MCP tool call, so complete the browser flow "
-            f"and then call notion_status again. Recommended browser auth timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
+            "Use notion_auth_browser only when the browser and MCP server are on the same machine. It starts a "
+            "localhost handoff listener, so after the browser says the project is connected, call notion_status. "
+            f"If pending_handoff_ready is true, finish with notion_finalize_pending_auth. Recommended browser auth timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}."
         ),
         "headless_auth_hint": (
             "If the browser handoff cannot get back to the MCP server, finish the flow with notion_complete_headless_auth "
@@ -696,10 +1153,16 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
             "are clamped, and remote search still covers the full shared workspace."
         ),
         "authenticated": authenticated,
-        "refresh_supported": bool(str(session_payload.get("refresh_token") or "").strip()),
+        "refresh_supported": _session_supports_refresh(session_payload),
+        "credential_provider": str(session_payload.get("credential_provider") or "").strip() or None,
         "workspace_name": session_payload.get("workspace_name"),
         "workspace_id": session_payload.get("workspace_id"),
         "bot_id": session_payload.get("bot_id"),
+        "available_saved_credentials_count": len(available_saved_credentials),
+        "available_saved_credentials": available_saved_credentials,
+        "saved_credentials_error": saved_credentials_error,
+        "credential_provider_diagnostics": credential_provider_diagnostics,
+        "credential_provider_diagnostics_error": credential_provider_diagnostics_error,
         "bound_resource_count": len(resources),
         "default_resource_alias": bindings.get("default_resource_alias"),
         "resources": resources,
@@ -708,7 +1171,9 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "pending_auth_path": str(pending_auth_path(root)),
         "pending_handoff_path": str(pending_handoff_path(root)),
         "local_handoff_server_path": str(local_handoff_server_path(root)),
-        "pending_auth": pending_auth or None,
+        "pending_auth": _public_pending_auth_payload(pending_auth),
+        "pending_auth_stale": pending_auth_stale,
+        "pending_handoff_ready": pending_handoff_ready,
         "pending_handoff": {
             "session_id": pending_handoff.get("session_id"),
             "received_at": pending_handoff.get("received_at"),
@@ -716,15 +1181,22 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         }
         if pending_handoff
         else None,
+        "pending_handoff_hint": pending_handoff_hint,
         "local_handoff_server": local_handoff_server or None,
-        "stale_pending_auth_cleared": stale_pending_auth_cleared,
-        "auto_completed_from_pending_handoff": auto_completed_from_pending_handoff,
-        "pending_handoff_notice": pending_handoff_notice,
-        "pending_handoff_completion_error": pending_handoff_completion_error,
         "ready": authenticated and bindings_ready,
         "recommended_action": recommended_action,
-        "setup_guide": None if authenticated else _build_setup_guide(),
+        "setup_guide_resource_uri": SETUP_GUIDE_RESOURCE_URI,
+        "status_resource_uri": STATUS_RESOURCE_URI,
+        "bindings_resource_uri": BINDINGS_RESOURCE_URI,
     }
+
+
+def project_status_resource(project_root: str | Path | None = None) -> str:
+    return json.dumps(status(project_root), ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def project_bindings_resource(project_root: str | Path | None = None) -> str:
+    return json.dumps(list_bindings(project_root), ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def auth_browser(
@@ -735,7 +1207,9 @@ def auth_browser(
     page_limit: int | str | None = DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
+    _clear_stale_pending_auth_if_needed(root)
     backend_url = effective_backend_url()
+    oauth_base_url = effective_oauth_base_url()
     session_id = uuid4().hex
     wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
@@ -762,7 +1236,8 @@ def auth_browser(
         raise LabbookError("The local browser handoff listener did not report a return_to URL.")
 
     auth_url = _oauth_start_url(
-        backend_url=backend_url,
+        oauth_base_url=oauth_base_url,
+        app_url=backend_url,
         project_root=root,
         session_id=session_id,
         mode="local_browser",
@@ -774,6 +1249,7 @@ def auth_browser(
         _pending_auth_payload(
             project_root=root,
             backend_url=backend_url,
+            oauth_base_url=oauth_base_url,
             mode="local_browser",
             session_id=session_id,
             auth_url=auth_url,
@@ -801,7 +1277,9 @@ def auth_browser(
 
     return {
         "project_root": str(root),
+        "integration": INTEGRATION_ID,
         "backend_url": backend_url,
+        "oauth_base_url": oauth_base_url,
         "auth_mode": "local_browser",
         "auth_url": auth_url,
         "session_id": session_id,
@@ -814,8 +1292,153 @@ def auth_browser(
         "instructions": (
             "Finish the Notion consent and selection flow in the browser. The localhost handoff listener will keep "
             "running in the background even if this MCP tool call returns early. After the browser says the project "
-            "is connected, call notion_status. If the browser shows a handoff bundle instead, finish with "
-            "notion_complete_headless_auth."
+            "is connected, call notion_status. If pending_handoff_ready is true, call notion_finalize_pending_auth. "
+            "If the browser shows a handoff bundle instead, finish with notion_complete_headless_auth."
+        ),
+    }
+
+
+def selection_browser(
+    *,
+    project_root: str | Path | None = None,
+    timeout_seconds: int | str | None = DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
+    open_browser: bool = True,
+    page_limit: int | str | None = DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
+    credential_ref: str | None = None,
+    credential_provider: str | None = None,
+    replace_existing_bindings: bool = False,
+) -> dict[str, Any]:
+    root = resolve_project_root(project_root)
+    _clear_stale_pending_auth_if_needed(root)
+    backend_url = effective_backend_url()
+    oauth_base_url = effective_oauth_base_url()
+    session_id = uuid4().hex
+    wait_timeout_seconds = normalize_browser_auth_timeout_seconds(timeout_seconds)
+    normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
+    existing_bindings = load_project_bindings(root) or {"resources": []}
+    existing_resources = list(existing_bindings.get("resources") or [])
+    if existing_resources and not replace_existing_bindings:
+        raise LabbookError(
+            "This project already has bound Notion resources. Pass replace_existing_bindings=true before reopening the browser selection UI."
+        )
+
+    resolved = _resolve_project_or_saved_credential(
+        project_root=root,
+        credential_ref=credential_ref,
+        credential_provider=credential_provider,
+    )
+    token_payload = dict(resolved.get("token_payload") or {})
+
+    if not open_browser:
+        continue_url = _create_selection_continue_url(
+            oauth_base_url=oauth_base_url,
+            app_url=backend_url,
+            project_root=root,
+            session_id=session_id,
+            mode="headless",
+            token_payload=token_payload,
+            page_limit=normalized_page_limit,
+        )
+        save_pending_auth(
+            root,
+            _pending_auth_payload(
+                project_root=root,
+                backend_url=backend_url,
+                oauth_base_url=oauth_base_url,
+                mode="headless",
+                session_id=session_id,
+                auth_url=continue_url,
+                return_to=None,
+                page_limit=normalized_page_limit,
+            ),
+        )
+        return {
+            "project_root": str(root),
+            "integration": INTEGRATION_ID,
+            "backend_url": backend_url,
+            "oauth_base_url": oauth_base_url,
+            "selection_mode": "headless",
+            "selection_url": continue_url,
+            "session_id": session_id,
+            "page_limit": normalized_page_limit,
+            "credential_provider": resolved.get("credential_provider"),
+            "credential_ref": resolved.get("credential_ref"),
+            "replaces_existing_bindings": bool(existing_resources),
+            "instructions": (
+                "Open selection_url in any browser, choose the Notion pages or data sources for this project, "
+                "then finish with notion_complete_headless_auth if the browser shows a handoff bundle."
+            ),
+        }
+
+    server_payload = _spawn_persistent_local_handoff_server(
+        project_root=root,
+        session_id=session_id,
+        timeout_seconds=wait_timeout_seconds,
+    )
+    return_to = str(server_payload.get("return_to") or "").strip()
+    if not return_to:
+        raise LabbookError("The local browser handoff listener did not report a return_to URL.")
+
+    continue_url = _create_selection_continue_url(
+        oauth_base_url=oauth_base_url,
+        app_url=backend_url,
+        project_root=root,
+        session_id=session_id,
+        mode="local_browser",
+        token_payload=token_payload,
+        return_to=return_to,
+        page_limit=normalized_page_limit,
+    )
+    save_pending_auth(
+        root,
+        _pending_auth_payload(
+            project_root=root,
+            backend_url=backend_url,
+            oauth_base_url=oauth_base_url,
+            mode="local_browser",
+            session_id=session_id,
+            auth_url=continue_url,
+            return_to=return_to,
+            timeout_seconds=wait_timeout_seconds,
+            page_limit=normalized_page_limit,
+        ),
+    )
+
+    opened = webbrowser.open(continue_url)
+    if not opened:
+        clear_pending_auth(root)
+        _clear_local_browser_handoff_state(root, terminate_server=True)
+        return selection_browser(
+            project_root=root,
+            timeout_seconds=wait_timeout_seconds,
+            open_browser=False,
+            page_limit=normalized_page_limit,
+            credential_ref=str(resolved.get("credential_ref") or "").strip() or None,
+            credential_provider=str(resolved.get("credential_provider") or "").strip() or None,
+            replace_existing_bindings=replace_existing_bindings,
+        )
+
+    return {
+        "project_root": str(root),
+        "integration": INTEGRATION_ID,
+        "backend_url": backend_url,
+        "oauth_base_url": oauth_base_url,
+        "selection_mode": "local_browser",
+        "selection_url": continue_url,
+        "session_id": session_id,
+        "return_to": return_to,
+        "timeout_seconds": wait_timeout_seconds,
+        "page_limit": normalized_page_limit,
+        "credential_provider": resolved.get("credential_provider"),
+        "credential_ref": resolved.get("credential_ref"),
+        "browser_opened": True,
+        "local_handoff_server": server_payload,
+        "replaces_existing_bindings": bool(existing_resources),
+        "recommended_next_action": "notion_status",
+        "instructions": (
+            "Finish the Notion resource selection flow in the browser. After the browser says the project is connected, "
+            "call notion_status. If pending_handoff_ready is true, call notion_finalize_pending_auth. If the browser "
+            "shows a handoff bundle instead, finish with notion_complete_headless_auth."
         ),
     }
 
@@ -826,12 +1449,15 @@ def start_headless_auth(
     page_limit: int | str | None = DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
+    _clear_stale_pending_auth_if_needed(root)
     backend_url = effective_backend_url()
+    oauth_base_url = effective_oauth_base_url()
     session_id = uuid4().hex
     normalized_page_limit = normalize_browser_auth_page_limit(page_limit)
     _clear_local_browser_handoff_state(root, terminate_server=True)
     auth_url = _oauth_start_url(
-        backend_url=backend_url,
+        oauth_base_url=oauth_base_url,
+        app_url=backend_url,
         project_root=root,
         session_id=session_id,
         mode="headless",
@@ -842,6 +1468,7 @@ def start_headless_auth(
         _pending_auth_payload(
             project_root=root,
             backend_url=backend_url,
+            oauth_base_url=oauth_base_url,
             mode="headless",
             session_id=session_id,
             auth_url=auth_url,
@@ -851,7 +1478,9 @@ def start_headless_auth(
     )
     return {
         "project_root": str(root),
+        "integration": INTEGRATION_ID,
         "backend_url": backend_url,
+        "oauth_base_url": oauth_base_url,
         "auth_url": auth_url,
         "session_id": session_id,
         "page_limit": normalized_page_limit,
@@ -862,41 +1491,187 @@ def start_headless_auth(
     }
 
 
-def complete_headless_auth(
+def finalize_pending_auth(
     *,
     project_root: str | Path | None = None,
-    handoff_bundle: str,
+    handoff_bundle: str | None = None,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     pending_auth = load_pending_auth(root) or {}
     if not pending_auth:
         raise LabbookError("No pending auth session was found for this project.")
-    return _complete_auth_handoff(
+    if pending_auth_is_stale(pending_auth):
+        _clear_stale_pending_auth_if_needed(root)
+        raise LabbookError("The pending auth session expired and was cleared. Start a new auth flow.")
+
+    normalized_handoff_bundle = str(handoff_bundle or "").strip()
+    if normalized_handoff_bundle:
+        return _complete_auth_handoff(
+            project_root=root,
+            pending_auth=pending_auth,
+            handoff_bundle=normalized_handoff_bundle,
+        )
+
+    return _finalize_saved_local_browser_handoff(
         project_root=root,
         pending_auth=pending_auth,
+    )
+
+
+def complete_headless_auth(
+    *,
+    project_root: str | Path | None = None,
+    handoff_bundle: str,
+) -> dict[str, Any]:
+    return finalize_pending_auth(
+        project_root=project_root,
         handoff_bundle=handoff_bundle,
     )
+
+
+def list_saved_credentials(
+    *,
+    project_root: str | Path | None = None,
+    credential_provider: str | None = None,
+) -> dict[str, Any]:
+    root = resolve_project_root(project_root)
+    session_payload = load_project_session(root) or {}
+    credentials = _annotated_saved_credentials(
+        project_root=root,
+        session_payload=session_payload,
+        credential_provider=credential_provider,
+    )
+    return {
+        "project_root": str(root),
+        "integration": INTEGRATION_ID,
+        "credential_provider": str(credential_provider or "").strip() or None,
+        "saved_credential_count": len(credentials),
+        "credentials": credentials,
+    }
+
+
+def attach_saved_credential(
+    *,
+    project_root: str | Path | None = None,
+    credential_ref: str | None = None,
+    credential_provider: str | None = None,
+    clear_bindings: bool = False,
+) -> dict[str, Any]:
+    root = resolve_project_root(project_root)
+    _clear_stale_pending_auth_if_needed(root)
+    pending_auth = load_pending_auth(root) or {}
+    if pending_auth:
+        raise LabbookError("This project already has a pending auth flow. Finish it or clear it before attaching a saved credential.")
+
+    existing_bindings = load_project_bindings(root) or {"resources": []}
+    existing_resources = list(existing_bindings.get("resources") or [])
+    if existing_resources and not clear_bindings:
+        raise LabbookError(
+            "This project already has bound Notion resources. Pass clear_bindings=true before attaching a different saved credential."
+        )
+
+    credentials = _annotated_saved_credentials(
+        project_root=root,
+        session_payload=load_project_session(root) or {},
+        credential_provider=credential_provider,
+    )
+    if not credentials:
+        raise LabbookError("No saved Notion credentials were found in the configured shared credential provider.")
+
+    selected_ref = str(credential_ref or "").strip()
+    selected = None
+    if selected_ref:
+        selected = next(
+            (
+                item
+                for item in credentials
+                if str(item.get("credential_ref") or "").strip() == selected_ref
+            ),
+            None,
+        )
+        if selected is None:
+            raise LabbookError(f"Saved credential {selected_ref!r} was not found for {INTEGRATION_ID}.")
+    elif len(credentials) == 1:
+        selected = credentials[0]
+    else:
+        raise LabbookError("Multiple saved credentials are available. Pass credential_ref explicitly.")
+
+    resolved_provider = str(selected.get("provider") or "").strip()
+    resolved_ref = str(selected.get("credential_ref") or "").strip()
+    resolved_metadata = selected.get("metadata") if isinstance(selected.get("metadata"), dict) else None
+    token_payload = _load_token_credential(
+        integration_id=INTEGRATION_ID,
+        credential_provider=resolved_provider,
+        credential_ref=resolved_ref,
+        metadata=resolved_metadata,
+    )
+
+    if clear_bindings and existing_resources:
+        clear_project_bindings(root)
+    _clear_local_browser_handoff_state(root, terminate_server=True)
+    save_path = _save_attached_credential_session(
+        root,
+        app_url=effective_backend_url(),
+        oauth_base_url=effective_oauth_base_url(),
+        credential_provider=resolved_provider,
+        credential_ref=resolved_ref,
+        credential_metadata=resolved_metadata,
+        token_payload=token_payload,
+        authorized_at=str(selected.get("authorized_at") or "").strip() or None,
+        last_refreshed_at=str(selected.get("updated_at") or "").strip() or None,
+    )
+
+    return {
+        "project_root": str(root),
+        "integration": INTEGRATION_ID,
+        "backend_url": effective_backend_url(),
+        "oauth_base_url": effective_oauth_base_url(),
+        "credential_provider": resolved_provider,
+        "credential_ref": resolved_ref,
+        "workspace_name": str(token_payload.get("workspace_name") or "").strip() or None,
+        "workspace_id": str(token_payload.get("workspace_id") or "").strip() or None,
+        "bot_id": str(token_payload.get("bot_id") or "").strip() or None,
+        "session_path": str(save_path),
+        "binding_path": str(bindings_path(root)),
+        "cleared_bindings": bool(clear_bindings and existing_resources),
+        "attached_existing_credential": True,
+    }
 
 
 def refresh_session(project_root: str | Path | None = None) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     session_payload = load_project_session(root) or {}
-    refresh_token = str(session_payload.get("refresh_token") or "").strip()
+    token_payload = _session_token_payload(session_payload)
+    refresh_token = str(token_payload.get("refresh_token") or "").strip()
     if not refresh_token:
         raise LabbookError("No refresh token is available for this project.")
 
-    backend_url = effective_backend_url()
-    payload = _post_backend_json(f"{backend_url}/api/refresh", {"refresh_token": refresh_token})
+    backend_url = str(session_payload.get("backend_url") or "").strip() or effective_backend_url()
+    oauth_base_url = str(session_payload.get("oauth_base_url") or "").strip() or effective_oauth_base_url()
+    payload = _post_backend_json(
+        f"{oauth_base_url}/api/refresh",
+        {
+            "integration": INTEGRATION_ID,
+            "refresh_token": refresh_token,
+        },
+    )
     if not payload.get("ok"):
         raise LabbookError(str(payload.get("error") or "Worker refresh failed."))
     token_payload = payload.get("token")
     if not isinstance(token_payload, dict):
         raise LabbookError("Worker refresh response did not contain a token payload.")
 
-    _save_session_payload(root, backend_url=backend_url, token_payload=token_payload)
+    _save_session_payload(
+        root,
+        app_url=backend_url,
+        oauth_base_url=oauth_base_url,
+        token_payload=token_payload,
+    )
     return {
         "project_root": str(root),
+        "integration": INTEGRATION_ID,
         "backend_url": backend_url,
+        "oauth_base_url": oauth_base_url,
         "workspace_name": token_payload.get("workspace_name"),
         "workspace_id": token_payload.get("workspace_id"),
         "session_path": str(session_path(root)),
@@ -910,6 +1685,7 @@ def clear_project_auth(
     clear_bindings: bool = False,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
+    existing_session = load_project_session(root) or {}
     cleared_session = clear_project_session(root)
     cleared_pending = clear_pending_auth(root)
     handoff_cleanup = _clear_local_browser_handoff_state(root, terminate_server=True)
@@ -921,6 +1697,7 @@ def clear_project_auth(
         "cleared_pending_handoff": handoff_cleanup["cleared_pending_handoff"],
         "cleared_local_handoff_server": handoff_cleanup["cleared_local_handoff_server"],
         "cleared_bindings": cleared_bindings,
+        "shared_credentials_retained": bool(str(existing_session.get("credential_ref") or "").strip()),
     }
 
 
@@ -1000,7 +1777,8 @@ def list_bindings(project_root: str | Path | None = None) -> dict[str, Any]:
 def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     session_payload = load_project_session(root) or {}
-    access_token = str(session_payload.get("access_token") or "").strip()
+    token_payload = _session_token_payload(session_payload)
+    access_token = str(token_payload.get("access_token") or "").strip()
     if not access_token:
         raise LabbookError("No Notion public integration access token is configured. Run `notion_auth_browser` first.")
 
@@ -1037,6 +1815,7 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
         "docs_reference": "https://developers.notion.com/reference/intro",
         "docs_versioning": "https://developers.notion.com/reference/versioning",
         "access_token": access_token,
+        "credential_provider": str(session_payload.get("credential_provider") or "").strip() or None,
         "headers": headers,
         "workspace_name": session_payload.get("workspace_name"),
         "workspace_id": session_payload.get("workspace_id"),
@@ -1051,7 +1830,7 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
         ),
         "binding_path": str(bindings_path(root)),
         "session_path": str(session_path(root)),
-        "refresh_supported": True,
+        "refresh_supported": bool(str(token_payload.get("refresh_token") or "").strip()),
         "refresh_tool": "notion_refresh_session",
         "usage": "Use the official Notion REST API directly with this public integration access token and these bound resources. Treat the bearer token like a password: keep it out of command history, logs, and chat transcripts. If the endpoint shape is uncertain, check the latest Notion API reference first.",
         "curl_example": curl_example,

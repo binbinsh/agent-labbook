@@ -1,11 +1,20 @@
-name = "agent-labbook-auth"
+name = "agent-labbook-app"
 main = "worker/src/index.js"
 compatibility_date = "2025-04-01"
 
 [vars]
-PUBLIC_BASE_URL = "https://labbook.superplanner.net"
+PUBLIC_BASE_URL = "https://superplanner.ai/notion/agent-labbook"
+NOTION_OAUTH_BASE_URL = "https://superplanner.ai/notion/oauth"
 NOTION_VERSION = "2026-03-11"
 
+[[services]]
+binding = "NOTION_OAUTH_SERVICE"
+service = "notion-access-broker"
+
 [[routes]]
-pattern = "labbook.superplanner.net"
-custom_domain = true
+pattern = "superplanner.ai/notion/agent-labbook"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/notion/agent-labbook/*"
+zone_name = "superplanner.ai"
