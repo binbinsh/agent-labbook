@@ -4,17 +4,19 @@ requires-python = ">=3.10"
 
 [[package]]
 name = "agent-labbook"
-version = "0.14.0"
+version = "0.14.1"
 source = { editable = "." }
 dependencies = [
     { name = "keyring" },
     { name = "mcp" },
+    { name = "notion-access-broker" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "keyring", specifier = ">=25.6.0,<26" },
     { name = "mcp", specifier = ">=1.26.0,<2" },
+    { name = "notion-access-broker", specifier = ">=0.1.1,<0.2" },
 ]
 
 [[package]]
@@ -431,6 +433,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/24/e0acc4bf54cba50c1d432c70a72a3df96db4a321b2c4c68432a60759044f/more_itertools-11.0.1.tar.gz", hash = "sha256:fefaf25b7ab08f0b45fa9f1892cae93b9fc0089ef034d39213bce15f1cc9e199", size = 144739, upload-time = "2026-04-02T16:17:45.061Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/f4/5e52c7319b8087acef603ed6e50dc325c02eaa999355414830468611f13c/more_itertools-11.0.1-py3-none-any.whl", hash = "sha256:eaf287826069452a8f61026c597eae2428b2d1ba2859083abbf240b46842ce6d", size = 72182, upload-time = "2026-04-02T16:17:43.724Z" },
+]
+
+[[package]]
+name = "notion-access-broker"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "keyring" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4e/be/07994c85b017600dc7f960ce9e6850c52212dd213f5da8cbb06b40db85f3/notion_access_broker-0.1.1.tar.gz", hash = "sha256:3760baa750c30c3800d4302c2b83e245565dfc429c39546ab6841e0a8a18ca2c", size = 15946, upload-time = "2026-04-05T07:23:54.5Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/1e/fb5ebff1518146372ff761ba082f58538e9c1c5aafe2b6ad613e089da546/notion_access_broker-0.1.1-py3-none-any.whl", hash = "sha256:024e39e4f6059f779a4434cadc51f90495cbf4dbc8e7cc8c81bc6c276ac65216", size = 11272, upload-time = "2026-04-05T07:23:53.1Z" },
 ]
 
 [[package]]

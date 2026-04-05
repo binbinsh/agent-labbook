@@ -928,12 +928,13 @@ def _prompt_result(name: str, arguments: dict[str, str] | None) -> types.GetProm
                 "Connect this project to Notion with the MCP server's preferred workflow.",
                 project_suffix,
                 f"1. Read {STATUS_RESOURCE_URI} or call notion_status.",
-                "2. If saved shared credentials already exist, prefer notion_list_saved_credentials and notion_attach_saved_credential before starting OAuth again.",
-                "3. If no reusable credential exists, use notion_auth_browser for same-machine browser flows or notion_start_headless_auth for remote/headless flows.",
-                "4. After the browser says the project is connected, call notion_status again.",
-                "5. If notion_status reports pending_handoff_ready=true, call notion_finalize_pending_auth.",
-                "6. If the browser shows a handoff bundle instead, call notion_complete_headless_auth with that bundle.",
-                "7. Once authenticated, bind additional resources only when needed.",
+                "2. If notion_status reports saved_credentials_error or credential_provider_diagnostics_error, stop and fix the local notion-access-broker helper setup before starting OAuth.",
+                "3. If saved shared credentials already exist, prefer notion_list_saved_credentials and notion_attach_saved_credential before starting OAuth again.",
+                "4. If no reusable credential exists, use notion_auth_browser for same-machine browser flows or notion_start_headless_auth for remote/headless flows.",
+                "5. After the browser says the project is connected, call notion_status again.",
+                "6. If notion_status reports pending_handoff_ready=true, call notion_finalize_pending_auth.",
+                "7. If the browser shows a handoff bundle instead, call notion_complete_headless_auth with that bundle.",
+                "8. Once authenticated, bind additional resources only when needed.",
             ]
         )
     elif name == "notion_use_bound_resources":

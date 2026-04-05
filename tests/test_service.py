@@ -20,8 +20,10 @@ from labbook.service import (
     DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
     DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
     MIN_BROWSER_AUTH_PAGE_LIMIT,
+    NOTION_ACCESS_BROKER_SRC_ENV_VAR,
     _post_backend_json,
     _bindings_from_selected_resources,
+    _candidate_notion_access_broker_src_paths,
     attach_saved_credential,
     auth_browser,
     bind_resources,
@@ -226,6 +228,33 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["available_saved_credentials_count"], 1)
         self.assertEqual(payload["available_saved_credentials"][0]["display_name"], "Workspace One")
         self.assertEqual(payload["credential_provider_diagnostics"]["resolved_provider"], "1password")
+
+    def test_status_recommends_setup_guide_when_saved_credential_lookup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("labbook.service._credential_provider_diagnostics", return_value=None):
+                with mock.patch(
+                    "labbook.service._annotated_saved_credentials",
+                    side_effect=LabbookError("The shared notion-access-broker Python helpers are not installed."),
+                ):
+                    payload = status(tmpdir)
+
+        self.assertEqual(payload["recommended_action"], "notion_setup_guide")
+        self.assertIn("not installed", payload["saved_credentials_error"])
+
+    def test_candidate_broker_src_paths_include_env_and_cwd_ancestors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            env_repo = root / "custom-broker"
+            project_root = root / "projects" / "doc-verbalizer"
+            project_root.mkdir(parents=True, exist_ok=True)
+            expected_auto = root / "projects" / "notion-access-broker" / "src"
+
+            with mock.patch.dict(os.environ, {NOTION_ACCESS_BROKER_SRC_ENV_VAR: str(env_repo)}):
+                paths = _candidate_notion_access_broker_src_paths(cwd=project_root)
+
+        self.assertGreaterEqual(len(paths), 2)
+        self.assertEqual(paths[0], env_repo.resolve())
+        self.assertIn(expected_auto.resolve(), paths)
 
     def test_start_headless_auth_persists_clamped_page_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

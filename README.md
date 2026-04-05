@@ -32,16 +32,17 @@ claude mcp add --scope project labbook -- uvx agent-labbook mcp
 ## Typical Flow
 
 1. Read `labbook://agent-labbook/project/status` or run `notion_status`.
-2. If status shows saved shared credentials for this integration, run `notion_list_saved_credentials` and then `notion_attach_saved_credential` for the workspace you want to reuse.
-3. If you want to reopen the hosted root-page selection UI without re-running OAuth, run `notion_selection_browser`.
-4. Otherwise run `notion_auth_browser`, or `notion_start_headless_auth` if connecting through SSH or another headless environment.
+2. If `notion_status` reports `saved_credentials_error` or `credential_provider_diagnostics_error`, fix the local `notion-access-broker` helper installation before starting OAuth. A fresh OAuth flow cannot persist shared credentials without it.
+3. If status shows saved shared credentials for this integration, run `notion_list_saved_credentials` and then `notion_attach_saved_credential` for the workspace you want to reuse.
+4. If you want to reopen the hosted root-page selection UI without re-running OAuth, run `notion_selection_browser`.
+5. Otherwise run `notion_auth_browser`, or `notion_start_headless_auth` if connecting through SSH or another headless environment.
    For browser auth, pass a long `timeout_seconds` such as `1800` so the background localhost listener stays alive while you finish Notion consent and resource selection.
-5. Choose the Notion pages or data sources for this project.
-6. Run `notion_status` again after the browser says the project is connected, after attaching the saved credential, or after reopening the selection UI.
-7. If `notion_status` reports `pending_handoff_ready=true`, run `notion_finalize_pending_auth`.
-8. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` if you want a read-only snapshot of the explicit project roots.
-9. Run `notion_get_api_context`.
-10. Use the returned token, headers, and resource IDs with the official Notion API.
+6. Choose the Notion pages or data sources for this project.
+7. Run `notion_status` again after the browser says the project is connected, after attaching the saved credential, or after reopening the selection UI.
+8. If `notion_status` reports `pending_handoff_ready=true`, run `notion_finalize_pending_auth`.
+9. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` if you want a read-only snapshot of the explicit project roots.
+10. Run `notion_get_api_context`.
+11. Use the returned token, headers, and resource IDs with the official Notion API.
 
 ## MCP Design
 
@@ -71,6 +72,7 @@ Agent Labbook no longer writes access tokens or refresh tokens into `.labbook/se
 - If `NOTION_ACCESS_BROKER_1PASSWORD_VAULT` is set, 1Password is pinned to that vault; otherwise it uses the default vault
 - If 1Password is unavailable, the default falls back to `keyring`
 - You can still force either provider with `NOTION_ACCESS_BROKER_CREDENTIAL_PROVIDER=keyring|1password`
+- `notion-access-broker` is installed as a normal package dependency for released builds; `NOTION_ACCESS_BROKER_SRC=/path/to/notion-access-broker[/src]` is only needed when you want a local checkout to override the installed helper during development
 - A fresh project can reuse an existing integration credential through `notion_list_saved_credentials` and `notion_attach_saved_credential`
 - A project with an attached or reusable credential can reopen the hosted selection UI through `notion_selection_browser` without re-running OAuth consent
 - `.labbook/session.json` stores only the selected credential reference and project metadata, not the token secrets themselves

@@ -110,6 +110,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(prompt.messages)
         self.assertIsInstance(prompt.messages[0].content, types.TextContent)
         self.assertIn("notion_finalize_pending_auth", prompt.messages[0].content.text)
+        self.assertIn("saved_credentials_error", prompt.messages[0].content.text)
 
 
 if __name__ == "__main__":

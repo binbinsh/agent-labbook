@@ -61,6 +61,7 @@ STATUS_RESOURCE_URI = "labbook://agent-labbook/project/status"
 BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
 STATUS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/status{?project_root}"
 BINDINGS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/bindings{?project_root}"
+NOTION_ACCESS_BROKER_SRC_ENV_VAR = "NOTION_ACCESS_BROKER_SRC"
 
 
 def _utc_now() -> str:
@@ -268,6 +269,7 @@ def _build_setup_guide() -> str:
             "",
             "For MCP users:",
             "1. Call `notion_status` or read the `labbook://agent-labbook/project/status` resource first. If it reports saved shared credentials for this integration, prefer `notion_list_saved_credentials` and `notion_attach_saved_credential` before re-running OAuth.",
+            "   If `saved_credentials_error` or `credential_provider_diagnostics_error` is non-null, fix the local notion-access-broker helper installation before re-running OAuth.",
             "   If you want the hosted root-page chooser again without new OAuth consent, use `notion_selection_browser`.",
             "2. If you still need OAuth, start with `notion_auth_browser` if you want the simplest flow. It starts a localhost handoff listener and returns immediately so the browser flow can finish asynchronously.",
             f"   For browser auth, pass `timeout_seconds: {DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS}` or longer so the background localhost listener stays available while you finish consent and resource selection.",
@@ -301,16 +303,76 @@ def _load_notion_access_broker_credentials_module():
     except ModuleNotFoundError as exc:
         if exc.name not in {"notion_access_broker", module_name}:
             raise
-        sibling_src = Path(__file__).resolve().parents[3] / "notion-access-broker" / "src"
-        if sibling_src.exists() and str(sibling_src) not in sys.path:
-            sys.path.insert(0, str(sibling_src))
+        importlib.invalidate_caches()
+        candidate_paths = _candidate_notion_access_broker_src_paths()
+        last_exc: ModuleNotFoundError = exc
+        searched_paths: list[str] = []
+        for candidate in candidate_paths:
+            candidate_str = str(candidate)
+            searched_paths.append(candidate_str)
+            if not candidate.exists():
+                continue
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            try:
+                return importlib.import_module(module_name)
+            except ModuleNotFoundError as retry_exc:
+                if retry_exc.name not in {"notion_access_broker", module_name}:
+                    raise
+                last_exc = retry_exc
+                continue
+
+        searched_suffix = ""
+        if searched_paths:
+            searched_suffix = " Searched: " + ", ".join(searched_paths) + "."
+        raise LabbookError(
+            "The shared notion-access-broker Python helpers are not installed. Install the notion-access-broker package, "
+            f"set {NOTION_ACCESS_BROKER_SRC_ENV_VAR} to the helper repo or src directory, or keep the repo checked out in a searchable sibling path."
+            f"{searched_suffix}"
+        ) from last_exc
+
+
+def _normalize_notion_access_broker_src_path(candidate: Path) -> Path:
+    normalized = candidate.expanduser().resolve()
+    if (normalized / "notion_access_broker").exists():
+        return normalized
+    src_candidate = normalized / "src"
+    if (src_candidate / "notion_access_broker").exists():
+        return src_candidate
+    return normalized
+
+
+def _candidate_notion_access_broker_src_paths(*, cwd: Path | None = None) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+
+    def add_candidate(path: Path | None) -> None:
+        if path is None:
+            return
+        normalized = _normalize_notion_access_broker_src_path(path)
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append(normalized)
+
+    configured_path = str(os.getenv(NOTION_ACCESS_BROKER_SRC_ENV_VAR) or "").strip()
+    if configured_path:
+        add_candidate(Path(configured_path))
+
+    add_candidate(Path(__file__).resolve().parents[3] / "notion-access-broker" / "src")
+
+    resolved_cwd = cwd
+    if resolved_cwd is None:
         try:
-            return importlib.import_module(module_name)
-        except ModuleNotFoundError as sibling_exc:
-            raise LabbookError(
-                "The shared notion-access-broker Python helpers are not installed. Install the notion-access-broker package or "
-                f"keep the repo available at {sibling_src}."
-            ) from sibling_exc
+            resolved_cwd = Path.cwd()
+        except OSError:
+            resolved_cwd = None
+    if resolved_cwd is not None:
+        resolved_cwd = resolved_cwd.resolve()
+        for ancestor in (resolved_cwd, *resolved_cwd.parents):
+            add_candidate(ancestor / "notion-access-broker" / "src")
+
+    return candidates
 
 
 def _store_token_credential(*, integration_id: str, token_payload: dict[str, Any]) -> dict[str, Any]:
@@ -1109,6 +1171,8 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         recommended_action = "notion_status"
     elif active_pending_auth and not authenticated:
         recommended_action = "notion_complete_headless_auth"
+    elif not authenticated and (saved_credentials_error or credential_provider_diagnostics_error):
+        recommended_action = "notion_setup_guide"
     elif not authenticated and len(available_saved_credentials) == 1:
         recommended_action = "notion_attach_saved_credential"
     elif not authenticated and available_saved_credentials:
