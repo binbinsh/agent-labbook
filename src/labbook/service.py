@@ -438,6 +438,7 @@ def _build_setup_guide() -> str:
             "3. Complete the official Notion public integration consent page.",
             "4. On the Labbook handoff page, choose the pages or data sources that should be bound to this project.",
             "5. Call `notion_get_api_context` and use the official Notion API directly with the returned access token.",
+            "   If your content already exists as markdown, prefer Notion's markdown content APIs over manual block assembly. See https://developers.notion.com/guides/data-apis/working-with-markdown-content.",
             "",
             "For backend maintainers:",
             f"1. Deploy or reuse a shared Notion OAuth service such as {oauth_base_url}.",
@@ -2238,6 +2239,7 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
         "notion_version": DEFAULT_NOTION_VERSION,
         "docs_reference": "https://developers.notion.com/reference/intro",
         "docs_versioning": "https://developers.notion.com/reference/versioning",
+        "docs_markdown_content": "https://developers.notion.com/guides/data-apis/working-with-markdown-content",
         "access_token": access_token,
         "credential_provider": str(session_payload.get("credential_provider") or "").strip() or None,
         "headers": headers,
@@ -2256,6 +2258,14 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
         "session_path": str(session_path(root)),
         "refresh_supported": bool(str(token_payload.get("refresh_token") or "").strip()),
         "refresh_tool": "notion_refresh_session",
-        "usage": "Use the official Notion REST API directly with this public integration access token and these bound resources. Treat the bearer token like a password: keep it out of command history, logs, and chat transcripts. If the endpoint shape is uncertain, check the latest Notion API reference first.",
+        "usage": (
+            "Use the official Notion REST API directly with this public integration access token and these bound "
+            "resources. When your source content is already markdown, prefer Notion's markdown content APIs instead "
+            "of manually building block children: use POST /v1/pages with `markdown` to create a page, "
+            "GET /v1/pages/{page_id}/markdown to read a page as markdown, and PATCH "
+            "/v1/pages/{page_id}/markdown to update page content. See docs_markdown_content for details. Treat the "
+            "bearer token like a password: keep it out of command history, logs, and chat transcripts. If the "
+            "endpoint shape is uncertain, check the latest Notion API reference first."
+        ),
         "curl_example": curl_example,
     }

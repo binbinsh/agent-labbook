@@ -572,6 +572,13 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["binding_model"], "explicit_roots_with_selection_scope")
         self.assertIn("selection_scope='subtree'", payload["selection_scope_note"])
         self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
+        self.assertEqual(
+            payload["docs_markdown_content"],
+            "https://developers.notion.com/guides/data-apis/working-with-markdown-content",
+        )
+        self.assertIn("POST /v1/pages", payload["usage"])
+        self.assertIn("GET /v1/pages/{page_id}/markdown", payload["usage"])
+        self.assertIn("PATCH /v1/pages/{page_id}/markdown", payload["usage"])
         self.assertIn("${NOTION_TOKEN}", payload["curl_example"])
         self.assertNotIn("test-access-token", payload["curl_example"])
 

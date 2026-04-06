@@ -69,6 +69,10 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             result.structuredContent["resource_uri"],
             "labbook://agent-labbook/setup-guide",
         )
+        self.assertIn(
+            "https://developers.notion.com/guides/data-apis/working-with-markdown-content",
+            result.structuredContent["guide_markdown"],
+        )
 
     async def test_status_tool_returns_structured_output(self) -> None:
         async with stdio_client(self.server_params) as (read, write):
@@ -110,6 +114,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                 await session.initialize()
                 prompts = await session.list_prompts()
                 prompt = await session.get_prompt("notion_connect_project")
+                use_bound_prompt = await session.get_prompt("notion_use_bound_resources")
 
         prompt_names = {item.name for item in prompts.prompts}
         self.assertIn("notion_connect_project", prompt_names)
@@ -122,6 +127,11 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Do not choose scope_mode or browser_mode on the user's behalf", prompt.messages[0].content.text)
         self.assertIn("exactly once on its own line", prompt.messages[0].content.text)
         self.assertIn("manual_prompt_markdown", prompt.messages[0].content.text)
+        self.assertIn("POST /v1/pages with markdown", use_bound_prompt.messages[0].content.text)
+        self.assertIn(
+            "https://developers.notion.com/guides/data-apis/working-with-markdown-content",
+            use_bound_prompt.messages[0].content.text,
+        )
 
 
 if __name__ == "__main__":

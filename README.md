@@ -1,93 +1,52 @@
 # Agent Labbook
 
-Agent Labbook is the Notion connection layer for Codex, Claude Code, and other MCP clients. It starts Notion auth, lets you choose which pages or data sources belong to a project, stores project bindings in `.labbook/`, stores long-lived tokens in a shared credential provider, and returns the API context your agent needs to call Notion directly.
-
-Use it when you want to:
-
-- connect a repo to specific Notion pages or data sources for an agent
-- let an agent read or update project docs and data sources through the official Notion API
-- avoid building your own Notion auth wrapper for coding agents
+Agent Labbook is the Notion connection layer for Codex, Claude Code, and other MCP clients. It handles Notion auth for a project, lets you choose which pages or data sources belong to that project, stores bindings in `.labbook/`, keeps long-lived tokens in a shared credential provider, and returns the API context your agent needs to call Notion directly.
 
 It is not a full Notion SDK. After setup, your agent should use the official Notion API directly.
 
+## Main Features
+
+- Connect a repo to specific Notion pages or data sources for an agent.
+- Reuse saved Notion credentials across projects.
+- Bind only the pages or data sources a project should use.
+- Return access tokens, headers, and bound resource IDs for the official Notion API.
+- Work with Codex, Claude Code, and other MCP-capable clients.
+
 ## Install
 
-Use Agent Labbook as a local MCP server for the current project.
-
 Requirements:
-
 - Python 3.10 or newer
 - `uv`
-- a Codex, Claude Code, or other MCP-capable client that can run a local MCP server
+- a Codex, Claude Code, or another MCP-capable client
 
-Recommended setup:
+Recommended:
 
 ```bash
 codex mcp add labbook -- uvx agent-labbook mcp
 claude mcp add --scope project labbook -- uvx agent-labbook mcp
 ```
 
-- or use the checked-in [`.mcp.json`](./.mcp.json) when the repository itself is the MCP source
+Or use the checked-in [`.mcp.json`](./.mcp.json) when this repo is the MCP source.
 
-## Typical Flow
+## Use
 
 1. Read `labbook://agent-labbook/project/status` or run `notion_status`.
-2. If `notion_status` reports `saved_credentials_error` or `credential_provider_diagnostics_error`, fix the local `notion-access-broker` helper installation before starting OAuth. A fresh OAuth flow cannot persist shared credentials without it.
-3. If status shows saved shared credentials for this integration, run `notion_list_saved_credentials` and then `notion_attach_saved_credential` for the workspace you want to reuse.
-4. Use `notion_status.connect_decision` to decide whether you need fresh OAuth scope or only project bindings within the current scope.
-   Clients with chooser UIs can map `connect_decision.questions` directly into those prompts; text-only clients can show `connect_decision.manual_prompt_markdown`.
-   Treat this as a blocking choice: do not silently pick `scope_mode` or `browser_mode` for the user unless they already supplied both values explicitly.
-5. If you only need to bind content that the current integration can already access, run `notion_selection_browser`.
-6. Check `notion_status.preferred_browser_flow`, `notion_status.recommended_open_browser`, and `notion_status.browser_environment_hint` before you start a browser flow.
-7. Otherwise run `notion_auth_browser`, or `notion_start_headless_auth` if connecting through SSH or another headless environment.
-   For browser auth, pass a long `timeout_seconds` such as `1800` so the background localhost listener stays alive while you finish Notion consent and resource selection.
-8. Choose the Notion pages or data sources for this project.
-   If you need to relay a headless `auth_url` or `selection_url`, print the raw URL exactly once on its own line.
-9. Run `notion_status` again after the browser says the project is connected, after attaching the saved credential, or after reopening the selection UI.
-10. If `notion_status` reports `pending_handoff_ready=true`, run `notion_finalize_pending_auth`.
-11. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` if you want a read-only snapshot of the explicit project roots.
-12. Run `notion_get_api_context`.
-13. Use the returned token, headers, and resource IDs with the official Notion API.
+2. Reuse a saved credential when available, or start auth with `notion_auth_browser` or `notion_start_headless_auth`.
+3. Choose the pages or data sources that belong to the project, then finish the handoff with `notion_status` and `notion_finalize_pending_auth` when needed.
+4. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` to inspect the bound roots.
+5. Run `notion_get_api_context` and use the returned token, headers, and resource IDs with the official Notion API.
 
-## MCP Design
+If your content already exists as markdown, prefer Notion's markdown content APIs:
 
-- Read-only context is exposed as MCP resources:
-  - `labbook://agent-labbook/setup-guide`
-  - `labbook://agent-labbook/project/status`
-  - `labbook://agent-labbook/project/bindings`
-- Reusable workflows are exposed as prompts:
-  - `notion_connect_project`
-  - `notion_use_bound_resources`
-- Mutating actions stay in tools. In particular, `notion_status` is now read-only and `notion_finalize_pending_auth` is the explicit step that persists a pending browser handoff.
-- Tools now declare `outputSchema` as well as `inputSchema`, so MCP clients can discover stable structured outputs and the low-level server can validate successful tool payloads before returning them.
-- `notion_status` also reports credential provider diagnostics so you can tell whether `1Password` or `keyring` is currently available and which one would be selected by default.
-- `notion_status` now also reports browser-environment hints so SSH and other headless sessions can prefer headless auth or `open_browser=false` before a localhost callback flow is attempted.
-- `notion_status.connect_decision` gives clients a common decision payload for interactive UIs and plain-text follow-up questions, so Claude, Codex, and other MCP clients can route the user through the same connect choices.
+- `POST /v1/pages` with `markdown`
+- `GET /v1/pages/{page_id}/markdown`
+- `PATCH /v1/pages/{page_id}/markdown`
 
-## Hosted Backend
-
-The default app backend is `https://superplanner.ai/notion/agent-labbook`.
-The default shared OAuth backend is `https://superplanner.ai/notion/oauth`.
-
-The app backend renders the Labbook selection UI and project-specific routes. The shared OAuth backend handles Notion OAuth, token refresh, and signed handoff bundles without keeping your project tokens or Notion content in server-side storage. Long-lived tokens live in the shared local credential provider selected through the `notion-access-broker` Python helpers, and project bindings stay in `.labbook/`.
-
-## Credential Storage
-
-Agent Labbook no longer writes access tokens or refresh tokens into `.labbook/session.json`.
-
-- If the local `op` CLI is installed and can access 1Password, the default provider automatically prefers `1password`
-- If `NOTION_ACCESS_BROKER_1PASSWORD_VAULT` is set, 1Password is pinned to that vault; otherwise it uses the default vault
-- If 1Password is unavailable, the default falls back to `keyring`
-- You can still force either provider with `NOTION_ACCESS_BROKER_CREDENTIAL_PROVIDER=keyring|1password`
-- `notion-access-broker` is installed as a normal package dependency for released builds; `NOTION_ACCESS_BROKER_SRC=/path/to/notion-access-broker[/src]` is only needed when you want a local checkout to override the installed helper during development
-- A fresh project can reuse an existing integration credential through `notion_list_saved_credentials` and `notion_attach_saved_credential`
-- A project with an attached or reusable credential can reopen the hosted selection UI through `notion_selection_browser` without re-running OAuth consent
-- `.labbook/session.json` stores only the selected credential reference and project metadata, not the token secrets themselves
-
-If you want to self-host it, see [`docs/self-host.md`](./docs/self-host.md).
-For versioning and migration boundaries, see [`docs/versioning.md`](./docs/versioning.md).
+Reference: `https://developers.notion.com/guides/data-apis/working-with-markdown-content`
 
 ## Notes
 
-- `.labbook/` should never be committed
-- this repo handles auth and project binding, not general Notion API wrapping
+- `.labbook/` should never be committed.
+- This repo handles auth and project binding, not general Notion API wrapping.
+- For self-hosting, see [`docs/self-host.md`](./docs/self-host.md).
+- For versioning details, see [`docs/versioning.md`](./docs/versioning.md).

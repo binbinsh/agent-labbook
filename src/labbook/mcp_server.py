@@ -49,7 +49,8 @@ SERVER_INSTRUCTIONS = (
     "Agent Labbook exposes read-only project context through MCP resources and mutating workflow steps through tools. "
     "Prefer the status and bindings resources before calling tools. Use notion_finalize_pending_auth only after "
     "notion_status reports pending_handoff_ready=true. Use notion_get_api_context only when you are ready to call "
-    "the official Notion API, and treat the returned access token as sensitive."
+    "the official Notion API, and treat the returned access token as sensitive. If you are creating or updating "
+    "page content from markdown, prefer Notion's markdown content endpoints over manual block conversion."
 )
 server = Server(SERVER_NAME, instructions=SERVER_INSTRUCTIONS)
 
@@ -651,6 +652,7 @@ def _api_context_output_schema() -> dict[str, Any]:
             "notion_version": _string_schema(),
             "docs_reference": _string_schema(),
             "docs_versioning": _string_schema(),
+            "docs_markdown_content": _string_schema(),
             "access_token": _string_schema(),
             "credential_provider": _nullable(_string_schema(enum=["keyring", "1password"])),
             "headers": _object_schema({}, additional_properties=_string_schema()),
@@ -675,6 +677,7 @@ def _api_context_output_schema() -> dict[str, Any]:
             "notion_version",
             "docs_reference",
             "docs_versioning",
+            "docs_markdown_content",
             "access_token",
             "headers",
             "resources",
@@ -1083,9 +1086,11 @@ def _prompt_result(name: str, arguments: dict[str, str] | None) -> types.GetProm
                 project_suffix,
                 f"1. Read {BINDINGS_RESOURCE_URI} or call notion_list_bindings to understand the current explicit roots and selection_scope values.",
                 "2. Call notion_get_api_context only when you are ready to use the official Notion API.",
-                "3. Use the returned headers and access token with the official Notion REST API.",
-                "4. Treat the access token like a password and avoid echoing it into logs or chat transcripts.",
-                "5. If the project is not authenticated or the session is stale, use notion_status to choose the next auth step first.",
+                "3. If your source content is already markdown, prefer Notion's markdown content APIs over manual block conversion: POST /v1/pages with markdown to create content, GET /v1/pages/{page_id}/markdown to read it back, and PATCH /v1/pages/{page_id}/markdown to update it.",
+                "4. See https://developers.notion.com/guides/data-apis/working-with-markdown-content for the markdown API details.",
+                "5. Use the returned headers and access token with the official Notion REST API.",
+                "6. Treat the access token like a password and avoid echoing it into logs or chat transcripts.",
+                "7. If the project is not authenticated or the session is stale, use notion_status to choose the next auth step first.",
             ]
         )
     else:

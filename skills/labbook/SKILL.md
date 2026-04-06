@@ -58,6 +58,7 @@ When you need to relay `auth_url` or `selection_url` from a headless flow, print
 - Prefer the official REST API at `https://api.notion.com/v1`.
 - Prefer the latest official API docs at `https://developers.notion.com/reference/intro` before guessing an endpoint shape.
 - If request or response fields might depend on API versioning, check `https://developers.notion.com/reference/versioning`.
+- When your source content is already markdown, prefer Notion's markdown content APIs instead of manually expanding block children. Use `POST /v1/pages` with `markdown` to create pages, `GET /v1/pages/{page_id}/markdown` to read page content as markdown, and `PATCH /v1/pages/{page_id}/markdown` to update page content. See `https://developers.notion.com/guides/data-apis/working-with-markdown-content`.
 - Treat this integration as auth and binding infrastructure, not as a content API.
 - Prefer the MCP resources for read-only context and the MCP tools for side effects.
 - Tool results are structured and schema-backed; prefer their `structuredContent` over re-parsing display text.
