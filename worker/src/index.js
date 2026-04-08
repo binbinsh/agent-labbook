@@ -823,22 +823,26 @@ function pageShell({ title, body }) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet" />
     <style>
       :root {
         color-scheme: light;
-        --bg: #f7f6f3;
-        --canvas: rgba(255, 255, 255, 0.78);
+        --bg: #faf7f2;
+        --canvas: rgba(255, 253, 250, 0.82);
         --panel: #ffffff;
         --panel-strong: #ffffff;
-        --ink: #37352f;
-        --muted: #787774;
-        --muted-strong: #5f5e5b;
-        --line: rgba(55, 53, 47, 0.09);
-        --line-strong: rgba(55, 53, 47, 0.16);
-        --accent: #2383e2;
-        --accent-strong: #1a6fbd;
-        --accent-soft: rgba(35, 131, 226, 0.1);
-        --accent-faint: rgba(35, 131, 226, 0.06);
+        --ink: #1a1410;
+        --muted: #6b5e52;
+        --muted-strong: #5a4e43;
+        --subtle: #9a8d80;
+        --line: rgba(28, 20, 15, 0.08);
+        --line-strong: rgba(28, 20, 15, 0.16);
+        --accent: #c4532d;
+        --accent-strong: #a8432a;
+        --accent-soft: rgba(196, 83, 45, 0.10);
+        --accent-faint: rgba(196, 83, 45, 0.06);
         --warning: #d9730d;
         --warning-soft: rgba(217, 115, 13, 0.1);
       }
@@ -850,14 +854,32 @@ function pageShell({ title, body }) {
         min-height: 100vh;
         background: var(--bg);
         color: var(--ink);
-        font-family:
-          ui-sans-serif,
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          Helvetica,
-          Arial,
-          sans-serif;
+        font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .sp-nav {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        backdrop-filter: blur(20px) saturate(1.4);
+        -webkit-backdrop-filter: blur(20px) saturate(1.4);
+        background: rgba(250, 247, 242, 0.85);
+        border-bottom: 1px solid var(--line);
+      }
+      .sp-nav-inner {
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 0 24px;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .sp-nav-brand {
+        font-family: 'DM Serif Display', serif;
+        font-size: 20px;
+        color: var(--ink);
+        text-decoration: none;
       }
       main {
         width: min(820px, calc(100% - 24px));
@@ -868,7 +890,7 @@ function pageShell({ title, body }) {
         border: 1px solid var(--line);
         border-radius: 16px;
         padding: 18px;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.04);
+        box-shadow: 0 1px 2px rgba(40, 24, 10, 0.03), 0 8px 24px rgba(40, 24, 10, 0.05);
       }
       .stack {
         display: grid;
@@ -882,10 +904,11 @@ function pageShell({ title, body }) {
       }
       .title {
         margin: 0;
+        font-family: 'DM Serif Display', serif;
         font-size: clamp(1.7rem, 4vw, 2.25rem);
         line-height: 1.15;
-        letter-spacing: -0.03em;
-        font-weight: 700;
+        letter-spacing: -0.02em;
+        font-weight: 400;
       }
       p,
       button,
@@ -914,9 +937,9 @@ function pageShell({ title, body }) {
       }
       .eyebrow {
         padding: 6px 10px;
-        color: var(--muted-strong);
-        background: #ffffff;
-        border: 1px solid var(--line);
+        color: var(--accent);
+        background: var(--accent-soft);
+        border: 1px solid rgba(196, 83, 45, 0.18);
       }
       .pill {
         padding: 6px 10px;
@@ -947,7 +970,7 @@ function pageShell({ title, body }) {
         border-radius: 14px;
         background: var(--panel);
         border: 1px solid var(--line);
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 6px 18px rgba(15, 23, 42, 0.04);
+        box-shadow: 0 1px 2px rgba(40, 24, 10, 0.03), 0 6px 18px rgba(40, 24, 10, 0.05);
       }
       .panel__head {
         display: flex;
@@ -985,9 +1008,9 @@ function pageShell({ title, body }) {
       }
       input[type="search"]:focus,
       textarea:focus {
-        outline: 2px solid rgba(35, 131, 226, 0.16);
+        outline: 2px solid rgba(196, 83, 45, 0.16);
         outline-offset: 2px;
-        border-color: rgba(35, 131, 226, 0.32);
+        border-color: rgba(196, 83, 45, 0.32);
       }
       .resource-list {
         display: grid;
@@ -1004,8 +1027,8 @@ function pageShell({ title, body }) {
         transition: border-color 120ms ease, background 120ms ease;
       }
       .resource-card.is-selected {
-        border-color: rgba(35, 131, 226, 0.34);
-        background: #f8fbff;
+        border-color: rgba(196, 83, 45, 0.34);
+        background: #fef8f5;
       }
       .resource-card__toggle {
         display: grid;
@@ -1022,7 +1045,7 @@ function pageShell({ title, body }) {
         cursor: pointer;
       }
       .resource-card__toggle:focus-visible {
-        outline: 2px solid rgba(35, 131, 226, 0.18);
+        outline: 2px solid rgba(196, 83, 45, 0.18);
         outline-offset: 2px;
         border-radius: 10px;
       }
@@ -1053,12 +1076,12 @@ function pageShell({ title, body }) {
         block-size: 36px;
         border-radius: 10px;
         border: 1px solid var(--line);
-        background: #f7f7f5;
+        background: #faf7f2;
         color: var(--muted-strong);
       }
       .tree__icon--root {
-        border-color: rgba(35, 131, 226, 0.16);
-        background: rgba(35, 131, 226, 0.08);
+        border-color: rgba(196, 83, 45, 0.16);
+        background: rgba(196, 83, 45, 0.08);
         color: var(--accent-strong);
       }
       .resource-card__glyph,
@@ -1095,7 +1118,7 @@ function pageShell({ title, body }) {
         color: var(--muted);
       }
       .tag--accent {
-        border-color: rgba(35, 131, 226, 0.18);
+        border-color: rgba(196, 83, 45, 0.18);
         background: var(--accent-soft);
         color: var(--accent-strong);
       }
@@ -1122,7 +1145,7 @@ function pageShell({ title, body }) {
         border-radius: 14px;
         text-align: center;
         color: var(--muted);
-        background: rgba(255, 255, 255, 0.65);
+        background: rgba(255, 253, 250, 0.65);
         line-height: 1.65;
       }
       .resource-card__details {
@@ -1202,7 +1225,7 @@ function pageShell({ title, body }) {
         border-radius: 14px;
         border: 1px solid var(--line);
         background: #ffffff;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 6px 18px rgba(15, 23, 42, 0.04);
+        box-shadow: 0 1px 2px rgba(40, 24, 10, 0.03), 0 6px 18px rgba(40, 24, 10, 0.05);
       }
       .action-bar__copy {
         display: grid;
@@ -1231,11 +1254,13 @@ function pageShell({ title, body }) {
         font-size: 14px;
         font-weight: 600;
         color: white;
-        background: var(--ink);
+        background: var(--accent);
         cursor: pointer;
+        transition: background .2s, transform .15s;
       }
       .action-button:hover:enabled {
-        background: #2d2b27;
+        background: var(--accent-strong);
+        transform: translateY(-1px);
       }
       .action-button:disabled {
         cursor: wait;
@@ -1247,7 +1272,7 @@ function pageShell({ title, body }) {
         border: 1px solid var(--line);
       }
       .action-button.secondary:hover:enabled {
-        background: #f7f7f5;
+        background: #faf7f2;
       }
       .headless-output {
         margin-top: 18px;
@@ -1255,7 +1280,7 @@ function pageShell({ title, body }) {
         border-radius: 16px;
         border: 1px solid var(--line);
         background: #ffffff;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 6px 18px rgba(15, 23, 42, 0.04);
+        box-shadow: 0 1px 2px rgba(40, 24, 10, 0.03), 0 6px 18px rgba(40, 24, 10, 0.05);
       }
       .headless-output[hidden] {
         display: none;
@@ -1266,6 +1291,20 @@ function pageShell({ title, body }) {
       }
       .subtle {
         color: var(--muted);
+      }
+      .sp-footer {
+        border-top: 1px solid var(--line);
+        padding: 24px;
+        text-align: center;
+        font-size: 13px;
+        color: var(--subtle);
+      }
+      .sp-footer a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .sp-footer a:hover {
+        text-decoration: underline;
       }
       @media (max-width: 720px) {
         main {
@@ -1288,11 +1327,19 @@ function pageShell({ title, body }) {
     </style>
   </head>
   <body>
+    <nav class="sp-nav">
+      <div class="sp-nav-inner">
+        <a href="https://superplanner.ai/notion/agent-labbook/" class="sp-nav-brand">Agent Labbook</a>
+      </div>
+    </nav>
     <main>
       <section class="frame">
         ${body}
       </section>
     </main>
+    <footer class="sp-footer">
+      &copy; ${new Date().getFullYear()} <a href="https://gridheap.com/">Grid Heap</a>. All rights reserved.
+    </footer>
   </body>
 </html>`;
 }
@@ -1330,6 +1377,9 @@ function selectionPage({ baseUrl, state, oauthSession, workspaceName, resources,
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <title>Choose Notion Resources</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet" />
     <style>
       html, body, #selection-app-root {
         min-height: 100%;
@@ -1346,6 +1396,499 @@ function selectionPage({ baseUrl, state, oauthSession, workspaceName, resources,
     <script>${inlineScriptText(SELECTION_UI_JS)}</script>
   </body>
 </html>`;
+}
+
+function landingPage() {
+  const year = new Date().getFullYear();
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Labbook — Connect Your AI Agent to Notion</title>
+    <meta name="description" content="Agent Labbook is the Notion connection layer for Codex, Claude Code, and other MCP clients. One command to connect, per-project scoping, secure credential reuse." />
+    <meta property="og:title" content="Agent Labbook — Connect Your AI Agent to Notion" />
+    <meta property="og:description" content="The Notion connection layer for AI coding agents. One command to connect, per-project scoping, secure credential storage." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://superplanner.ai/notion/agent-labbook/" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Noto+Serif+TC:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #faf7f2;
+        --ink: #1a1410;
+        --muted: #6b5e52;
+        --subtle: #9a8d80;
+        --accent: #c4532d;
+        --accent-hover: #a8432a;
+        --accent-soft: rgba(196,83,45,0.10);
+        --surface: rgba(255,253,250,0.82);
+        --line: rgba(28,20,15,0.08);
+        --radius: 20px;
+        --radius-lg: 28px;
+        --shadow-sm: 0 1px 3px rgba(40,24,10,0.06);
+        --shadow-md: 0 8px 32px rgba(40,24,10,0.08);
+      }
+      *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+      html{scroll-behavior:smooth}
+      body{font-family:'Inter',system-ui,sans-serif;color:var(--ink);background:var(--bg);min-height:100vh;-webkit-font-smoothing:antialiased}
+      body.zh-hans h1,body.zh-hans .section-title{font-family:'Noto Serif SC','DM Serif Display',serif}
+      body.zh-hant h1,body.zh-hant .section-title{font-family:'Noto Serif TC','DM Serif Display',serif}
+
+      /* NAV */
+      nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);background:rgba(250,247,242,0.85);border-bottom:1px solid var(--line)}
+      .nav-inner{max-width:1000px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between}
+      .nav-brand{font-family:'DM Serif Display',serif;font-size:20px;color:var(--ink);text-decoration:none}
+      .nav-links{display:flex;align-items:center;gap:6px}
+      .nav-links a,.lang-btn{font-size:14px;font-weight:500;color:var(--muted);text-decoration:none;padding:6px 12px;border-radius:10px;border:none;background:none;cursor:pointer;transition:all .2s}
+      .nav-links a:hover,.lang-btn:hover{background:var(--accent-soft);color:var(--accent)}
+      .lang-btn.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+      .lang-sep{color:var(--line);font-size:14px;user-select:none}
+
+      /* HERO */
+      .hero{max-width:1000px;margin:0 auto;padding:80px 24px 64px;text-align:center}
+      .hero-badge{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:13px;font-weight:600;letter-spacing:.04em}
+      .hero-badge svg{width:16px;height:16px}
+      h1{font-family:'DM Serif Display',serif;font-size:clamp(40px,7vw,72px);line-height:1.05;margin:20px 0 0;letter-spacing:-.02em}
+      .hero-sub{margin:20px auto 0;max-width:600px;font-size:clamp(16px,2vw,19px);line-height:1.65;color:var(--muted)}
+      .hero-pills{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:28px}
+      .hero-pills span{padding:8px 14px;border:1px solid var(--line);border-radius:999px;font-size:13px;font-weight:500;color:var(--muted);background:var(--surface)}
+
+      /* STEPS */
+      .steps{max-width:1000px;margin:0 auto;padding:0 24px 80px}
+      .section-label{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:12px}
+      .section-title{font-family:'DM Serif Display',serif;font-size:clamp(28px,5vw,44px);line-height:1.1;margin-bottom:48px}
+      .steps-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+      .step-card{padding:28px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);position:relative}
+      .step-num{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;background:var(--accent);color:#fff;font-family:'DM Serif Display',serif;font-size:18px;margin-bottom:16px}
+      .step-card h3{font-size:18px;font-weight:700;margin-bottom:8px}
+      .step-card p{font-size:15px;line-height:1.6;color:var(--muted)}
+
+      /* FEATURES */
+      .features{max-width:1000px;margin:0 auto;padding:0 24px 80px}
+      .feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+      .feature-card{padding:28px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);transition:box-shadow .25s,transform .25s}
+      .feature-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+      .feature-icon{width:48px;height:48px;border-radius:14px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;margin-bottom:18px}
+      .feature-icon svg{width:24px;height:24px;color:var(--accent)}
+      .feature-card h3{font-size:18px;font-weight:700;margin-bottom:8px}
+      .feature-card p{font-size:15px;line-height:1.6;color:var(--muted)}
+
+      /* QUICKSTART */
+      .quickstart{max-width:1000px;margin:0 auto;padding:0 24px 80px}
+      .qs-card{padding:32px 36px;border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-sm)}
+      .qs-card h3{font-size:20px;font-weight:700;margin-bottom:6px}
+      .qs-card>p{font-size:15px;line-height:1.6;color:var(--muted);margin-bottom:24px}
+      .code-block{position:relative;background:#1a1410;color:#e8e0d6;border-radius:14px;padding:18px 20px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,monospace;font-size:13px;line-height:1.7;overflow-x:auto;margin-bottom:12px}
+      .code-block:last-child{margin-bottom:0}
+      .code-comment{color:#7a6e62}
+      .code-cmd{color:#e8734e}
+      .qs-or{display:block;text-align:center;color:var(--subtle);font-size:13px;font-weight:500;margin:12px 0}
+
+      /* GITHUB CTA */
+      .gh-cta{max-width:1000px;margin:0 auto;padding:0 24px 80px;text-align:center}
+      .gh-link{display:inline-flex;align-items:center;gap:8px;padding:14px 28px;border-radius:14px;background:var(--ink);color:#fff;font-size:16px;font-weight:600;text-decoration:none;transition:background .2s,transform .15s}
+      .gh-link:hover{background:#2d2520;transform:translateY(-1px)}
+      .gh-link svg{width:20px;height:20px}
+
+      /* FOOTER */
+      footer{border-top:1px solid var(--line);padding:32px 24px;text-align:center}
+      footer p{font-size:13px;color:var(--subtle)}
+      footer a{color:var(--muted);text-decoration:none}
+      footer a:hover{text-decoration:underline}
+
+      /* LANG */
+      [data-lang="zh-hans"],[data-lang="zh-hant"]{display:none}
+      body.zh-hans [data-lang="en"],body.zh-hans [data-lang="zh-hant"]{display:none}
+      body.zh-hans [data-lang="zh-hans"]{display:revert}
+      body.zh-hant [data-lang="en"],body.zh-hant [data-lang="zh-hans"]{display:none}
+      body.zh-hant [data-lang="zh-hant"]{display:revert}
+
+      @media(max-width:900px){
+        .steps-grid,.feature-grid{grid-template-columns:1fr}
+      }
+      @media(max-width:600px){
+        .hero{padding:48px 20px 40px}
+        .steps,.features,.quickstart,.gh-cta{padding-left:20px;padding-right:20px}
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <div class="nav-inner">
+        <a href="https://superplanner.ai/" class="nav-brand">SuperPlanner</a>
+        <div class="nav-links">
+          <a href="https://superplanner.ai/mise/" data-lang="en">Chef de Mise</a>
+          <a href="https://superplanner.ai/mise/" data-lang="zh-hans">Chef de Mise</a>
+          <a href="https://superplanner.ai/mise/" data-lang="zh-hant">Chef de Mise</a>
+          <a href="https://superplanner.ai/notion/agent-labbook/" data-lang="en">Agent Labbook</a>
+          <a href="https://superplanner.ai/notion/agent-labbook/" data-lang="zh-hans">Agent Labbook</a>
+          <a href="https://superplanner.ai/notion/agent-labbook/" data-lang="zh-hant">Agent Labbook</a>
+          <span class="lang-sep">|</span>
+          <button class="lang-btn active" id="btn-en" onclick="setLang('en')">EN</button>
+          <button class="lang-btn" id="btn-zh-hans" onclick="setLang('zh-hans')">简体</button>
+          <button class="lang-btn" id="btn-zh-hant" onclick="setLang('zh-hant')">繁體</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ====== HERO — EN ====== -->
+    <section class="hero" data-lang="en">
+      <span class="hero-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        Notion Public Integration
+      </span>
+      <h1>Connect Your AI Agent<br/>to Notion</h1>
+      <p class="hero-sub">Agent Labbook is the Notion connection layer for Codex, Claude Code, and other MCP clients. One command to authenticate, per-project scoping for the pages and databases your agent needs, and secure credential reuse across every project.</p>
+      <div class="hero-pills">
+        <span>OpenAI Codex</span>
+        <span>Claude Code</span>
+        <span>Any MCP Client</span>
+        <span>Per-Project Scoping</span>
+        <span>Open Source</span>
+      </div>
+    </section>
+
+    <!-- ====== HERO — 简中 ====== -->
+    <section class="hero" data-lang="zh-hans">
+      <span class="hero-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        Notion 公共集成
+      </span>
+      <h1>把 Notion 页面<br/>接入你的 AI 助手</h1>
+      <p class="hero-sub">Agent Labbook 是面向 Codex、Claude Code 及所有 MCP 客户端的 Notion 连接层。一条命令完成授权，按项目绑定所需的页面和数据库，凭证安全复用，项目之间互不干扰。</p>
+      <div class="hero-pills">
+        <span>OpenAI Codex</span>
+        <span>Claude Code</span>
+        <span>所有 MCP 客户端</span>
+        <span>按项目隔离</span>
+        <span>开源</span>
+      </div>
+    </section>
+
+    <!-- ====== HERO — 繁中 ====== -->
+    <section class="hero" data-lang="zh-hant">
+      <span class="hero-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        Notion 公開整合
+      </span>
+      <h1>把 Notion 頁面<br/>接入你的 AI 助手</h1>
+      <p class="hero-sub">Agent Labbook 是為 Codex、Claude Code 及所有 MCP 用戶端打造的 Notion 連線層。一行指令完成授權，依專案綁定所需的頁面與資料庫，憑證安全重複使用，專案之間互不干擾。</p>
+      <div class="hero-pills">
+        <span>OpenAI Codex</span>
+        <span>Claude Code</span>
+        <span>所有 MCP 用戶端</span>
+        <span>依專案隔離</span>
+        <span>開源</span>
+      </div>
+    </section>
+
+    <!-- ====== HOW IT WORKS — EN ====== -->
+    <section class="steps" data-lang="en">
+      <p class="section-label">How It Works</p>
+      <h2 class="section-title">Three steps to get your Notion pages into your agent</h2>
+      <div class="steps-grid">
+        <article class="step-card">
+          <div class="step-num">1</div>
+          <h3>Install</h3>
+          <p>Add Agent Labbook to your MCP client with a single command. Works with Codex, Claude Code, or any MCP-capable tool.</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">2</div>
+          <h3>Authorize</h3>
+          <p>The agent opens a Notion OAuth consent page. Sign in, choose which pages and databases to share, and approve. Credentials are stored securely in 1Password or your system keyring.</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">3</div>
+          <h3>Build</h3>
+          <p>Your agent gets direct access to the official Notion API with proper tokens and bound resource IDs. Read docs, write pages, query databases \u2014 whatever the project needs.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ====== HOW IT WORKS — 简中 ====== -->
+    <section class="steps" data-lang="zh-hans">
+      <p class="section-label">工作流程</p>
+      <h2 class="section-title">三步搞定，Notion 页面直达你的 AI 助手</h2>
+      <div class="steps-grid">
+        <article class="step-card">
+          <div class="step-num">1</div>
+          <h3>安装</h3>
+          <p>一条命令把 Agent Labbook 添加到 MCP 客户端。支持 Codex、Claude Code 及任何兼容 MCP 的工具。</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">2</div>
+          <h3>授权</h3>
+          <p>AI 助手会打开 Notion OAuth 授权页面。登录后勾选要共享的页面和数据库，点击同意即可。凭证安全存储在 1Password 或系统钥匙串中。</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">3</div>
+          <h3>开发</h3>
+          <p>AI 助手获得 Notion 官方 API 的直接访问权限，持有合法 Token 和已绑定的资源 ID。读文档、写页面、查数据库——项目需要什么就做什么。</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ====== HOW IT WORKS — 繁中 ====== -->
+    <section class="steps" data-lang="zh-hant">
+      <p class="section-label">運作方式</p>
+      <h2 class="section-title">三個步驟，把 Notion 頁面送進你的 AI 助手</h2>
+      <div class="steps-grid">
+        <article class="step-card">
+          <div class="step-num">1</div>
+          <h3>安裝</h3>
+          <p>一行指令將 Agent Labbook 加入 MCP 用戶端。支援 Codex、Claude Code 及任何相容 MCP 的工具。</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">2</div>
+          <h3>授權</h3>
+          <p>AI 助手會開啟 Notion OAuth 授權頁面。登入後勾選要分享的頁面與資料庫，按下同意即完成。憑證安全儲存於 1Password 或系統鑰匙圈中。</p>
+        </article>
+        <article class="step-card">
+          <div class="step-num">3</div>
+          <h3>開發</h3>
+          <p>AI 助手取得 Notion 官方 API 的直接存取權限，持有合法 Token 與已綁定的資源 ID。讀文件、寫頁面、查資料庫——專案需要什麼就做什麼。</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ====== FEATURES — EN ====== -->
+    <section class="features" id="features" data-lang="en">
+      <p class="section-label">Features</p>
+      <h2 class="section-title">Auth infrastructure, not an API bottleneck</h2>
+      <div class="feature-grid">
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+          </div>
+          <h3>Per-Project Scoping</h3>
+          <p>Each project binds only the Notion pages and databases it needs. Subtree scope covers an entire page tree with one selection. No accidental cross-project data access.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/></svg>
+          </div>
+          <h3>Credential Reuse</h3>
+          <p>Authorize Notion once on a machine, then attach that credential to any new project without re-running OAuth. Tokens live in 1Password or your system keyring, never in project files.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+          </div>
+          <h3>Works Everywhere</h3>
+          <p>Local machines with a browser, SSH sessions, headless CI \u2014 the system detects the environment and switches between browser-based and headless auth automatically.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>Secure by Design</h3>
+          <p>Tokens never touch project files or git. Handoff bundles are cryptographically signed. The hosted backend processes tokens in memory only and never persists them.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m-7-7h6m6 0h6"/><path d="M4.22 4.22l4.24 4.24m7.08 7.08l4.24 4.24m0-15.56l-4.24 4.24m-7.08 7.08l-4.24 4.24"/></svg>
+          </div>
+          <h3>MCP-Native</h3>
+          <p>14 tools, 3 resources, 2 prompts \u2014 all with structured output schemas. Works out of the box with any MCP-capable client. Your agent drives the entire flow programmatically.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+          </div>
+          <h3>Self-Hostable</h3>
+          <p>Everything can run on your own Cloudflare account with custom domain routes. Full control over the backend, zero dependency on third-party infrastructure.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ====== FEATURES — 简中 ====== -->
+    <section class="features" data-lang="zh-hans">
+      <p class="section-label">功能特性</p>
+      <h2 class="section-title">认证基础设施，而非 API 瓶颈</h2>
+      <div class="feature-grid">
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+          </div>
+          <h3>按项目隔离</h3>
+          <p>每个项目只绑定它需要的 Notion 页面和数据库。子树范围一次选中即可覆盖整棵页面树，杜绝跨项目的意外数据访问。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/></svg>
+          </div>
+          <h3>凭证复用</h3>
+          <p>同一台机器只需授权一次 Notion，新项目直接复用已有凭证，无需重走 OAuth。Token 存储在 1Password 或系统钥匙串中，绝不出现在项目文件里。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+          </div>
+          <h3>随处可用</h3>
+          <p>本地有浏览器的机器、SSH 远程会话、无头 CI——系统自动检测运行环境，在浏览器授权和无头授权之间智能切换。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>安全为先</h3>
+          <p>Token 绝不触碰项目文件或 Git。交接包经过加密签名。托管后端仅在内存中处理 Token，从不落盘。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m-7-7h6m6 0h6"/><path d="M4.22 4.22l4.24 4.24m7.08 7.08l4.24 4.24m0-15.56l-4.24 4.24m-7.08 7.08l-4.24 4.24"/></svg>
+          </div>
+          <h3>MCP 原生</h3>
+          <p>提供 14 个工具、3 个资源、2 个提示词，全部带结构化输出 Schema。开箱即用，任何 MCP 客户端均可接入。AI 助手以编程方式驱动全部流程。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+          </div>
+          <h3>可自部署</h3>
+          <p>所有组件都可部署在你自己的 Cloudflare 账号上，支持自定义域名路由。完全掌控后端，零依赖第三方基础设施。</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ====== FEATURES — 繁中 ====== -->
+    <section class="features" data-lang="zh-hant">
+      <p class="section-label">功能特色</p>
+      <h2 class="section-title">認證基礎建設，而非 API 瓶頸</h2>
+      <div class="feature-grid">
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+          </div>
+          <h3>依專案隔離</h3>
+          <p>每個專案只綁定所需的 Notion 頁面與資料庫。子樹範圍一次勾選即可涵蓋整棵頁面樹，杜絕跨專案的意外資料存取。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/></svg>
+          </div>
+          <h3>憑證重複使用</h3>
+          <p>同一台機器只需授權一次 Notion，新專案直接沿用既有憑證，無需重跑 OAuth。Token 儲存在 1Password 或系統鑰匙圈中，絕不會出現在專案檔案裡。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+          </div>
+          <h3>隨處可用</h3>
+          <p>本機有瀏覽器、SSH 遠端連線、無頭 CI——系統自動偵測執行環境，在瀏覽器授權與無頭授權之間智慧切換。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>安全至上</h3>
+          <p>Token 絕不碰觸專案檔案或 Git。交接包經過加密簽章。託管後端僅在記憶體中處理 Token，從不寫入磁碟。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m-7-7h6m6 0h6"/><path d="M4.22 4.22l4.24 4.24m7.08 7.08l4.24 4.24m0-15.56l-4.24 4.24m-7.08 7.08l-4.24 4.24"/></svg>
+          </div>
+          <h3>MCP 原生</h3>
+          <p>提供 14 個工具、3 個資源、2 個提示詞，全部附帶結構化輸出 Schema。開箱即用，任何 MCP 用戶端皆可接入。AI 助手以程式驅動完整流程。</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+          </div>
+          <h3>可自行部署</h3>
+          <p>所有元件皆可部署至你自己的 Cloudflare 帳號，支援自訂網域路由。完全掌控後端，零依賴第三方基礎建設。</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ====== QUICKSTART — EN ====== -->
+    <section class="quickstart" data-lang="en">
+      <div class="qs-card">
+        <h3>Quick Start</h3>
+        <p>Add Agent Labbook to your MCP client, then let the agent handle the rest.</p>
+        <div class="code-block"><span class="code-comment"># OpenAI Codex</span><br/><span class="code-cmd">codex</span> mcp add labbook -- uvx agent-labbook mcp</div>
+        <span class="qs-or">or</span>
+        <div class="code-block"><span class="code-comment"># Anthropic Claude Code</span><br/><span class="code-cmd">claude</span> mcp add --scope project labbook -- uvx agent-labbook mcp</div>
+      </div>
+    </section>
+
+    <!-- ====== QUICKSTART — 简中 ====== -->
+    <section class="quickstart" data-lang="zh-hans">
+      <div class="qs-card">
+        <h3>\u5feb\u901f\u5f00\u59cb</h3>
+        <p>把 Agent Labbook 添加到 MCP 客户端，剩下的交给 AI 助手。</p>
+        <div class="code-block"><span class="code-comment"># OpenAI Codex</span><br/><span class="code-cmd">codex</span> mcp add labbook -- uvx agent-labbook mcp</div>
+        <span class="qs-or">\u6216\u8005</span>
+        <div class="code-block"><span class="code-comment"># Anthropic Claude Code</span><br/><span class="code-cmd">claude</span> mcp add --scope project labbook -- uvx agent-labbook mcp</div>
+      </div>
+    </section>
+
+    <!-- ====== QUICKSTART — 繁中 ====== -->
+    <section class="quickstart" data-lang="zh-hant">
+      <div class="qs-card">
+        <h3>\u5feb\u901f\u958b\u59cb</h3>
+        <p>將 Agent Labbook 加入 MCP 用戶端，其餘交給 AI 助手搞定。</p>
+        <div class="code-block"><span class="code-comment"># OpenAI Codex</span><br/><span class="code-cmd">codex</span> mcp add labbook -- uvx agent-labbook mcp</div>
+        <span class="qs-or">\u6216\u8005</span>
+        <div class="code-block"><span class="code-comment"># Anthropic Claude Code</span><br/><span class="code-cmd">claude</span> mcp add --scope project labbook -- uvx agent-labbook mcp</div>
+      </div>
+    </section>
+
+    <!-- ====== GITHUB CTA ====== -->
+    <div class="gh-cta" data-lang="en">
+      <a href="https://github.com/binbinsh/agent-labbook" class="gh-link" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+        View on GitHub &rarr;
+      </a>
+    </div>
+    <div class="gh-cta" data-lang="zh-hans">
+      <a href="https://github.com/binbinsh/agent-labbook" class="gh-link" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+        \u5728 GitHub \u4e0a\u67e5\u770b &rarr;
+      </a>
+    </div>
+    <div class="gh-cta" data-lang="zh-hant">
+      <a href="https://github.com/binbinsh/agent-labbook" class="gh-link" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+        \u5728 GitHub \u4e0a\u67e5\u770b &rarr;
+      </a>
+    </div>
+
+    <footer>
+      <p data-lang="en">&copy; ${year} <a href="https://gridheap.com/">Grid Heap</a>. All rights reserved. &nbsp;|&nbsp; <a href="https://superplanner.ai/privacy-policy/">Privacy Policy</a> &nbsp;|&nbsp; <a href="https://superplanner.ai/terms-of-use/">Terms of Use</a></p>
+      <p data-lang="zh-hans">&copy; ${year} <a href="https://gridheap.com/">Grid Heap</a> \u7248\u6743\u6240\u6709 &nbsp;|&nbsp; <a href="https://superplanner.ai/privacy-policy/">\u9690\u79c1\u653f\u7b56</a> &nbsp;|&nbsp; <a href="https://superplanner.ai/terms-of-use/">\u4f7f\u7528\u6761\u6b3e</a></p>
+      <p data-lang="zh-hant">&copy; ${year} <a href="https://gridheap.com/">Grid Heap</a> \u7248\u6b0a\u6240\u6709 &nbsp;|&nbsp; <a href="https://superplanner.ai/privacy-policy/">\u96b1\u79c1\u6b0a\u653f\u7b56</a> &nbsp;|&nbsp; <a href="https://superplanner.ai/terms-of-use/">\u4f7f\u7528\u689d\u6b3e</a></p>
+    </footer>
+
+    <script>
+      function setLang(lang) {
+        document.body.className = lang === 'en' ? '' : lang;
+        document.querySelectorAll('.lang-btn').forEach(function(b) { b.classList.remove('active'); });
+        var btn = document.getElementById('btn-' + lang);
+        if (btn) btn.classList.add('active');
+        try { localStorage.setItem('sp-lang', lang); } catch(e) {}
+      }
+      (function() {
+        var saved = null;
+        try { saved = localStorage.getItem('sp-lang'); } catch(e) {}
+        if (saved && saved !== 'en') { setLang(saved); return; }
+        if (saved) return;
+        var nav = navigator.language || '';
+        if (/^zh[\\-_](tw|hk|mo|hant)/i.test(nav) || nav === 'zh-Hant') { setLang('zh-hant'); }
+        else if (/^zh/i.test(nav)) { setLang('zh-hans'); }
+      })();
+    </script>
+  </body>
+</html>`;
+}
+
+function handleLandingPage() {
+  const headers = new Headers();
+  headers.set("content-type", "text/html; charset=utf-8");
+  headers.set("cache-control", "public, max-age=300, s-maxage=600");
+  return new Response(landingPage(), { headers });
 }
 
 async function handleOauthContinue(request, env) {
@@ -1556,7 +2099,10 @@ async function handleHealth(request, env) {
 export default {
   async fetch(request, env) {
     const workerPath = getWorkerPath(request, env);
-    if (workerPath === "/" || workerPath === "/health") {
+    if (workerPath === "/") {
+      return handleLandingPage();
+    }
+    if (workerPath === "/health") {
       return handleHealth(request, env);
     }
     if (workerPath === "/oauth/continue") {

@@ -56,6 +56,8 @@ type SelectionConfig = {
   catalogError?: string | null;
 };
 
+type Lang = "en" | "zh-hans" | "zh-hant";
+
 const LOCAL_HANDOFF_SUCCESS_MESSAGE = "agent-labbook-local-handoff-success";
 const LOCAL_HANDOFF_WINDOW_NAME = "agent_labbook_local_handoff";
 const LOCAL_HANDOFF_WAIT_TIMEOUT_MS = 10000;
@@ -66,6 +68,153 @@ declare global {
   }
 }
 
+// ---------------------------------------------------------------------------
+// i18n translations
+// ---------------------------------------------------------------------------
+const translations = {
+  en: {
+    navBrand: "Agent Labbook",
+    title: "Choose Notion Content",
+    titleLine: (workspace: string, project: string) =>
+      `Pick the pages and data sources from ${workspace} that ${project} should be allowed to use.`,
+    selectTitle: "Select Pages and Data Sources",
+    selectDesc:
+      "Selecting a root binds that page or data source with subtree scope. Expand rows to inspect nested content on demand.",
+    refresh: "Refresh",
+    searchPlaceholder: "Search workspace by title, type, or ID",
+    catalogNotice:
+      "Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click Refresh.",
+    catalogError: (msg: string) => `Could not load available resources from Notion. ${msg}`,
+    searchError: (msg: string) => `Search could not reach Notion. ${msg}`,
+    loading: "Loading available pages and data sources...",
+    emptyFilter: "No pages or data sources matched this filter.",
+    headlessTitle: "Complete Setup in Your Agent",
+    headlessCopy: "Paste this value into notion_complete_headless_auth to finish connecting this project.",
+    fallbackNotice:
+      "The local browser handoff could not reach the MCP server on 127.0.0.1. The handoff bundle is shown below so you can finish with notion_complete_headless_auth.",
+    bundleReady: "The handoff bundle is ready. Copy it and paste it into notion_complete_headless_auth.",
+    copyBundle: "Copy Bundle",
+    searching: "Searching Notion...",
+    delivering: "Trying to deliver the handoff through a local browser window...",
+    delivered: "The handoff was sent back to the local MCP server. You can close this tab.",
+    loadingNested: "Loading nested content...",
+    bundleReadyBelow: "The handoff bundle is ready below.",
+    rootsSelected: (count: number) => `${count} root${count === 1 ? "" : "s"} selected`,
+    connectSelected: "Connect Selected",
+    untitled: "Untitled",
+    page: "Page",
+    dataSource: "Data source",
+    selected: "Selected",
+    includesSubtree: "Includes subtree",
+    inSelectedSubtree: "In selected subtree",
+    collapseLabel: "Collapse nested items",
+    expandLabel: "Expand nested items",
+    editedDate: (d: string) => `Edited ${d}`,
+    langEn: "EN",
+    langZhHans: "简体",
+    langZhHant: "繁體",
+  },
+  "zh-hans": {
+    navBrand: "Agent Labbook",
+    title: "选择 Notion 内容",
+    titleLine: (workspace: string, project: string) =>
+      `从 ${workspace} 中选择 ${project} 需要用到的页面和数据库。`,
+    selectTitle: "选择页面和数据库",
+    selectDesc: "选中一个根节点会以子树范围绑定该页面或数据库。展开行可按需查看嵌套内容。",
+    refresh: "刷新",
+    searchPlaceholder: "按标题、类型或 ID 搜索工作区",
+    catalogNotice:
+      "搜索会在已共享的工作区中查询 Notion。如果缺少某些内容，请先在 Notion 中将其共享给集成，再点击「刷新」。",
+    catalogError: (msg: string) => `无法从 Notion 加载可用资源。${msg}`,
+    searchError: (msg: string) => `搜索无法连接到 Notion。${msg}`,
+    loading: "正在加载可用的页面和数据库……",
+    emptyFilter: "没有页面或数据库匹配当前筛选条件。",
+    headlessTitle: "在 AI 助手中完成设置",
+    headlessCopy: "将此值粘贴到 notion_complete_headless_auth 以完成项目连接。",
+    fallbackNotice:
+      "本地浏览器交接无法连接到 127.0.0.1 上的 MCP 服务器。交接包已显示在下方，你可以通过 notion_complete_headless_auth 完成操作。",
+    bundleReady: "交接包已就绪。复制并粘贴到 notion_complete_headless_auth 中。",
+    copyBundle: "复制交接包",
+    searching: "正在搜索 Notion……",
+    delivering: "正在尝试通过本地浏览器窗口传递交接信息……",
+    delivered: "交接信息已发送到本地 MCP 服务器。你可以关闭此标签页。",
+    loadingNested: "正在加载嵌套内容……",
+    bundleReadyBelow: "交接包已准备就绪，见下方。",
+    rootsSelected: (count: number) => `已选择 ${count} 个根节点`,
+    connectSelected: "连接所选内容",
+    untitled: "无标题",
+    page: "页面",
+    dataSource: "数据库",
+    selected: "已选",
+    includesSubtree: "含子树",
+    inSelectedSubtree: "在已选子树中",
+    collapseLabel: "折叠嵌套项",
+    expandLabel: "展开嵌套项",
+    editedDate: (d: string) => `编辑于 ${d}`,
+    langEn: "EN",
+    langZhHans: "简体",
+    langZhHant: "繁體",
+  },
+  "zh-hant": {
+    navBrand: "Agent Labbook",
+    title: "選擇 Notion 內容",
+    titleLine: (workspace: string, project: string) =>
+      `從 ${workspace} 中選擇 ${project} 需要使用的頁面與資料庫。`,
+    selectTitle: "選擇頁面與資料庫",
+    selectDesc: "選取一個根節點會以子樹範圍綁定該頁面或資料庫。展開列可依需求查看巢狀內容。",
+    refresh: "重新整理",
+    searchPlaceholder: "依標題、類型或 ID 搜尋工作區",
+    catalogNotice:
+      "搜尋會在已分享的工作區中查詢 Notion。如果缺少某些內容，請先在 Notion 中將其分享給整合，再點擊「重新整理」。",
+    catalogError: (msg: string) => `無法從 Notion 載入可用資源。${msg}`,
+    searchError: (msg: string) => `搜尋無法連線至 Notion。${msg}`,
+    loading: "正在載入可用的頁面與資料庫……",
+    emptyFilter: "沒有頁面或資料庫符合目前篩選條件。",
+    headlessTitle: "在 AI 助手中完成設定",
+    headlessCopy: "將此值貼入 notion_complete_headless_auth 以完成專案連線。",
+    fallbackNotice:
+      "本機瀏覽器交接無法連線至 127.0.0.1 上的 MCP 伺服器。交接包已顯示於下方，你可以透過 notion_complete_headless_auth 完成操作。",
+    bundleReady: "交接包已就緒。複製並貼入 notion_complete_headless_auth。",
+    copyBundle: "複製交接包",
+    searching: "正在搜尋 Notion……",
+    delivering: "正在嘗試透過本機瀏覽器視窗傳遞交接資訊……",
+    delivered: "交接資訊已送回本機 MCP 伺服器。你可以關閉此分頁。",
+    loadingNested: "正在載入巢狀內容……",
+    bundleReadyBelow: "交接包已準備就緒，見下方。",
+    rootsSelected: (count: number) => `已選擇 ${count} 個根節點`,
+    connectSelected: "連接所選內容",
+    untitled: "無標題",
+    page: "頁面",
+    dataSource: "資料庫",
+    selected: "已選",
+    includesSubtree: "含子樹",
+    inSelectedSubtree: "在已選子樹中",
+    collapseLabel: "收合巢狀項目",
+    expandLabel: "展開巢狀項目",
+    editedDate: (d: string) => `編輯於 ${d}`,
+    langEn: "EN",
+    langZhHans: "简体",
+    langZhHant: "繁體",
+  },
+} as const;
+
+type Translations = (typeof translations)[Lang];
+
+function detectLang(): Lang {
+  try {
+    const saved = localStorage.getItem("sp-lang");
+    if (saved === "zh-hans" || saved === "zh-hant") return saved;
+    if (saved === "en") return "en";
+  } catch {}
+  const nav = navigator.language || "";
+  if (/^zh[\-_](tw|hk|mo|hant)/i.test(nav) || nav === "zh-Hant") return "zh-hant";
+  if (/^zh/i.test(nav)) return "zh-hans";
+  return "en";
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
 function normalizeNotionIdLike(value: string | null | undefined) {
   const raw = String(value || "").trim();
   let candidateSource = raw;
@@ -172,12 +321,12 @@ function formatDate(value: string | null) {
   }
 }
 
-function formatTypeLabel(type: string) {
+function formatTypeLabel(type: string, t: Translations) {
   if (type === "data_source") {
-    return "Data source";
+    return t.dataSource;
   }
   if (type === "page") {
-    return "Page";
+    return t.page;
   }
   return String(type || "resource").replace(/_/g, " ");
 }
@@ -233,11 +382,47 @@ function resourceIcon(resource: Resource) {
     return <span className="text-[13px] leading-none">{resource.icon_emoji}</span>;
   }
   if (resource.resource_type === "data_source") {
-    return <Database className="size-3.5 text-stone-500" />;
+    return <Database className="size-3.5 text-[#9a8d80]" />;
   }
-  return <FileText className="size-3.5 text-stone-500" />;
+  return <FileText className="size-3.5 text-[#9a8d80]" />;
 }
 
+// ---------------------------------------------------------------------------
+// Language Switcher
+// ---------------------------------------------------------------------------
+function LangSwitcher({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void }) {
+  const t = translations[lang];
+  const btnBase =
+    "px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer border-none";
+  const active = "bg-[rgba(196,83,45,0.10)] text-[#c4532d] font-semibold";
+  const inactive = "bg-transparent text-[#9a8d80] hover:bg-[rgba(196,83,45,0.06)] hover:text-[#c4532d]";
+
+  return (
+    <div className="flex items-center gap-1">
+      <button type="button" className={cn(btnBase, lang === "en" ? active : inactive)} onClick={() => setLang("en")}>
+        {t.langEn}
+      </button>
+      <button
+        type="button"
+        className={cn(btnBase, lang === "zh-hans" ? active : inactive)}
+        onClick={() => setLang("zh-hans")}
+      >
+        {t.langZhHans}
+      </button>
+      <button
+        type="button"
+        className={cn(btnBase, lang === "zh-hant" ? active : inactive)}
+        onClick={() => setLang("zh-hant")}
+      >
+        {t.langZhHant}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ResourceRow
+// ---------------------------------------------------------------------------
 function ResourceRow({
   resource,
   selectedState,
@@ -247,6 +432,7 @@ function ResourceRow({
   expanded,
   depth = 0,
   disabled = false,
+  t,
   onToggle,
   onToggleExpand,
 }: {
@@ -258,16 +444,17 @@ function ResourceRow({
   expanded: boolean;
   depth?: number;
   disabled?: boolean;
+  t: Translations;
   onToggle?: (resource: Resource, checked: boolean) => Promise<void> | void;
   onToggleExpand?: (resource: Resource) => Promise<void> | void;
 }) {
   const selected = selectedState !== "none";
   const edited = formatDate(resource.last_edited_time);
   const details = [
-    resource.title || "Untitled",
-    formatTypeLabel(resource.resource_type),
+    resource.title || t.untitled,
+    formatTypeLabel(resource.resource_type, t),
     resource.resource_id,
-    edited ? `Edited ${edited}` : null,
+    edited ? t.editedDate(edited) : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -279,10 +466,10 @@ function ResourceRow({
       className={cn(
         "flex min-h-9 items-center gap-2 rounded-lg px-2 py-1.5 transition",
         selectedState === "explicit"
-          ? "bg-stone-100"
+          ? "bg-[#fef3ee]"
           : selectedState === "descendant"
-            ? "bg-stone-50"
-            : "hover:bg-stone-50",
+            ? "bg-[#faf7f2]"
+            : "hover:bg-[#faf7f2]",
       )}
       style={{ paddingLeft: `${8 + depth * 18}px` }}
       title={details}
@@ -290,8 +477,8 @@ function ResourceRow({
       {canExpand ? (
         <button
           type="button"
-          className="flex size-4 shrink-0 items-center justify-center rounded text-stone-500 hover:bg-stone-200/60 hover:text-stone-700"
-          aria-label={expanded ? "Collapse nested items" : "Expand nested items"}
+          className="flex size-4 shrink-0 items-center justify-center rounded text-[#9a8d80] hover:bg-[rgba(196,83,45,0.08)] hover:text-[#6b5e52]"
+          aria-label={expanded ? t.collapseLabel : t.expandLabel}
           onClick={() => void onToggleExpand?.(resource)}
         >
           {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -315,33 +502,36 @@ function ResourceRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[13px] text-stone-900">{resource.title || "Untitled"}</span>
-          <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px] text-stone-500">
-            {resource.resource_type === "data_source" ? "Data source" : "Page"}
+          <span className="truncate text-[13px] text-[#1a1410]">{resource.title || t.untitled}</span>
+          <Badge variant="outline" className="h-5 shrink-0 rounded-full border-[rgba(28,20,15,0.12)] px-2 text-[10px] text-[#9a8d80]">
+            {resource.resource_type === "data_source" ? t.dataSource : t.page}
           </Badge>
           {selectedState === "explicit" ? (
-            <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              Selected
+            <Badge variant="outline" className="h-5 shrink-0 rounded-full border-[rgba(196,83,45,0.2)] px-2 text-[10px] text-[#c4532d]">
+              {t.selected}
             </Badge>
           ) : null}
           {selectedState === "explicit" && includesSubtree ? (
-            <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              Includes subtree
+            <Badge variant="outline" className="h-5 shrink-0 rounded-full border-[rgba(196,83,45,0.2)] px-2 text-[10px] text-[#c4532d]">
+              {t.includesSubtree}
             </Badge>
           ) : null}
           {selectedState === "descendant" ? (
-            <Badge variant="outline" className="h-5 shrink-0 rounded-full px-2 text-[10px]">
-              In selected subtree
+            <Badge variant="outline" className="h-5 shrink-0 rounded-full border-[rgba(28,20,15,0.12)] px-2 text-[10px] text-[#9a8d80]">
+              {t.inSelectedSubtree}
             </Badge>
           ) : null}
         </div>
       </div>
 
-      {loading ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-stone-500" /> : null}
+      {loading ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-[#c4532d]" /> : null}
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// SelectionApp
+// ---------------------------------------------------------------------------
 function SelectionApp({
   baseUrl,
   state,
@@ -351,6 +541,16 @@ function SelectionApp({
   catalogLoaded: initialCatalogLoaded,
   catalogError: initialCatalogError,
 }: SelectionConfig) {
+  const [lang, setLangState] = useState<Lang>(detectLang);
+  const t = translations[lang];
+
+  function setLang(nextLang: Lang) {
+    setLangState(nextLang);
+    try {
+      localStorage.setItem("sp-lang", nextLang);
+    } catch {}
+  }
+
   const [catalog, setCatalog] = useState<Resource[]>(dedupeSortResources(resources));
   const rootIndex = new Map(catalog.map((resource) => [resource.resource_id, resource]));
 
@@ -514,12 +714,8 @@ function SelectionApp({
 
   const finalBundle = bundleResources();
   const pageLimit = Number.isFinite(Number(state.page_limit)) ? Number(state.page_limit) : 200;
-  const workspaceLabel = workspaceName || "your workspace";
-  const projectLabel = state.project_name || "this project";
-  const title = "Choose Notion Content";
-  const titleLine = `Pick the pages and data sources from ${workspaceLabel} that ${projectLabel} should be allowed to use.`;
-  const catalogNotice =
-    "Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click Refresh.";
+  const workspaceLabel = workspaceName || (lang === "en" ? "your workspace" : lang === "zh-hans" ? "你的工作区" : "你的工作區");
+  const projectLabel = state.project_name || (lang === "en" ? "this project" : lang === "zh-hans" ? "此项目" : "此專案");
 
   const childIndex = buildChildIndex(catalog);
   const parentIndex = new Map(catalog.map((resource) => [resource.resource_id, resolvedParentId(resource)]));
@@ -772,8 +968,14 @@ function SelectionApp({
       if (!popup) {
         return null;
       }
+      const msg =
+        lang === "zh-hans"
+          ? "正在连接 Agent Labbook 到本地 MCP 监听器……"
+          : lang === "zh-hant"
+            ? "正在連線 Agent Labbook 到本機 MCP 監聽器……"
+            : "Connecting Agent Labbook to the local MCP listener...";
       popup.document.write(
-        "<!doctype html><html><body><p style=\"font-family: sans-serif; padding: 24px;\">Connecting Agent Labbook to the local MCP listener...</p></body></html>",
+        `<!doctype html><html><body><p style="font-family: sans-serif; padding: 24px;">${msg}</p></body></html>`,
       );
       popup.document.close();
       return popup;
@@ -900,159 +1102,175 @@ function SelectionApp({
   }
 
   return (
-    <div className="mx-auto min-h-screen w-full max-w-3xl px-3 py-6 sm:px-5 sm:py-8">
-      <div className="space-y-4 pb-28">
-        <div className="space-y-1">
-          <h1 className="max-w-2xl text-xl font-semibold tracking-tight text-stone-950 sm:text-2xl">
-            {title}
-          </h1>
-          <p className="text-sm text-stone-500">{titleLine}</p>
+    <div className="min-h-screen bg-[#faf7f2]">
+      {/* Brand nav */}
+      <nav className="sticky top-0 z-30 border-b border-[rgba(28,20,15,0.08)] bg-[rgba(250,247,242,0.85)] backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-3 sm:px-5">
+          <a
+            href="https://superplanner.ai/notion/agent-labbook/"
+            className="font-['DM_Serif_Display',serif] text-lg text-[#1a1410] no-underline"
+          >
+            {t.navBrand}
+          </a>
+          <LangSwitcher lang={lang} setLang={setLang} />
+        </div>
+      </nav>
+
+      <div className="mx-auto w-full max-w-3xl px-3 py-6 sm:px-5 sm:py-8">
+        <div className="space-y-4 pb-28">
+          <div className="space-y-1">
+            <h1 className="max-w-2xl font-['DM_Serif_Display',serif] text-xl font-normal tracking-tight text-[#1a1410] sm:text-2xl">
+              {t.title}
+            </h1>
+            <p className="text-sm text-[#6b5e52]">{t.titleLine(workspaceLabel, projectLabel)}</p>
+          </div>
+
+          <Card className="border-[rgba(28,20,15,0.08)] bg-[rgba(255,253,250,0.82)] shadow-sm">
+            <CardHeader className="gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-base text-[#1a1410]">{t.selectTitle}</CardTitle>
+                  <CardDescription className="text-[#6b5e52]">{t.selectDesc}</CardDescription>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void refreshCatalog()}
+                  disabled={refreshingCatalog}
+                >
+                  <RefreshCw className={cn("size-3.5", refreshingCatalog && "animate-spin")} />
+                  {t.refresh}
+                </Button>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#9a8d80]" />
+                  <Input
+                    value={inputValue}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      startTransition(() => {
+                        setInputValue(nextValue);
+                      });
+                    }}
+                    className="border-[rgba(28,20,15,0.12)] bg-white pl-9 focus-visible:ring-[rgba(196,83,45,0.2)]"
+                    placeholder={t.searchPlaceholder}
+                  />
+                </div>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
+                {t.catalogNotice}
+              </div>
+              {catalogError ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-900">
+                  {t.catalogError(catalogError)}
+                </div>
+              ) : null}
+              {searchError && searchActive ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-900">
+                  {t.searchError(searchError)}
+                </div>
+              ) : null}
+            </CardHeader>
+            <CardContent>
+              {!catalogLoaded && refreshingCatalog ? (
+                <div className="rounded-xl border border-dashed border-[rgba(28,20,15,0.12)] bg-[#faf7f2] px-4 py-10 text-center text-sm text-[#6b5e52]">
+                  {t.loading}
+                </div>
+              ) : visibleRows.length ? (
+                <div className="space-y-2">
+                  {visibleRows.map(({ resource, depth }) => {
+                    const selectedState = selectedRootIds.has(resource.resource_id)
+                      ? "explicit"
+                      : autoIncludedIds.has(resource.resource_id)
+                        ? "descendant"
+                        : "none";
+                    const hasChildren = Boolean((childIndex.get(resource.resource_id) || []).length);
+                    const canExpand =
+                      hasChildren ||
+                      loadingRootIds.has(resource.resource_id) ||
+                      (canResourceHaveChildren(resource.resource_type) && !discoveredByRoot.has(resource.resource_id));
+                    return (
+                      <ResourceRow
+                        key={resource.resource_id}
+                        resource={resource}
+                        selectedState={selectedState}
+                        loading={loadingRootIds.has(resource.resource_id)}
+                        includesSubtree={selectedState === "explicit" && canResourceHaveChildren(resource.resource_type)}
+                        canExpand={canExpand}
+                        expanded={isExpanded(resource.resource_id)}
+                        depth={depth}
+                        disabled={selectedState === "descendant"}
+                        t={t}
+                        onToggle={toggleResourceSelection}
+                        onToggleExpand={toggleCollapsed}
+                      />
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-[rgba(28,20,15,0.12)] bg-[#faf7f2] px-4 py-10 text-center text-sm text-[#6b5e52]">
+                  {t.emptyFilter}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {handoffBundle ? (
+            <div ref={outputRef}>
+              <Card className="border-[rgba(28,20,15,0.08)] bg-[rgba(255,253,250,0.82)] shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-base text-[#1a1410]">{t.headlessTitle}</CardTitle>
+                  <CardDescription className="text-[#6b5e52]">
+                    {t.headlessCopy}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="rounded-xl border border-[rgba(28,20,15,0.08)] bg-[#faf7f2] px-3 py-2 text-sm text-[#6b5e52]">
+                    {localDeliveryStatus === "fallback" ? t.fallbackNotice : t.bundleReady}
+                  </div>
+                  <textarea
+                    readOnly
+                    value={handoffBundle}
+                    className="min-h-56 w-full rounded-xl border border-[rgba(28,20,15,0.12)] bg-white px-3 py-3 font-mono text-xs text-[#1a1410] outline-none"
+                  />
+                  <Button variant="secondary" onClick={() => void copyBundle()}>
+                    {t.copyBundle}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
         </div>
 
-        <Card className="border-stone-200 shadow-sm">
-          <CardHeader className="gap-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
-                <CardTitle className="text-base">Select Pages and Data Sources</CardTitle>
-                <CardDescription>
-                  Selecting a root binds that page or data source with subtree scope. Expand rows to inspect nested content on demand.
-                </CardDescription>
+        <div className="sticky bottom-3 z-20">
+          <Card className="border-[rgba(28,20,15,0.08)] bg-[rgba(255,253,250,0.95)] shadow-lg backdrop-blur">
+            <CardContent className="flex items-center justify-between gap-3 pt-5">
+              <div className="min-w-0">
+                <p className="text-sm text-[#6b5e52]">
+                  {searchingCatalog
+                    ? t.searching
+                    : localDeliveryStatus === "delivering"
+                      ? t.delivering
+                    : localDeliveryStatus === "delivered"
+                      ? t.delivered
+                    : loadingRootIds.size
+                    ? t.loadingNested
+                    : handoffBundle
+                      ? t.bundleReadyBelow
+                    : t.rootsSelected(finalBundle.length)}
+                </p>
               </div>
               <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void refreshCatalog()}
-                disabled={refreshingCatalog}
+                disabled={!finalBundle.length}
+                onClick={() => void finishBinding()}
+                className="bg-[#c4532d] text-white hover:bg-[#a8432a]"
               >
-                <RefreshCw className={cn("size-3.5", refreshingCatalog && "animate-spin")} />
-                Refresh
+                {t.connectSelected}
               </Button>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
-                <Input
-                  value={inputValue}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    startTransition(() => {
-                      setInputValue(nextValue);
-                    });
-                  }}
-                  className="pl-9"
-                  placeholder="Search workspace by title, type, or ID"
-                />
-              </div>
-            </div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
-              {catalogNotice}
-            </div>
-            {catalogError ? (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-900">
-                Could not load available resources from Notion. {catalogError}
-              </div>
-            ) : null}
-            {searchError && searchActive ? (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-900">
-                Search could not reach Notion. {searchError}
-              </div>
-            ) : null}
-          </CardHeader>
-          <CardContent>
-            {!catalogLoaded && refreshingCatalog ? (
-              <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500">
-                Loading available pages and data sources...
-              </div>
-            ) : visibleRows.length ? (
-              <div className="space-y-2">
-                {visibleRows.map(({ resource, depth }) => {
-                  const selectedState = selectedRootIds.has(resource.resource_id)
-                    ? "explicit"
-                    : autoIncludedIds.has(resource.resource_id)
-                      ? "descendant"
-                      : "none";
-                  const hasChildren = Boolean((childIndex.get(resource.resource_id) || []).length);
-                  const canExpand =
-                    hasChildren ||
-                    loadingRootIds.has(resource.resource_id) ||
-                    (canResourceHaveChildren(resource.resource_type) && !discoveredByRoot.has(resource.resource_id));
-                  return (
-                    <ResourceRow
-                      key={resource.resource_id}
-                      resource={resource}
-                      selectedState={selectedState}
-                      loading={loadingRootIds.has(resource.resource_id)}
-                      includesSubtree={selectedState === "explicit" && canResourceHaveChildren(resource.resource_type)}
-                      canExpand={canExpand}
-                      expanded={isExpanded(resource.resource_id)}
-                      depth={depth}
-                      disabled={selectedState === "descendant"}
-                      onToggle={toggleResourceSelection}
-                      onToggleExpand={toggleCollapsed}
-                    />
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500">
-                No pages or data sources matched this filter.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {handoffBundle ? (
-          <div ref={outputRef}>
-            <Card className="border-stone-200 shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base">Complete Setup in Codex</CardTitle>
-                <CardDescription>
-                  Paste this value into <code>notion_complete_headless_auth</code> to finish connecting this project.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">
-                  {localDeliveryStatus === "fallback"
-                    ? "The local browser handoff could not reach the MCP server on 127.0.0.1. The handoff bundle is shown below so you can finish with notion_complete_headless_auth."
-                    : "The handoff bundle is ready. Copy it and paste it into notion_complete_headless_auth."}
-                </div>
-                <textarea
-                  readOnly
-                  value={handoffBundle}
-                  className="min-h-56 w-full rounded-xl border border-stone-200 bg-white px-3 py-3 font-mono text-xs text-stone-700 outline-none"
-                />
-                <Button variant="secondary" onClick={() => void copyBundle()}>
-                  Copy Bundle
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="sticky bottom-3 z-20">
-        <Card className="border-stone-200 bg-white/95 shadow-lg backdrop-blur">
-          <CardContent className="flex items-center justify-between gap-3 pt-5">
-            <div className="min-w-0">
-              <p className="text-sm text-stone-500">
-                {searchingCatalog
-                  ? "Searching Notion..."
-                  : localDeliveryStatus === "delivering"
-                    ? "Trying to deliver the handoff through a local browser window..."
-                  : localDeliveryStatus === "delivered"
-                    ? "The handoff was sent back to the local MCP server. You can close this tab."
-                  : loadingRootIds.size
-                  ? "Loading nested content..."
-                  : handoffBundle
-                    ? "The handoff bundle is ready below."
-                  : `${finalBundle.length} root${finalBundle.length === 1 ? "" : "s"} selected`}
-              </p>
-            </div>
-            <Button disabled={!finalBundle.length} onClick={() => void finishBinding()}>
-              Connect Selected
-            </Button>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
