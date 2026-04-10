@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib import error, request
+from urllib import error, parse, request
 
 from .state import DEFAULT_NOTION_VERSION, LabbookError, normalize_notion_id
 
@@ -94,6 +94,9 @@ class NotionClient:
             "GET", f"/data_sources/{normalize_notion_id(data_source_id)}"
         )
 
+    def retrieve_database(self, database_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/databases/{normalize_notion_id(database_id)}")
+
     def search(
         self,
         *,
@@ -111,6 +114,37 @@ class NotionClient:
         if clean_query:
             body["query"] = clean_query
         return self._request("POST", "/search", body=body)
+
+    def list_block_children(
+        self,
+        block_id: str,
+        *,
+        page_size: int = 100,
+        start_cursor: str | None = None,
+    ) -> dict[str, Any]:
+        query = {"page_size": page_size}
+        if start_cursor:
+            query["start_cursor"] = start_cursor
+        return self._request(
+            "GET",
+            f"/blocks/{normalize_notion_id(block_id)}/children?{parse.urlencode(query)}",
+        )
+
+    def query_data_source(
+        self,
+        data_source_id: str,
+        *,
+        page_size: int = 100,
+        start_cursor: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"page_size": page_size}
+        if start_cursor:
+            body["start_cursor"] = start_cursor
+        return self._request(
+            "POST",
+            f"/data_sources/{normalize_notion_id(data_source_id)}/query",
+            body=body,
+        )
 
     def retrieve_resource(
         self, resource_id: str, resource_type: str | None = None

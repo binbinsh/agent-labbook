@@ -45,7 +45,10 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("notion_prepare_internal_integration", tool_names)
         self.assertIn("notion_configure_internal_integration", tool_names)
         self.assertIn("notion_search_resources", tool_names)
+        self.assertIn("notion_discover_children", tool_names)
+        self.assertIn("notion_bind_resource_urls", tool_names)
         self.assertIn("notion_bind_resources", tool_names)
+        self.assertIn("notion_open_binding_browser", tool_names)
 
         status_tool = next(tool for tool in tools.tools if tool.name == "notion_status")
         self.assertIsNotNone(status_tool.annotations)
@@ -91,6 +94,8 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("secret_plan", result.structuredContent)
         self.assertIn("storage_options", result.structuredContent)
         self.assertIn("storage_choice_required", result.structuredContent)
+        self.assertIn("binding_recommendation", result.structuredContent)
+        self.assertIn("binding_options", result.structuredContent)
         self.assertTrue(result.content)
 
     async def test_prepare_tool_returns_urls_and_backend_choices(self) -> None:
@@ -149,6 +154,8 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(prompt.messages[0].content, types.TextContent)
         self.assertIn("notion_prepare_internal_integration", prompt.messages[0].content.text)
         self.assertIn("storage", prompt.messages[0].content.text)
+        self.assertIn("notion_bind_resource_urls", prompt.messages[0].content.text)
+        self.assertIn("notion_open_binding_browser", prompt.messages[0].content.text)
         self.assertIn("Never echo the secret back", prompt.messages[0].content.text)
         self.assertIn("POST /v1/pages with markdown", use_bound_prompt.messages[0].content.text)
 

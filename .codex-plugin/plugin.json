@@ -37,7 +37,8 @@
       "If the project is not authenticated, use notion_prepare_internal_integration first so the user can get the Internal Integration Secret and inspect storage_options, storage_default, and storage_choice_required.",
       "If storage_choice_required is true, ask whether the user wants keychain or 1password before calling notion_configure_internal_integration.",
       "Use notion_configure_internal_integration to validate and store the secret with the chosen storage value.",
-      "Use notion_search_resources before binding pages or data sources.",
+      "Before choosing a binding UX, inspect notion_status.binding_recommendation and notion_status.binding_options.",
+      "Ask whether the user can paste exact Notion links. If yes, prefer notion_bind_resource_urls. If not and the environment is desktop-capable, prefer notion_open_binding_browser. Otherwise use notion_search_resources plus notion_discover_children and then notion_bind_resources.",
       "Use notion_status or doctor for health checks, and return the official Notion API headers and bound resource IDs only when direct API calls are actually needed."
     ],
     "brandColor": "#c4532d",

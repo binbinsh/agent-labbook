@@ -28,11 +28,13 @@ It is not a general Notion wrapper or task-management layer.
 5. Use `notion_configure_internal_integration` to validate and store the secret with the chosen `storage` value.
 6. Prefer `op_vault` and `op_item_title` only when the user explicitly cares about where the 1Password item is stored.
 7. Remind the user to share the target pages or data sources with the integration bot inside Notion.
-8. Use `notion_search_resources` to discover accessible pages or data sources.
-9. Call `notion_bind_resources` with the explicit roots the project should use.
-10. Read `labbook://agent-labbook/project/bindings` or call `notion_list_bindings` when you need the current explicit roots and aliases.
-11. Call `notion_get_api_context` only when you are ready to use the official Notion API.
-12. Use the official Notion API directly with the returned token, headers, and resource IDs.
+8. Read `notion_status.binding_recommendation` and `notion_status.binding_options` before choosing a binding UX.
+9. Ask whether the user can paste exact Notion links. If yes, prefer `notion_bind_resource_urls`.
+10. If not, prefer `notion_open_binding_browser` on desktop-capable environments.
+11. In headless environments, use `notion_search_resources`, `notion_discover_children`, and then `notion_bind_resources`.
+12. Read `labbook://agent-labbook/project/bindings` or call `notion_list_bindings` when you need the current explicit roots and aliases.
+13. Call `notion_get_api_context` only when you are ready to use the official Notion API.
+14. Use the official Notion API directly with the returned token, headers, and resource IDs.
 
 ## Direct API Rules
 

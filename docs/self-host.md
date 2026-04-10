@@ -78,7 +78,8 @@ If you prefer 1Password, keep the MCP config simple and let the runtime store th
 3. If `storage_choice_required=true`, ask the user whether they want `keychain` or `1password`.
 4. Configure the Internal Integration secret with `notion_configure_internal_integration` or set `NOTION_AGENT_LABBOOK_TOKEN`.
 5. Share the target pages or data sources with the integration bot in Notion.
-6. Call `notion_search_resources` to confirm the bot can see the content.
-7. Call `notion_bind_resources`.
-8. Read `labbook://agent-labbook/project/bindings` or call `notion_list_bindings`.
-9. Call `notion_get_api_context` only when you are ready to use the official Notion API.
+6. If you already know the exact Notion links, call `notion_bind_resource_urls`.
+7. On desktop machines, use `notion_open_binding_browser`.
+8. On headless machines, prefer `notion_bind_resource_urls` when the user can paste exact links. Otherwise combine `notion_search_resources`, `notion_discover_children`, and `notion_bind_resources`.
+9. Read `labbook://agent-labbook/project/bindings` or call `notion_list_bindings`.
+10. Call `notion_get_api_context` only when you are ready to use the official Notion API.

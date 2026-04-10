@@ -56,10 +56,20 @@ Or use the checked-in [`.mcp.json`](./.mcp.json) for local development from a cl
 2. Run `notion_prepare_internal_integration` to open the Notion integrations dashboard and inspect `storage_options`, `storage_default`, and `storage_choice_required`.
 3. Create a Notion Internal Integration, copy its secret from the `Configuration` tab, and share the target pages or data sources with the bot in Notion.
 4. Save the secret with `notion_configure_internal_integration`, choosing `storage=keychain` or `storage=1password`, or set `NOTION_AGENT_LABBOOK_TOKEN`.
-5. Run `notion_search_resources` to find accessible content.
-6. Run `notion_bind_resources` to bind the pages or data sources this project should use.
-7. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` to inspect the bound roots.
-8. Run `notion_get_api_context` and use the returned token, headers, and resource IDs with the official Notion API.
+5. If you already know the exact Notion links, use `notion_bind_resource_urls`.
+6. On desktop machines, use `notion_open_binding_browser` for a local chooser.
+7. In headless environments, prefer `notion_bind_resource_urls` when the user can paste exact Notion links. Otherwise combine `notion_search_resources`, `notion_discover_children`, and `notion_bind_resources`.
+8. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` to inspect the bound roots.
+9. Run `notion_get_api_context` and use the returned token, headers, and resource IDs with the official Notion API.
+
+## Binding Options
+
+- Direct URLs
+  Use `notion_bind_resource_urls` when the user already has exact page or data source links.
+- Local browser chooser
+  Use `notion_open_binding_browser` on desktop machines to search, expand child pages, and bind multiple roots visually.
+- Headless MCP flow
+  On SSH or other headless environments, use `notion_bind_resource_urls` when the user can paste exact links. If they cannot, use `notion_search_resources`, `notion_discover_children`, and then `notion_bind_resources`.
 
 ## Save The Secret
 
@@ -103,7 +113,9 @@ The recommended user-facing flow for agents is:
 4. Tell the user to copy the `Internal Integration Secret` from Notion's `Configuration` tab.
 5. Call `notion_configure_internal_integration`.
 6. Tell the user to share the target pages or data sources with the integration bot.
-7. Call `notion_search_resources` and then `notion_bind_resources`.
+7. Prefer `notion_bind_resource_urls` when the user pastes exact Notion links.
+8. On desktop machines, use `notion_open_binding_browser` for tree-style selection. In headless environments, prefer `notion_bind_resource_urls` when the user can paste exact links.
+9. Otherwise call `notion_search_resources`, optionally `notion_discover_children`, and then `notion_bind_resources`.
 
 Do not call `notion_get_api_context` just to check whether the setup worked. That tool returns the secret and should only be used when the client is ready to make real Notion API calls.
 

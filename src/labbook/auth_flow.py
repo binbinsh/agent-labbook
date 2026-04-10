@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +20,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in local import envi
 
 
 from . import __version__
+from .binding_ops import build_list_bindings_payload
 from .notion_api import NOTION_API_BASE, NotionClient
 from .state import (
     DEFAULT_NOTION_VERSION,
@@ -30,29 +30,21 @@ from .state import (
     bindings_path,
     clear_project_bindings,
     clear_project_session,
-    load_project_bindings,
     load_project_session,
-    normalize_notion_id,
     resolve_project_root,
-    save_project_bindings,
     save_project_session,
     session_path,
 )
 
 
-CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
+CLIENT_USER_AGENT = (
+    f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
+)
 SETUP_GUIDE_RESOURCE_URI = "labbook://agent-labbook/setup-guide"
 STATUS_RESOURCE_URI = "labbook://agent-labbook/project/status"
 BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
-STATUS_RESOURCE_TEMPLATE = (
-    "labbook://agent-labbook/project/status{?project_root}"
-)
-BINDINGS_RESOURCE_TEMPLATE = (
-    "labbook://agent-labbook/project/bindings{?project_root}"
-)
-DEFAULT_SEARCH_PAGE_SIZE = 25
-MIN_SEARCH_PAGE_SIZE = 1
-MAX_SEARCH_PAGE_SIZE = 100
+STATUS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/status{?project_root}"
+BINDINGS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/bindings{?project_root}"
 DEFAULT_NOTION_INTEGRATIONS_URL = "https://www.notion.so/my-integrations"
 NOTION_INTEGRATION_GUIDE_URL = (
     "https://developers.notion.com/guides/get-started/create-a-notion-integration"
@@ -64,86 +56,6 @@ SUPPORTED_STORAGE_BACKENDS = ("keychain", "1password")
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def normalize_search_page_size(page_size: int | str | None = None) -> int:
-    if page_size in (None, ""):
-        return DEFAULT_SEARCH_PAGE_SIZE
-    try:
-        limit = int(page_size)
-    except (TypeError, ValueError) as exc:
-        raise LabbookError("page_size must be an integer number of results.") from exc
-    return min(max(limit, MIN_SEARCH_PAGE_SIZE), MAX_SEARCH_PAGE_SIZE)
-
-
-def _rich_text_to_plain_text(items: Any) -> str | None:
-    if not isinstance(items, list):
-        return None
-    text = "".join(
-        str(item.get("plain_text") or "") for item in items if isinstance(item, dict)
-    ).strip()
-    return text or None
-
-
-def _resource_title(resource: dict[str, Any]) -> str | None:
-    object_type = str(resource.get("object") or "").strip().lower()
-    properties = resource.get("properties")
-    if object_type == "page":
-        title = _rich_text_to_plain_text(resource.get("title"))
-        if title:
-            return title
-        if isinstance(properties, dict):
-            for value in properties.values():
-                if isinstance(value, dict) and value.get("type") == "title":
-                    title = _rich_text_to_plain_text(value.get("title"))
-                    if title:
-                        return title
-    if object_type in {"data_source", "database"}:
-        title = _rich_text_to_plain_text(resource.get("title"))
-        if title:
-            return title
-    title = str(resource.get("name") or "").strip()
-    return title or None
-
-
-def _resource_type(resource: dict[str, Any]) -> str:
-    raw = (
-        str(resource.get("object") or resource.get("resource_type") or "")
-        .strip()
-        .lower()
-    )
-    if raw == "database":
-        return "data_source"
-    if raw in {"page", "data_source"}:
-        return raw
-    return "unknown"
-
-
-def _endpoint_for_resource(resource_type: str | None, resource_id: str) -> str | None:
-    clean_id = normalize_notion_id(resource_id)
-    if resource_type == "page":
-        return f"{NOTION_API_BASE}/pages/{clean_id}"
-    if resource_type == "data_source":
-        return f"{NOTION_API_BASE}/data_sources/{clean_id}"
-    return None
-
-
-def _slugify_alias(text: str, *, fallback: str) -> str:
-    candidate = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower()).strip("-")
-    return candidate or fallback
-
-
-def _normalize_selection_scope(value: Any) -> str:
-    clean_value = str(value or "resource").strip().lower()
-    if clean_value not in {"resource", "subtree"}:
-        raise LabbookError("selection_scope must be 'resource' or 'subtree'.")
-    return clean_value
-
-
-def _default_resource_alias(resources: list[dict[str, Any]]) -> str | None:
-    if len(resources) != 1:
-        return None
-    return str(resources[0].get("alias") or "").strip() or None
 
 
 def _build_setup_guide() -> str:
@@ -161,8 +73,10 @@ def _build_setup_guide() -> str:
             "4. Choose a storage backend: system keychain or 1Password.",
             "5. Store the secret with `notion_configure_internal_integration`, or provide it via the `NOTION_AGENT_LABBOOK_TOKEN` environment variable.",
             "6. Share the target Notion pages or data sources with the integration bot inside Notion.",
-            "7. Use `notion_search_resources` to discover accessible content, then `notion_bind_resources` to bind the pages or data sources this project should use.",
-            "8. Call `notion_get_api_context` only when you are ready to use the official Notion API.",
+            "7. If you already know the exact Notion links, use `notion_bind_resource_urls`.",
+            "8. On desktop machines, use `notion_open_binding_browser` for a local chooser.",
+            "9. In headless environments, use `notion_search_resources`, `notion_discover_children`, and `notion_bind_resources`.",
+            "10. Call `notion_get_api_context` only when you are ready to use the official Notion API.",
             "",
             "## Security Notes",
             "",
@@ -532,11 +446,7 @@ def _store_token_in_onepassword(
     if vault:
         create_arguments.extend(["--vault", vault])
     create_arguments.extend(
-        [
-            "--tags",
-            "agent-labbook,notion,internal-integration",
-            "-",
-        ]
+        ["--tags", "agent-labbook,notion,internal-integration", "-"]
     )
     created_payload, create_error = _op_command(
         create_arguments,
@@ -601,9 +511,7 @@ def _store_token_in_onepassword(
 
 
 def _delete_token_from_keyring(session_payload: dict[str, Any] | None) -> bool:
-    if keyring is None:
-        return False
-    if not isinstance(session_payload, dict):
+    if keyring is None or not isinstance(session_payload, dict):
         return False
     service_name = str(session_payload.get("keyring_service") or "").strip()
     account = str(session_payload.get("keyring_account") or "").strip()
@@ -648,10 +556,7 @@ def _keyring_token(
     except KeyringError as exc:
         return None, str(exc)
     if not token:
-        return (
-            None,
-            "The stored Notion integration secret could not be found in keyring.",
-        )
+        return None, "The stored Notion integration secret could not be found in keyring."
     return token, None
 
 
@@ -675,10 +580,7 @@ def _onepassword_token(
         return None, error
     clean_token = str(token or "").strip()
     if not clean_token:
-        return (
-            None,
-            "The stored Notion integration secret could not be read from 1Password.",
-        )
+        return None, "The stored Notion integration secret could not be read from 1Password."
     return clean_token, None
 
 
@@ -754,115 +656,6 @@ def _notion_client(
 ) -> tuple[NotionClient, dict[str, Any]]:
     context = _require_token_context(project_root)
     return NotionClient(token=str(context["token"])), context
-
-
-def _normalize_notion_resource(resource: dict[str, Any]) -> dict[str, Any] | None:
-    resource_type = _resource_type(resource)
-    if resource_type not in {"page", "data_source"}:
-        return None
-    resource_id = normalize_notion_id(
-        str(resource.get("id") or resource.get("resource_id") or "")
-    )
-    title = _resource_title(resource) or resource_id
-    resource_url = (
-        str(resource.get("url") or resource.get("resource_url") or "").strip() or None
-    )
-    return {
-        "resource_id": resource_id,
-        "resource_type": resource_type,
-        "resource_url": resource_url,
-        "title": title,
-        "last_edited_time": resource.get("last_edited_time"),
-        "parent": resource.get("parent"),
-    }
-
-
-def _normalize_binding_entry(
-    *,
-    resource_id: str,
-    resource_type: str,
-    resource_url: str | None,
-    title: str | None,
-    alias: str | None,
-    selection_scope: str | None = None,
-    source: str = "manual_bind",
-    bound_at: str | None = None,
-) -> dict[str, Any]:
-    clean_id = normalize_notion_id(resource_id)
-    clean_type = str(resource_type or "").strip().lower()
-    if clean_type == "database":
-        clean_type = "data_source"
-    if clean_type not in {"page", "data_source"}:
-        raise LabbookError("resource_type must be 'page' or 'data_source'.")
-    clean_title = str(title or clean_id).strip() or clean_id
-    clean_alias = _slugify_alias(alias or clean_title, fallback=clean_type)
-    clean_url = str(resource_url or "").strip() or _endpoint_for_resource(
-        clean_type, clean_id
-    )
-    return {
-        "alias": clean_alias,
-        "resource_id": clean_id,
-        "resource_type": clean_type,
-        "resource_url": clean_url,
-        "title": clean_title,
-        "source": source,
-        "bound_at": bound_at or _utc_now(),
-        "selection_scope": _normalize_selection_scope(selection_scope),
-    }
-
-
-def _existing_bindings(project_root: Path) -> list[dict[str, Any]]:
-    bindings_payload = load_project_bindings(project_root) or {}
-    resources = bindings_payload.get("resources")
-    if not isinstance(resources, list):
-        return []
-    return [item for item in resources if isinstance(item, dict)]
-
-
-def _alias_for_resource(
-    *,
-    resource_id: str,
-    proposed_alias: str,
-    used_aliases: set[str],
-    alias_owner: dict[str, str],
-) -> str:
-    if (
-        proposed_alias not in used_aliases
-        or alias_owner.get(proposed_alias) == resource_id
-    ):
-        used_aliases.add(proposed_alias)
-        alias_owner[proposed_alias] = resource_id
-        return proposed_alias
-
-    suffix = 2
-    while True:
-        candidate = f"{proposed_alias}-{suffix}"
-        if candidate not in used_aliases:
-            used_aliases.add(candidate)
-            alias_owner[candidate] = resource_id
-            return candidate
-        suffix += 1
-
-
-def _sorted_bindings(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(
-        resources,
-        key=lambda item: (
-            str(item.get("title") or "").lower(),
-            str(item.get("resource_type") or "").lower(),
-            str(item.get("resource_id") or "").lower(),
-        ),
-    )
-
-
-def _bindings_payload(
-    project_root: Path, resources: list[dict[str, Any]]
-) -> dict[str, Any]:
-    return {
-        "project_root": str(project_root),
-        "default_resource_alias": _default_resource_alias(resources),
-        "resources": _sorted_bindings(resources),
-    }
 
 
 def prepare_internal_integration(
@@ -947,7 +740,7 @@ def configure_internal_integration(
                 item_title=op_item_title,
             )
         )
-    else:  # pragma: no cover - resolved backend is validated above
+    else:  # pragma: no cover
         raise LabbookError(f"Unsupported storage backend: {resolved_backend}")
 
     save_project_session(root, _session_payload(**session_kwargs))
@@ -969,157 +762,11 @@ def configure_internal_integration(
     }
 
 
-def search_resources(
-    *,
-    project_root: str | Path | None = None,
-    query: str | None = None,
-    page_size: int | str | None = None,
-) -> dict[str, Any]:
-    page_limit = normalize_search_page_size(page_size)
-    client, context = _notion_client(project_root)
-    payload = client.search(query=query, page_size=page_limit)
-    results: list[dict[str, Any]] = []
-    for item in payload.get("results", []):
-        if not isinstance(item, dict):
-            continue
-        normalized = _normalize_notion_resource(item)
-        if normalized is not None:
-            results.append(normalized)
-    return {
-        "project_root": str(context["project_root"]),
-        "query": str(query or "").strip() or None,
-        "page_size": page_limit,
-        "result_count": len(results),
-        "results": results,
-    }
-
-
-def _normalize_resource_input(item: dict[str, Any]) -> dict[str, str | None]:
-    resource_ref = str(
-        item.get("resource_id_or_url")
-        or item.get("resource_id")
-        or item.get("resource_url")
-        or ""
-    ).strip()
-    if not resource_ref:
-        raise LabbookError(
-            "Each resource_refs item must include resource_id_or_url, resource_id, or resource_url."
-        )
-    resource_id = normalize_notion_id(resource_ref)
-    resource_type = str(item.get("resource_type") or "").strip().lower() or None
-    if resource_type == "database":
-        resource_type = "data_source"
-    if resource_type not in {None, "page", "data_source"}:
-        raise LabbookError("resource_type must be 'page' or 'data_source'.")
-    alias = str(item.get("alias") or "").strip() or None
-    title = str(item.get("title") or "").strip() or None
-    selection_scope = _normalize_selection_scope(item.get("selection_scope"))
-    return {
-        "resource_id": resource_id,
-        "resource_type": resource_type,
-        "resource_url": str(item.get("resource_url") or "").strip() or None,
-        "alias": alias,
-        "title": title,
-        "selection_scope": selection_scope,
-    }
-
-
-def bind_resources(
-    *,
-    resource_refs: list[dict[str, Any]],
-    project_root: str | Path | None = None,
-    default_alias: str | None = None,
-) -> dict[str, Any]:
-    if not resource_refs:
-        raise LabbookError("resource_refs must contain at least one resource.")
-
-    client, context = _notion_client(project_root)
-    root = Path(context["project_root"])
-    existing_resources = _existing_bindings(root)
-    by_resource_id = {
-        str(item.get("resource_id")): dict(item)
-        for item in existing_resources
-        if isinstance(item.get("resource_id"), str)
-    }
-
-    for index, raw_item in enumerate(resource_refs):
-        if not isinstance(raw_item, dict):
-            raise LabbookError("Each item in resource_refs must be an object.")
-        normalized_input = _normalize_resource_input(raw_item)
-        resource = client.retrieve_resource(
-            normalized_input["resource_id"] or "",
-            normalized_input["resource_type"],
-        )
-        normalized_resource = _normalize_notion_resource(resource)
-        if normalized_resource is None:
-            raise LabbookError(
-                f"Resource {normalized_input['resource_id']} is not a page or data source."
-            )
-
-        fallback_alias = (
-            default_alias if len(resource_refs) == 1 and default_alias else None
-        )
-        previous = by_resource_id.get(normalized_resource["resource_id"])
-        by_resource_id[normalized_resource["resource_id"]] = _normalize_binding_entry(
-            resource_id=normalized_resource["resource_id"],
-            resource_type=normalized_input["resource_type"]
-            or normalized_resource["resource_type"],
-            resource_url=normalized_input["resource_url"]
-            or normalized_resource["resource_url"],
-            title=normalized_input["title"] or normalized_resource["title"],
-            alias=normalized_input["alias"]
-            or fallback_alias
-            or (previous or {}).get("alias")
-            or f"resource-{index + 1}",
-            selection_scope=normalized_input["selection_scope"],
-            source="manual_bind",
-            bound_at=(previous or {}).get("bound_at"),
-        )
-
-    final_resources = _sorted_bindings(list(by_resource_id.values()))
-    used_aliases: set[str] = set()
-    alias_owner: dict[str, str] = {}
-    for resource in final_resources:
-        resource["alias"] = _alias_for_resource(
-            resource_id=str(resource["resource_id"]),
-            proposed_alias=_slugify_alias(
-                str(resource["alias"]), fallback=str(resource["resource_type"])
-            ),
-            used_aliases=used_aliases,
-            alias_owner=alias_owner,
-        )
-
-    payload = _bindings_payload(root, final_resources)
-    save_project_bindings(root, payload)
-    return {
-        "project_root": str(root),
-        "default_resource_alias": payload["default_resource_alias"],
-        "resource_count": len(final_resources),
-        "resources": final_resources,
-    }
-
-
-def list_bindings(project_root: str | Path | None = None) -> dict[str, Any]:
-    root = resolve_project_root(project_root)
-    payload = load_project_bindings(root) or _bindings_payload(root, [])
-    resources = payload.get("resources")
-    if not isinstance(resources, list):
-        resources = []
-    return {
-        "project_root": str(root),
-        "default_resource_alias": payload.get("default_resource_alias"),
-        "resource_count": len(resources),
-        "resources": resources,
-    }
-
-
 def _authentication_hint(token_context: dict[str, Any]) -> str:
     if token_context["token_source"] == "env":
         return f"Using {TOKEN_ENV_VAR} from the environment for this process."
     if token_context["token_source"] == "keychain":
-        return (
-            "Using the Internal Integration secret stored in the local system keychain."
-        )
+        return "Using the Internal Integration secret stored in the local system keychain."
     if token_context["token_source"] == "1password":
         return "Using the Internal Integration secret stored in 1Password."
     return (
@@ -1136,12 +783,136 @@ def _storage_hint(storage_options: list[dict[str, Any]]) -> str:
     if not available_names:
         return f"No supported local storage backend is available. Use {TOKEN_ENV_VAR}."
     if len(available_names) == 1:
-        backend = available_names[0]
-        return f"{backend} is the only available local storage backend on this machine."
+        return f"{available_names[0]} is the only available local storage backend on this machine."
     return (
         "More than one local storage backend is available. Ask the user whether they want "
         "system keychain or 1Password, then pass storage explicitly."
     )
+
+
+def _binding_option(
+    *,
+    mode: str,
+    label: str,
+    available: bool,
+    recommended: bool,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "label": label,
+        "available": available,
+        "recommended": recommended,
+        "reason": reason,
+    }
+
+
+def _likely_headless_environment() -> bool:
+    for env_name in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "CI"):
+        if str(os.environ.get(env_name) or "").strip():
+            return True
+    return False
+
+
+def _binding_recommendation(
+    *,
+    authenticated: bool,
+    likely_headless: bool,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not authenticated:
+        reason = (
+            "Finish configuring the Internal Integration secret first. Binding choices matter only after Notion auth succeeds."
+        )
+        recommendation = {"mode": "wait_for_auth", "reason": reason}
+        options = [
+            _binding_option(
+                mode="url",
+                label="Paste exact links",
+                available=False,
+                recommended=False,
+                reason="Requires an authenticated Notion integration before binding can succeed.",
+            ),
+            _binding_option(
+                mode="local_browser",
+                label="Open local chooser",
+                available=False,
+                recommended=False,
+                reason="Requires an authenticated Notion integration before binding can succeed.",
+            ),
+            _binding_option(
+                mode="manual_mcp",
+                label="Search in chat",
+                available=False,
+                recommended=False,
+                reason="Requires an authenticated Notion integration before binding can succeed.",
+            ),
+        ]
+        return recommendation, options
+
+    if likely_headless:
+        recommendation = {
+            "mode": "url",
+            "reason": "This environment looks headless, so asking for exact Notion links first is the lowest-friction path.",
+        }
+        options = [
+            _binding_option(
+                mode="url",
+                label="Paste exact links",
+                available=True,
+                recommended=True,
+                reason="Best default for headless or SSH sessions.",
+            ),
+            _binding_option(
+                mode="local_browser",
+                label="Open local chooser",
+                available=False,
+                recommended=False,
+                reason="A local browser chooser is not the default in headless environments.",
+            ),
+            _binding_option(
+                mode="manual_mcp",
+                label="Search in chat",
+                available=True,
+                recommended=False,
+                reason="Use search plus child discovery when the user cannot provide exact links.",
+            ),
+        ]
+        return recommendation, options
+
+    recommendation = {
+        "mode": "local_browser",
+        "reason": "This environment looks desktop-capable, so the local browser chooser is the best default for picking from many pages and child pages.",
+    }
+    options = [
+        _binding_option(
+            mode="url",
+            label="Paste exact links",
+            available=True,
+            recommended=False,
+            reason="Fastest path when the user already knows the exact Notion URLs.",
+        ),
+        _binding_option(
+            mode="local_browser",
+            label="Open local chooser",
+            available=True,
+            recommended=True,
+            reason="Best default on desktop when the user needs to search and inspect nested content.",
+        ),
+        _binding_option(
+            mode="manual_mcp",
+            label="Search in chat",
+            available=True,
+            recommended=False,
+            reason="Useful fallback when the browser chooser is inconvenient or unavailable.",
+        ),
+    ]
+    return recommendation, options
+
+
+def _binding_question(*, likely_headless: bool) -> str:
+    if likely_headless:
+        return "Can you paste one or more exact Notion links? If not, I can search and narrow the tree here in chat."
+    return "Can you paste one or more exact Notion links, or do you want me to open the local chooser?"
 
 
 def _secret_plan(
@@ -1189,7 +960,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     token_context = _token_context(project_root)
     root = Path(token_context["project_root"])
     session_payload = token_context["session"] or {}
-    bindings_payload = load_project_bindings(root) or _bindings_payload(root, [])
+    bindings_payload = build_list_bindings_payload(root)
     resources = bindings_payload.get("resources")
     if not isinstance(resources, list):
         resources = []
@@ -1201,6 +972,11 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         storage_default=storage_default,
     )
     authenticated = bool(token_context["token"])
+    likely_headless = _likely_headless_environment()
+    binding_recommendation, binding_options = _binding_recommendation(
+        authenticated=authenticated,
+        likely_headless=likely_headless,
+    )
     if not authenticated:
         recommended_action = "notion_prepare_internal_integration"
     elif resources:
@@ -1244,12 +1020,16 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "authentication_hint": _authentication_hint(token_context),
         "storage_hint": _storage_hint(storage_options),
         "binding_hint": (
-            "Use notion_search_resources to find pages or data sources the bot can access, then bind them with notion_bind_resources."
+            "Ask whether the user can paste exact Notion links. If not, default to the local browser chooser on desktop, or use MCP search plus child discovery in headless environments."
             if authenticated and not resources
             else "Read notion_list_bindings before making API calls."
             if resources
             else "No Notion secret is configured yet."
         ),
+        "likely_headless": likely_headless,
+        "binding_recommendation": binding_recommendation,
+        "binding_options": binding_options,
+        "binding_question": _binding_question(likely_headless=likely_headless),
         "setup_resource_uri": SETUP_GUIDE_RESOURCE_URI,
         "available_env_var": TOKEN_ENV_VAR,
         "notion_integrations_url": DEFAULT_NOTION_INTEGRATIONS_URL,
@@ -1259,15 +1039,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
 
 
 def project_status_resource(project_root: str | Path | None = None) -> str:
-    return json.dumps(
-        status(project_root), ensure_ascii=False, indent=2, sort_keys=True
-    )
-
-
-def project_bindings_resource(project_root: str | Path | None = None) -> str:
-    return json.dumps(
-        list_bindings(project_root), ensure_ascii=False, indent=2, sort_keys=True
-    )
+    return json.dumps(status(project_root), ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def clear_project_auth(
@@ -1301,7 +1073,7 @@ def clear_project_auth(
 
 def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
     token_context = _require_token_context(project_root)
-    bindings_payload = list_bindings(token_context["project_root"])
+    bindings_payload = build_list_bindings_payload(token_context["project_root"])
     session_payload = token_context["session"] or {}
     token = str(token_context["token"])
     return {
@@ -1327,3 +1099,9 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
             "selection_scope='subtree' means the resource is treated as a root and nested content is implicitly included."
         ),
     }
+
+
+def notion_client_for_project(
+    project_root: str | Path | None = None,
+) -> tuple[NotionClient, dict[str, Any]]:
+    return _notion_client(project_root)

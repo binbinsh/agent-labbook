@@ -12,25 +12,30 @@ from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 
 from . import __version__
-from .service import (
+from .auth_flow import (
     BINDINGS_RESOURCE_TEMPLATE,
     BINDINGS_RESOURCE_URI,
-    DEFAULT_SEARCH_PAGE_SIZE,
     SETUP_GUIDE_RESOURCE_URI,
     STATUS_RESOURCE_TEMPLATE,
     STATUS_RESOURCE_URI,
-    bind_resources,
     clear_project_auth,
     configure_internal_integration,
     get_api_context,
-    list_bindings,
     prepare_internal_integration,
-    project_bindings_resource,
     project_status_resource,
-    search_resources,
     setup_guide,
     status,
 )
+from .binding_ops import (
+    DEFAULT_SEARCH_PAGE_SIZE,
+    bind_resource_urls,
+    bind_resources,
+    discover_children,
+    list_bindings,
+    project_bindings_resource_text,
+    search_resources,
+)
+from .binding_ui import start_binding_browser
 from .state import LabbookError, TOKEN_ENV_VAR
 
 
@@ -188,6 +193,33 @@ def _secret_plan_schema() -> dict[str, Any]:
     )
 
 
+def _binding_option_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "mode": _string_schema(
+                enum=["wait_for_auth", "url", "local_browser", "manual_mcp"]
+            ),
+            "label": _string_schema(),
+            "available": _boolean_schema(),
+            "recommended": _boolean_schema(),
+            "reason": _string_schema(),
+        },
+        required=["mode", "label", "available", "recommended", "reason"],
+    )
+
+
+def _binding_recommendation_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "mode": _string_schema(
+                enum=["wait_for_auth", "url", "local_browser", "manual_mcp"]
+            ),
+            "reason": _string_schema(),
+        },
+        required=["mode", "reason"],
+    )
+
+
 def _status_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
@@ -224,6 +256,9 @@ def _status_output_schema() -> dict[str, Any]:
             "authentication_hint": _string_schema(),
             "storage_hint": _string_schema(),
             "binding_hint": _string_schema(),
+            "likely_headless": _boolean_schema(),
+            "binding_recommendation": _binding_recommendation_schema(),
+            "binding_options": _array_schema(_binding_option_schema()),
             "setup_resource_uri": _string_schema(),
             "available_env_var": _string_schema(),
             "notion_integrations_url": _string_schema(),
@@ -249,6 +284,9 @@ def _status_output_schema() -> dict[str, Any]:
             "authentication_hint",
             "storage_hint",
             "binding_hint",
+            "likely_headless",
+            "binding_recommendation",
+            "binding_options",
             "setup_resource_uri",
             "available_env_var",
             "notion_integrations_url",
@@ -358,6 +396,49 @@ def _search_output_schema() -> dict[str, Any]:
     )
 
 
+def _discovery_result_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "resource_id": _string_schema(),
+            "resource_type": _string_schema(enum=["page", "data_source"]),
+            "resource_url": _nullable(_string_schema()),
+            "title": _string_schema(),
+            "last_edited_time": _nullable(_string_schema()),
+            "parent": _nullable(_object_schema({}, additional_properties=True)),
+            "parent_type": _nullable(_string_schema()),
+            "parent_id": _nullable(_string_schema()),
+            "parent_database_id": _nullable(_string_schema()),
+            "discovered_parent_id": _nullable(_string_schema()),
+            "discovered_root_id": _nullable(_string_schema()),
+            "discovered_depth": _nullable(_integer_schema()),
+        },
+        required=["resource_id", "resource_type", "title"],
+    )
+
+
+def _discovery_output_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "project_root": _string_schema(),
+            "root_resource": _discovery_result_schema(),
+            "page_size": _integer_schema(),
+            "mode": _string_schema(enum=["shallow", "deep"]),
+            "partial": _boolean_schema(),
+            "result_count": _integer_schema(),
+            "results": _array_schema(_discovery_result_schema()),
+        },
+        required=[
+            "project_root",
+            "root_resource",
+            "page_size",
+            "mode",
+            "partial",
+            "result_count",
+            "results",
+        ],
+    )
+
+
 def _bindings_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
@@ -367,6 +448,32 @@ def _bindings_output_schema() -> dict[str, Any]:
             "resources": _array_schema(_binding_resource_schema()),
         },
         required=["project_root", "resource_count", "resources"],
+    )
+
+
+def _binding_browser_output_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "project_root": _string_schema(),
+            "chooser_url": _string_schema(),
+            "browser_opened": _boolean_schema(),
+            "open_browser_attempted": _boolean_schema(),
+            "timeout_seconds": _integer_schema(),
+            "page_size": _integer_schema(),
+            "workspace_name": _nullable(_string_schema()),
+            "recommended_next_action": _string_schema(),
+            "headless_flow_hint": _string_schema(),
+        },
+        required=[
+            "project_root",
+            "chooser_url",
+            "browser_opened",
+            "open_browser_attempted",
+            "timeout_seconds",
+            "page_size",
+            "recommended_next_action",
+            "headless_flow_hint",
+        ],
     )
 
 
@@ -434,8 +541,8 @@ def _setup_guide_tool_payload() -> ToolSuccessResult:
     )
 
 
-def _tool_definitions() -> list[types.Tool]:
-    resource_ref_schema: dict[str, Any] = {
+def _binding_resource_ref_schema() -> dict[str, Any]:
+    return {
         "type": "object",
         "properties": {
             "resource_id_or_url": {"type": "string"},
@@ -450,6 +557,119 @@ def _tool_definitions() -> list[types.Tool]:
             "selection_scope": {"type": "string", "enum": ["resource", "subtree"]},
         },
     }
+
+
+def _binding_tool_definitions() -> list[types.Tool]:
+    resource_ref_schema = _binding_resource_ref_schema()
+    return [
+        _tool(
+            name="notion_search_resources",
+            title="Search Notion Resources",
+            description=(
+                "Search the pages and data sources that the Internal Integration bot can access. "
+                f"Defaults to {DEFAULT_SEARCH_PAGE_SIZE} results."
+            ),
+            properties={
+                "project_root": {"type": "string"},
+                "query": {"type": "string"},
+                "page_size": {"type": "integer"},
+            },
+            output_schema=_search_output_schema(),
+            read_only=True,
+            destructive=False,
+            idempotent=True,
+            open_world=True,
+        ),
+        _tool(
+            name="notion_discover_children",
+            title="Discover Immediate Children",
+            description=(
+                "Inspect the immediate child pages or entries beneath a specific page or data source. "
+                "Useful for tree-based binding UIs and MCP-driven selection flows."
+            ),
+            properties={
+                "project_root": {"type": "string"},
+                "resource_id_or_url": {"type": "string"},
+                "resource_type": {
+                    "type": "string",
+                    "enum": ["page", "data_source", "database"],
+                },
+                "limit": {"type": "integer"},
+                "mode": {"type": "string", "enum": ["shallow", "deep"]},
+            },
+            required=["resource_id_or_url"],
+            output_schema=_discovery_output_schema(),
+            read_only=True,
+            destructive=False,
+            idempotent=True,
+            open_world=True,
+        ),
+        _tool(
+            name="notion_bind_resource_urls",
+            title="Bind Resource URLs",
+            description=(
+                "Bind one or more Notion page or data source URLs directly. "
+                "This is the fastest path when the user already knows the exact Notion links."
+            ),
+            properties={
+                "project_root": {"type": "string"},
+                "resource_urls": _array_schema(_string_schema()),
+                "selection_scope": {
+                    "type": "string",
+                    "enum": ["resource", "subtree"],
+                },
+                "default_alias": {"type": "string"},
+            },
+            required=["resource_urls"],
+            output_schema=_bindings_output_schema(),
+            read_only=False,
+            destructive=True,
+            idempotent=False,
+            open_world=True,
+        ),
+        _tool(
+            name="notion_bind_resources",
+            title="Bind Resources",
+            description=(
+                "Bind one or more existing Notion pages or data sources to the current project using the "
+                "configured Internal Integration secret. Pass selection_scope='subtree' to mark a root "
+                "resource and treat nested content as included."
+            ),
+            properties={
+                "project_root": {"type": "string"},
+                "resource_refs": {"type": "array", "items": resource_ref_schema},
+                "default_alias": {"type": "string"},
+            },
+            required=["resource_refs"],
+            output_schema=_bindings_output_schema(),
+            read_only=False,
+            destructive=True,
+            idempotent=False,
+            open_world=True,
+        ),
+        _tool(
+            name="notion_open_binding_browser",
+            title="Open Binding Browser",
+            description=(
+                "Start a local browser-based chooser for selecting Notion roots. "
+                "Use this on desktop machines; in headless environments use MCP search, discovery, and URL binding instead."
+            ),
+            properties={
+                "project_root": {"type": "string"},
+                "open_browser": {"type": "boolean"},
+                "timeout_seconds": {"type": "integer"},
+                "page_size": {"type": "integer"},
+            },
+            output_schema=_binding_browser_output_schema(),
+            read_only=False,
+            destructive=False,
+            idempotent=False,
+            open_world=True,
+        ),
+    ]
+
+
+def _tool_definitions() -> list[types.Tool]:
     return [
         _tool(
             name="notion_status",
@@ -510,44 +730,7 @@ def _tool_definitions() -> list[types.Tool]:
             idempotent=False,
             open_world=True,
         ),
-        _tool(
-            name="notion_search_resources",
-            title="Search Notion Resources",
-            description=(
-                "Search the pages and data sources that the Internal Integration bot can access. "
-                f"Defaults to {DEFAULT_SEARCH_PAGE_SIZE} results."
-            ),
-            properties={
-                "project_root": {"type": "string"},
-                "query": {"type": "string"},
-                "page_size": {"type": "integer"},
-            },
-            output_schema=_search_output_schema(),
-            read_only=True,
-            destructive=False,
-            idempotent=True,
-            open_world=True,
-        ),
-        _tool(
-            name="notion_bind_resources",
-            title="Bind Resources",
-            description=(
-                "Bind one or more existing Notion pages or data sources to the current project using the "
-                "configured Internal Integration secret. Pass selection_scope='subtree' to mark a root "
-                "resource and treat nested content as included."
-            ),
-            properties={
-                "project_root": {"type": "string"},
-                "resource_refs": {"type": "array", "items": resource_ref_schema},
-                "default_alias": {"type": "string"},
-            },
-            required=["resource_refs"],
-            output_schema=_bindings_output_schema(),
-            read_only=False,
-            destructive=True,
-            idempotent=False,
-            open_world=True,
-        ),
+        *_binding_tool_definitions(),
         _tool(
             name="notion_list_bindings",
             title="List Bindings",
@@ -585,6 +768,40 @@ def _tool_definitions() -> list[types.Tool]:
     ]
 
 
+def _binding_handlers() -> dict[str, ToolHandler]:
+    return {
+        "notion_search_resources": lambda args: search_resources(
+            project_root=args.get("project_root"),
+            query=args.get("query"),
+            page_size=args.get("page_size"),
+        ),
+        "notion_discover_children": lambda args: discover_children(
+            project_root=args.get("project_root"),
+            resource_id_or_url=str(args.get("resource_id_or_url") or ""),
+            resource_type=args.get("resource_type"),
+            limit=args.get("limit"),
+            mode=args.get("mode"),
+        ),
+        "notion_bind_resource_urls": lambda args: bind_resource_urls(
+            project_root=args.get("project_root"),
+            resource_urls=list(args.get("resource_urls") or []),
+            selection_scope=args.get("selection_scope") or "subtree",
+            default_alias=args.get("default_alias"),
+        ),
+        "notion_bind_resources": lambda args: bind_resources(
+            project_root=args.get("project_root"),
+            resource_refs=list(args.get("resource_refs") or []),
+            default_alias=args.get("default_alias"),
+        ),
+        "notion_open_binding_browser": lambda args: start_binding_browser(
+            project_root=args.get("project_root"),
+            open_browser=bool(args.get("open_browser", True)),
+            timeout_seconds=int(args.get("timeout_seconds") or 1800),
+            page_size=int(args.get("page_size") or DEFAULT_SEARCH_PAGE_SIZE),
+        ).payload(),
+    }
+
+
 def _handlers() -> dict[str, ToolHandler]:
     return {
         "notion_status": lambda args: status(project_root=args.get("project_root")),
@@ -604,16 +821,7 @@ def _handlers() -> dict[str, ToolHandler]:
                 op_item_title=args.get("op_item_title"),
             )
         ),
-        "notion_search_resources": lambda args: search_resources(
-            project_root=args.get("project_root"),
-            query=args.get("query"),
-            page_size=args.get("page_size"),
-        ),
-        "notion_bind_resources": lambda args: bind_resources(
-            project_root=args.get("project_root"),
-            resource_refs=list(args.get("resource_refs") or []),
-            default_alias=args.get("default_alias"),
-        ),
+        **_binding_handlers(),
         "notion_list_bindings": lambda args: list_bindings(
             project_root=args.get("project_root")
         ),
@@ -722,10 +930,12 @@ def _prompt_result(
                 "3. If notion_status.storage_choice_required is true, ask the user whether to store the secret in system keychain or 1Password.",
                 "4. Use notion_configure_internal_integration with the chosen storage value to validate and store the secret.",
                 "5. Remind the user to share the target pages or data sources with the integration bot inside Notion.",
-                "6. Use notion_search_resources to discover accessible pages or data sources.",
-                "7. Bind the relevant roots with notion_bind_resources.",
-                "8. Call notion_get_api_context only when you are ready to use the official Notion API.",
-                "9. Never echo the secret back to the user or store it in project files.",
+                "6. Read notion_status.binding_recommendation and notion_status.binding_options before choosing a binding UX.",
+                "7. Ask whether the user can paste exact Notion links. If yes, prefer notion_bind_resource_urls.",
+                "8. If not, default to notion_open_binding_browser on desktop-capable environments.",
+                "9. In headless environments, use notion_search_resources and notion_discover_children to narrow the tree, then bind the chosen roots with notion_bind_resources.",
+                "10. Call notion_get_api_context only when you are ready to use the official Notion API.",
+                "11. Never echo the secret back to the user or store it in project files.",
             ]
         )
     elif name == "notion_use_bound_resources":
@@ -839,7 +1049,7 @@ async def handle_read_resource(uri: Any) -> list[ReadResourceContents]:
         text = project_status_resource(project_root=project_root)
         mime_type = "application/json"
     elif base_uri == BINDINGS_RESOURCE_URI:
-        text = project_bindings_resource(project_root=project_root)
+        text = project_bindings_resource_text(project_root=project_root)
         mime_type = "application/json"
     else:
         raise LabbookError(f"Unknown resource: {raw_uri}")

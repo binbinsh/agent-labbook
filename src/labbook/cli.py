@@ -9,7 +9,7 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any
 
 from . import __version__
-from .service import status
+from .auth_flow import status
 from .state import (
     TOKEN_ENV_VAR,
     bindings_path,
