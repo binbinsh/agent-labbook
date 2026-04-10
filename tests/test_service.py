@@ -1,955 +1,395 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
-import json
-import os
 from unittest import mock
-import webbrowser
 
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from labbook.service import (
-    BROKER_API_VERSION,
-    BROKER_API_VERSIONS_HEADER,
-    DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
-    DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
-    MIN_BROWSER_AUTH_PAGE_LIMIT,
-    NOTION_ACCESS_BROKER_SRC_ENV_VAR,
-    _post_backend_json,
-    _bindings_from_selected_resources,
-    _candidate_notion_access_broker_src_paths,
-    _open_browser_url,
-    attach_saved_credential,
-    auth_browser,
+from labbook.service import (  # noqa: E402
+    DEFAULT_NOTION_INTEGRATIONS_URL,
+    DEFAULT_SEARCH_PAGE_SIZE,
+    NOTION_INTEGRATION_GUIDE_URL,
     bind_resources,
-    complete_headless_auth,
-    finalize_pending_auth,
+    clear_project_auth,
+    configure_internal_integration,
     get_api_context,
-    list_saved_credentials,
-    normalize_browser_auth_page_limit,
-    refresh_session,
-    selection_browser,
-    start_headless_auth,
+    prepare_internal_integration,
+    search_resources,
     status,
 )
-from labbook.state import (
-    DEFAULT_BACKEND_URL,
-    DEFAULT_OAUTH_BASE_URL,
+from labbook.state import (  # noqa: E402
+    KEYRING_SERVICE_NAME,
+    TOKEN_ENV_VAR,
     LabbookError,
-    clear_pending_auth,
-    effective_backend_url,
-    effective_oauth_base_url,
-    load_pending_auth,
-    load_pending_handoff,
+    load_project_bindings,
     load_project_session,
-    save_pending_handoff,
     save_project_bindings,
     save_project_session,
 )
 
 
-LOCAL_BROWSER_ENVIRONMENT = {
-    "preferred_browser_flow": "local_browser",
-    "recommended_open_browser": True,
-    "ssh_session_detected": False,
-    "display_detected": True,
-    "graphical_launcher_available": True,
-    "override_source": None,
-    "reason": "No remote-session warning was detected, so a same-machine browser flow is acceptable.",
-}
+BACKENDS_BOTH = [
+    {
+        "backend": "keychain",
+        "display_name": "System Keychain",
+        "available": True,
+        "selected_by_default": True,
+        "reason": None,
+        "details": {"keyring_backend": "Keyring"},
+    },
+    {
+        "backend": "1password",
+        "display_name": "1Password",
+        "available": True,
+        "selected_by_default": False,
+        "reason": None,
+        "details": {"cli_path": "/opt/homebrew/bin/op", "signed_in": True, "vaults": []},
+    },
+]
+
+BACKENDS_KEYCHAIN_ONLY = [
+    {
+        "backend": "keychain",
+        "display_name": "System Keychain",
+        "available": True,
+        "selected_by_default": True,
+        "reason": None,
+        "details": {"keyring_backend": "Keyring"},
+    },
+    {
+        "backend": "1password",
+        "display_name": "1Password",
+        "available": False,
+        "selected_by_default": False,
+        "reason": "The 1Password CLI (`op`) is not installed.",
+        "details": {"cli_path": None, "signed_in": False, "vaults": []},
+    },
+]
 
 
 class ServiceTests(unittest.TestCase):
-    def test_default_backend_uses_prefixed_superplanner_url(self) -> None:
-        self.assertEqual(DEFAULT_BACKEND_URL, "https://superplanner.ai/notion/agent-labbook")
+    def test_status_recommends_prepare_when_no_token_exists(self) -> None:
+        with mock.patch("labbook.service._available_storage_backends", return_value=BACKENDS_BOTH):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                payload = status(tmpdir)
 
-    def test_default_oauth_base_uses_shared_superplanner_url(self) -> None:
-        self.assertEqual(DEFAULT_OAUTH_BASE_URL, "https://superplanner.ai/notion/oauth")
+        self.assertEqual(payload["integration"], "notion-agent-labbook")
+        self.assertFalse(payload["authenticated"])
+        self.assertEqual(payload["recommended_action"], "notion_prepare_internal_integration")
+        self.assertEqual(payload["secret_plan"]["mode"], "keychain")
+        self.assertIn("default recommendation", payload["secret_plan"]["reason"])
+        self.assertEqual(payload["available_env_var"], TOKEN_ENV_VAR)
+        self.assertTrue(payload["storage_choice_required"])
 
-    def test_effective_backend_url_preserves_path_prefix(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_LABBOOK_BACKEND_URL": "https://example.com/notion/agent-labbook/"}):
-            self.assertEqual(effective_backend_url(), "https://example.com/notion/agent-labbook")
-
-    def test_effective_oauth_base_url_preserves_path_prefix(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_LABBOOK_OAUTH_BASE_URL": "https://example.com/notion/oauth/"}):
-            self.assertEqual(effective_oauth_base_url(), "https://example.com/notion/oauth")
-
-    def test_effective_backend_url_rejects_query_strings(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_LABBOOK_BACKEND_URL": "https://example.com/notion/agent-labbook?x=1"}):
-            with self.assertRaises(LabbookError):
-                effective_backend_url()
-
-    def test_effective_oauth_base_url_rejects_query_strings(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_LABBOOK_OAUTH_BASE_URL": "https://example.com/notion/oauth?x=1"}):
-            with self.assertRaises(LabbookError):
-                effective_oauth_base_url()
-
-    def test_status_recommends_browser_by_default(self) -> None:
-        with mock.patch("labbook.service._list_saved_token_credentials", return_value=[]):
-            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
+    def test_prepare_internal_integration_opens_browser_and_reports_backends(self) -> None:
+        with mock.patch("labbook.service._available_storage_backends", return_value=BACKENDS_BOTH):
+            with mock.patch("labbook.service._open_browser_url", return_value=True) as open_mock:
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    payload = status(tmpdir)
+                    payload = prepare_internal_integration(project_root=tmpdir, open_browser=True)
 
-        self.assertEqual(payload["recommended_action"], "notion_auth_browser")
-        self.assertEqual(payload["preferred_browser_flow"], "local_browser")
-        self.assertTrue(payload["recommended_open_browser"])
-        self.assertEqual(payload["backend_url"], DEFAULT_BACKEND_URL)
-        self.assertEqual(payload["oauth_base_url"], DEFAULT_OAUTH_BASE_URL)
-        self.assertEqual(payload["redirect_uri"], f"{DEFAULT_OAUTH_BASE_URL}/callback")
-        self.assertEqual(
-            payload["recommended_browser_auth_timeout_seconds"],
-            DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
-        )
-        self.assertIn("same machine", payload["browser_auth_hint"])
-        self.assertIn("notion_complete_headless_auth", payload["headless_auth_hint"])
-        self.assertIn("Use notion_selection_browser only", payload["scope_choice_hint"])
-        self.assertTrue(payload["connect_decision"]["requires_user_choice"])
-        self.assertIn("Do not choose", payload["connect_decision"]["blocking_hint"])
-        self.assertEqual(payload["connect_decision"]["recommended_answers"]["scope_mode"], "expand_oauth_scope")
-        self.assertEqual(payload["connect_decision"]["recommended_answers"]["browser_mode"], "local_browser")
-        self.assertEqual(len(payload["connect_decision"]["questions"]), 2)
-        self.assertIn("wait for the user's response", payload["connect_decision"]["client_prompt_hint"])
-        self.assertIn("manual_prompt_markdown", payload["connect_decision"])
-        self.assertIn("scope_mode=<bind_existing_scope|expand_oauth_scope>", payload["connect_decision"]["manual_prompt_markdown"])
-        self.assertFalse(payload["connect_decision"]["known_authorized_root_pages_available"])
+        open_mock.assert_called_once_with(DEFAULT_NOTION_INTEGRATIONS_URL)
+        self.assertEqual(payload["notion_integrations_url"], DEFAULT_NOTION_INTEGRATIONS_URL)
+        self.assertEqual(payload["notion_docs_url"], NOTION_INTEGRATION_GUIDE_URL)
+        self.assertTrue(payload["browser_opened"])
+        self.assertEqual(payload["storage_default"], "keychain")
+        self.assertTrue(payload["storage_choice_required"])
 
-    def test_status_prefers_headless_when_ssh_detected(self) -> None:
-        with mock.patch("labbook.service._list_saved_token_credentials", return_value=[]):
-            with mock.patch.dict(os.environ, {"SSH_CONNECTION": "client 123 server 22"}, clear=False):
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    payload = status(tmpdir)
-
-        self.assertEqual(payload["recommended_action"], "notion_start_headless_auth")
-        self.assertEqual(payload["preferred_browser_flow"], "headless")
-        self.assertFalse(payload["recommended_open_browser"])
-        self.assertTrue(payload["browser_environment"]["ssh_session_detected"])
-        self.assertIn("SSH session variables were detected", payload["browser_environment_hint"])
-
-    def test_page_limit_is_clamped_to_minimum(self) -> None:
-        self.assertEqual(normalize_browser_auth_page_limit(None), DEFAULT_BROWSER_AUTH_PAGE_LIMIT)
-        self.assertEqual(normalize_browser_auth_page_limit(5), MIN_BROWSER_AUTH_PAGE_LIMIT)
-
-    def test_status_reports_stale_pending_auth_without_clearing(self) -> None:
-        with mock.patch("labbook.service._list_saved_token_credentials", return_value=[]):
-            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    state_dir = Path(tmpdir) / ".labbook"
-                    state_dir.mkdir(parents=True, exist_ok=True)
-                    pending_auth_path = state_dir / "pending-auth.json"
-                    pending_auth_path.write_text(
-                        json.dumps(
-                            {
-                                "mode": "local_browser",
-                                "session_id": "stale-session",
-                                "started_at": "2026-01-01T00:00:00+00:00",
-                                "timeout_seconds": 30,
-                            }
-                        ),
-                        encoding="utf-8",
-                    )
-
-                    payload = status(tmpdir)
-                    pending_auth = load_pending_auth(tmpdir)
-
-        self.assertIsNotNone(payload["pending_auth"])
-        self.assertTrue(payload["pending_auth_stale"])
-        self.assertEqual(payload["recommended_action"], "notion_auth_browser")
-        self.assertIsNotNone(pending_auth)
-
-    def test_status_recommends_status_for_pending_local_browser_auth(self) -> None:
+    def test_status_prefers_environment_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            state_dir = Path(tmpdir) / ".labbook"
-            state_dir.mkdir(parents=True, exist_ok=True)
-            pending_auth_path = state_dir / "pending-auth.json"
-            pending_auth_path.write_text(
-                json.dumps(
-                    {
-                        "mode": "local_browser",
-                        "session_id": "pending-session",
-                        "started_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            payload = status(tmpdir)
-
-        self.assertEqual(payload["recommended_action"], "notion_status")
-        self.assertFalse(payload["pending_handoff_ready"])
-
-    def test_status_recommends_complete_headless_auth_for_pending_headless_auth(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            state_dir = Path(tmpdir) / ".labbook"
-            state_dir.mkdir(parents=True, exist_ok=True)
-            pending_auth_path = state_dir / "pending-auth.json"
-            pending_auth_path.write_text(
-                json.dumps(
-                    {
-                        "mode": "headless",
-                        "session_id": "pending-session",
-                        "started_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            payload = status(tmpdir)
-
-        self.assertEqual(payload["recommended_action"], "notion_complete_headless_auth")
-
-    def test_status_recommends_finalize_for_ready_local_browser_handoff(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            state_dir = root / ".labbook"
-            state_dir.mkdir(parents=True, exist_ok=True)
-            (state_dir / "pending-auth.json").write_text(
-                json.dumps(
-                    {
-                        "mode": "local_browser",
-                        "session_id": "pending-session",
-                        "started_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ),
-                encoding="utf-8",
-            )
-            save_pending_handoff(
-                root,
+            save_project_session(
+                tmpdir,
                 {
-                    "version": 1,
-                    "project_root": str(root),
-                    "session_id": "pending-session",
-                    "handoff_bundle": "bundle",
-                    "received_at": datetime.now(timezone.utc).isoformat(),
-                    "return_to": "http://127.0.0.1:8765/oauth/handoff",
+                    "storage": "keychain",
+                    "workspace_name": "Workspace One",
+                    "keyring_service": KEYRING_SERVICE_NAME,
+                    "keyring_account": "project-root:/tmp/example",
                 },
             )
-
-            payload = status(tmpdir)
-
-        self.assertEqual(payload["recommended_action"], "notion_finalize_pending_auth")
-        self.assertTrue(payload["pending_handoff_ready"])
-
-    def test_status_recommends_saved_credentials_when_available(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch(
-                "labbook.service._credential_provider_diagnostics",
-                return_value={
-                    "requested_provider": "auto",
-                    "resolved_provider": "1password",
-                    "providers": [
-                        {"provider": "1password", "available": True, "selected_by_default": True, "reason": None},
-                        {"provider": "keyring", "available": True, "selected_by_default": False, "reason": None},
-                    ],
-                },
-            ):
-                with mock.patch(
-                "labbook.service._list_saved_token_credentials",
-                return_value=[
-                    {
-                        "provider": "keyring",
-                        "credential_ref": "cred-1",
-                        "workspace_name": "Workspace One",
-                        "workspace_id": "workspace-1",
-                        "metadata": {"service_name": "notion-access-broker/agent-labbook"},
-                    }
-                ],
-                ):
+            with mock.patch("labbook.service._available_storage_backends", return_value=BACKENDS_KEYCHAIN_ONLY):
+                with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
                     payload = status(tmpdir)
 
-        self.assertEqual(payload["recommended_action"], "notion_attach_saved_credential")
-        self.assertEqual(payload["available_saved_credentials_count"], 1)
-        self.assertEqual(payload["available_saved_credentials"][0]["display_name"], "Workspace One")
-        self.assertEqual(payload["credential_provider_diagnostics"]["resolved_provider"], "1password")
-        self.assertEqual(payload["connect_decision"]["recommended_answers"]["scope_mode"], "bind_existing_scope")
+        self.assertTrue(payload["authenticated"])
+        self.assertEqual(payload["token_source"], "env")
+        self.assertTrue(payload["env_token_present"])
+        self.assertEqual(payload["secret_plan"]["mode"], "keychain")
+        self.assertEqual(payload["workspace_name"], "Workspace One")
+        self.assertEqual(payload["recommended_action"], "notion_search_resources")
 
-    def test_status_recommends_setup_guide_when_saved_credential_lookup_fails(self) -> None:
+    def test_configure_internal_integration_requires_explicit_choice_when_multiple_backends_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch("labbook.service._credential_provider_diagnostics", return_value=None):
-                with mock.patch(
-                    "labbook.service._annotated_saved_credentials",
-                    side_effect=LabbookError("The shared notion-access-broker Python helpers are not installed."),
-                ):
-                    payload = status(tmpdir)
+            with mock.patch("labbook.service._available_storage_backends", return_value=BACKENDS_BOTH):
+                with mock.patch("labbook.service.NotionClient.get_me", return_value={}):
+                    with self.assertRaises(LabbookError):
+                        configure_internal_integration(
+                            secret="secret_test_token",
+                            project_root=tmpdir,
+                        )
 
-        self.assertEqual(payload["recommended_action"], "notion_setup_guide")
-        self.assertIn("not installed", payload["saved_credentials_error"])
-
-    def test_candidate_broker_src_paths_include_env_and_cwd_ancestors(self) -> None:
+    def test_configure_internal_integration_stores_secret_in_keyring_and_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            env_repo = root / "custom-broker"
-            project_root = root / "projects" / "doc-verbalizer"
-            project_root.mkdir(parents=True, exist_ok=True)
-            expected_auto = root / "projects" / "notion-access-broker" / "src"
+            keyring_mock = mock.Mock()
+            with mock.patch("labbook.service._available_storage_backends", return_value=BACKENDS_KEYCHAIN_ONLY):
+                with mock.patch("labbook.service.NotionClient.get_me") as get_me_mock:
+                    with mock.patch("labbook.service.keyring", new=keyring_mock):
+                        get_me_mock.return_value = {
+                            "id": "bot-user-id",
+                            "bot": {
+                                "workspace_name": "Workspace One",
+                                "workspace_id": "workspace-id",
+                                "owner": {"type": "workspace"},
+                            },
+                        }
 
-            with mock.patch.dict(os.environ, {NOTION_ACCESS_BROKER_SRC_ENV_VAR: str(env_repo)}):
-                paths = _candidate_notion_access_broker_src_paths(cwd=project_root)
+                        payload = configure_internal_integration(
+                            secret="secret_test_token",
+                            project_root=tmpdir,
+                            storage="keychain",
+                        )
+                        session_payload = load_project_session(tmpdir)
 
-        self.assertGreaterEqual(len(paths), 2)
-        self.assertEqual(paths[0], env_repo.resolve())
-        self.assertIn(expected_auto.resolve(), paths)
+        keyring_mock.set_password.assert_called_once()
+        self.assertEqual(payload["token_source"], "keychain")
+        self.assertEqual(payload["storage"], "keychain")
+        self.assertEqual(payload["workspace_name"], "Workspace One")
+        self.assertEqual(payload["recommended_next_action"], "notion_search_resources")
+        self.assertIsNotNone(session_payload)
+        self.assertEqual(session_payload["storage"], "keychain")
+        self.assertEqual(session_payload["workspace_name"], "Workspace One")
+        self.assertEqual(session_payload["bot_id"], "bot-user-id")
 
-    def test_start_headless_auth_persists_clamped_page_limit(self) -> None:
+    def test_configure_internal_integration_stores_secret_in_onepassword(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            payload = start_headless_auth(project_root=tmpdir, page_limit=10)
-            pending_auth = load_pending_auth(tmpdir)
+            onepassword_metadata = {
+                "op_item_id": "item-123",
+                "op_item_title": "Notion Agent Labbook",
+                "op_vault": "Private",
+                "op_vault_id": "vault-123",
+                "op_ref": "op://vault-123/item-123/password",
+            }
+            with mock.patch("labbook.service._available_storage_backends", return_value=BACKENDS_BOTH):
+                with mock.patch("labbook.service._store_token_in_onepassword", return_value=onepassword_metadata) as store_mock:
+                    with mock.patch("labbook.service.NotionClient.get_me", return_value={"id": "bot-user-id", "bot": {}}):
+                        payload = configure_internal_integration(
+                            secret="secret_test_token",
+                            project_root=tmpdir,
+                            storage="1password",
+                            op_vault="Private",
+                        )
+                        session_payload = load_project_session(tmpdir)
 
-        self.assertEqual(payload["page_limit"], MIN_BROWSER_AUTH_PAGE_LIMIT)
-        self.assertEqual(payload["oauth_base_url"], DEFAULT_OAUTH_BASE_URL)
-        self.assertIn(f"{DEFAULT_OAUTH_BASE_URL}/start?", payload["auth_url"])
-        self.assertIn("integration=agent-labbook", payload["auth_url"])
-        self.assertIn("continue_to=", payload["auth_url"])
-        self.assertIn("print the raw URL exactly once", payload["agent_response_hint"])
-        self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["integration"], "agent-labbook")
-        self.assertEqual(pending_auth["page_limit"], MIN_BROWSER_AUTH_PAGE_LIMIT)
-        self.assertEqual(pending_auth["oauth_base_url"], DEFAULT_OAUTH_BASE_URL)
+        store_mock.assert_called_once()
+        self.assertEqual(payload["token_source"], "1password")
+        self.assertEqual(payload["storage"], "1password")
+        self.assertIsNotNone(session_payload)
+        self.assertEqual(session_payload["storage"], "1password")
+        self.assertEqual(session_payload["op_item_id"], "item-123")
 
-    def test_oauth_selection_bindings_preserve_subtree_scope(self) -> None:
+    def test_search_resources_normalizes_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            payload = _bindings_from_selected_resources(
-                selected_resources=[
-                    {
-                        "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
-                        "resource_type": "page",
-                        "title": "Project Home",
-                        "selection_scope": "subtree",
-                    }
-                ],
-                project_root=Path(tmpdir),
-            )
-
-        self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
-
-    def test_auth_browser_auto_switches_to_headless_when_open_browser_is_false(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=False)
-            pending_auth = load_pending_auth(tmpdir)
-
-        self.assertEqual(payload["auth_mode"], "headless")
-        self.assertTrue(payload["auto_switched_to_headless"])
-        self.assertIn("open_browser=false", payload["reason"])
-        self.assertEqual(payload["page_limit"], MIN_BROWSER_AUTH_PAGE_LIMIT)
-        self.assertEqual(payload["oauth_base_url"], DEFAULT_OAUTH_BASE_URL)
-        self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["mode"], "headless")
-
-    def test_auth_browser_falls_back_to_headless_when_browser_cannot_open(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
-                with mock.patch(
-                    "labbook.service._spawn_persistent_local_handoff_server",
-                    return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "test-session"},
-                ):
-                    with mock.patch("labbook.service._open_browser_url", return_value=False):
-                        payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
-                        pending_auth = load_pending_auth(tmpdir)
-
-        self.assertEqual(payload["auth_mode"], "headless")
-        self.assertTrue(payload["auto_switched_to_headless"])
-        self.assertIn("could not be opened", payload["reason"])
-        self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["mode"], "headless")
-
-    def test_auth_browser_auto_switches_to_headless_when_ssh_detected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(os.environ, {"SSH_CONNECTION": "client 123 server 22"}, clear=False):
-                with mock.patch("labbook.service._spawn_persistent_local_handoff_server") as spawn_mock:
-                    payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
-                    pending_auth = load_pending_auth(tmpdir)
-
-        spawn_mock.assert_not_called()
-        self.assertEqual(payload["auth_mode"], "headless")
-        self.assertTrue(payload["auto_switched_to_headless"])
-        self.assertIn("SSH session variables were detected", payload["reason"])
-        self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["mode"], "headless")
-
-    def test_auth_browser_starts_async_local_browser_flow(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
-                with mock.patch(
-                    "labbook.service._spawn_persistent_local_handoff_server",
-                    return_value={
-                        "return_to": "http://127.0.0.1:8765/oauth/handoff",
-                        "session_id": "test-session",
-                        "pid": 12345,
-                    },
-                ):
-                    with mock.patch("labbook.service._open_browser_url", return_value=True):
-                        payload = auth_browser(project_root=tmpdir, page_limit=10, open_browser=True)
-                        pending_auth = load_pending_auth(tmpdir)
-
-        self.assertEqual(payload["auth_mode"], "local_browser")
-        self.assertEqual(payload["recommended_next_action"], "notion_status")
-        self.assertEqual(payload["page_limit"], MIN_BROWSER_AUTH_PAGE_LIMIT)
-        self.assertEqual(payload["oauth_base_url"], DEFAULT_OAUTH_BASE_URL)
-        self.assertIn(f"{DEFAULT_OAUTH_BASE_URL}/start?", payload["auth_url"])
-        self.assertIn("print the raw URL exactly once", payload["agent_response_hint"])
-        self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["mode"], "local_browser")
-        self.assertEqual(pending_auth["return_to"], "http://127.0.0.1:8765/oauth/handoff")
-        self.assertEqual(pending_auth["oauth_base_url"], DEFAULT_OAUTH_BASE_URL)
-
-    def test_finalize_pending_auth_completes_saved_local_browser_handoff(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            resolved_root = root.resolve()
-            state_dir = root / ".labbook"
-            state_dir.mkdir(parents=True, exist_ok=True)
-            (state_dir / "pending-auth.json").write_text(
-                json.dumps(
-                    {
-                        "mode": "local_browser",
-                        "session_id": "local-browser-session",
-                        "backend_url": "https://superplanner.ai/notion/agent-labbook",
-                        "oauth_base_url": "https://superplanner.ai/notion/oauth",
-                        "started_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ),
-                encoding="utf-8",
-            )
-            save_pending_handoff(
-                root,
-                {
-                    "version": 1,
-                    "project_root": str(root),
-                    "session_id": "local-browser-session",
-                    "handoff_bundle": "bundle",
-                    "received_at": datetime.now(timezone.utc).isoformat(),
-                    "return_to": "http://127.0.0.1:8765/oauth/handoff",
-                },
-            )
-
-            def complete_side_effect(*, project_root: Path, pending_auth: dict, handoff_bundle: str) -> dict:
-                self.assertEqual(project_root, resolved_root)
-                self.assertEqual(pending_auth["session_id"], "local-browser-session")
-                self.assertEqual(handoff_bundle, "bundle")
-                save_project_session(
-                    root,
-                    {
-                        "access_token": "test-access-token",
-                        "refresh_token": "test-refresh-token",
-                        "workspace_name": "Workspace",
-                        "workspace_id": "workspace-id",
-                    },
-                )
-                save_project_bindings(
-                    root,
-                    {
-                        "version": 1,
-                        "project_root": str(root),
-                        "default_resource_alias": "project-home",
-                        "resources": [
+            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
+                with mock.patch("labbook.service.NotionClient.search") as search_mock:
+                    search_mock.return_value = {
+                        "results": [
                             {
-                                "alias": "project-home",
+                                "object": "page",
+                                "id": "01234567-89ab-cdef-0123-456789abcdef",
+                                "url": "https://www.notion.so/example",
+                                "title": [{"plain_text": "Project Home"}],
+                                "last_edited_time": "2026-04-10T00:00:00.000Z",
+                            },
+                            {
+                                "object": "database",
+                                "id": "fedcba98-7654-3210-fedc-ba9876543210",
+                                "url": "https://www.notion.so/db",
+                                "title": [{"plain_text": "Specs"}],
+                            },
+                        ]
+                    }
+
+                    payload = search_resources(project_root=tmpdir, query="spec", page_size=10)
+
+        self.assertEqual(payload["page_size"], 10)
+        self.assertEqual(payload["result_count"], 2)
+        self.assertEqual(payload["results"][0]["resource_type"], "page")
+        self.assertEqual(payload["results"][1]["resource_type"], "data_source")
+
+    def test_bind_resources_preserves_subtree_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
+                with mock.patch("labbook.service.NotionClient.retrieve_resource") as retrieve_mock:
+                    retrieve_mock.return_value = {
+                        "object": "page",
+                        "id": "01234567-89ab-cdef-0123-456789abcdef",
+                        "url": "https://www.notion.so/example",
+                        "title": [{"plain_text": "Project Home"}],
+                    }
+
+                    payload = bind_resources(
+                        project_root=tmpdir,
+                        resource_refs=[
+                            {
                                 "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
-                                "resource_type": "page",
-                                "title": "Project Home",
-                                "resource_url": "https://www.notion.so/example",
-                                "source": "oauth_selection",
-                                "bound_at": "2026-04-03T00:00:00+00:00",
                                 "selection_scope": "subtree",
                             }
                         ],
-                    },
-                )
-                clear_pending_auth(root)
-                return {"ok": True}
+                        default_alias="project-home",
+                    )
+                    saved_payload = load_project_bindings(tmpdir)
 
-            with mock.patch("labbook.service._complete_auth_handoff", side_effect=complete_side_effect):
-                payload = finalize_pending_auth(project_root=tmpdir)
-                remaining_handoff = load_pending_handoff(root)
+        self.assertEqual(payload["default_resource_alias"], "project-home")
+        self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
+        self.assertIsNotNone(saved_payload)
+        self.assertEqual(saved_payload["resources"][0]["selection_scope"], "subtree")
 
-        self.assertEqual(payload, {"ok": True})
-        self.assertIsNone(remaining_handoff)
-
-    def test_complete_headless_auth_accepts_pending_local_browser_flow(self) -> None:
+    def test_get_api_context_returns_bound_resources_for_keychain_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            pending_auth_path = root / ".labbook" / "pending-auth.json"
-            pending_auth_path.parent.mkdir(parents=True, exist_ok=True)
-            pending_auth_path.write_text(
-                json.dumps(
-                    {
-                        "mode": "local_browser",
-                        "session_id": "local-browser-session",
-                        "backend_url": "https://superplanner.ai/notion/agent-labbook",
-                        "oauth_base_url": "https://superplanner.ai/notion/oauth",
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            with mock.patch("labbook.service._complete_auth_handoff", return_value={"ok": True}) as complete_mock:
-                payload = complete_headless_auth(project_root=root, handoff_bundle="bundle")
-
-        self.assertEqual(payload, {"ok": True})
-        complete_mock.assert_called_once()
-
-    def test_post_backend_json_requires_expected_api_version(self) -> None:
-        response = mock.MagicMock()
-        response.read.return_value = json.dumps(
-            {
-                "ok": True,
-                "api_version": 999,
-                "supported_api_versions": [999],
-            }
-        ).encode("utf-8")
-        response.__enter__.return_value = response
-        response.__exit__.return_value = None
-
-        with mock.patch("labbook.service.request.urlopen", return_value=response):
-            with self.assertRaises(LabbookError) as exc_info:
-                _post_backend_json("https://superplanner.ai/notion/oauth/api/refresh", {"integration": "agent-labbook"})
-
-        self.assertIn("API version mismatch", str(exc_info.exception))
-
-    def test_post_backend_json_sends_accepted_api_versions_header(self) -> None:
-        response = mock.MagicMock()
-        response.read.return_value = json.dumps(
-            {
-                "ok": True,
-                "api_version": BROKER_API_VERSION,
-                "supported_api_versions": [BROKER_API_VERSION],
-            }
-        ).encode("utf-8")
-        response.__enter__.return_value = response
-        response.__exit__.return_value = None
-
-        with mock.patch("labbook.service.request.urlopen", return_value=response) as urlopen_mock:
-            _post_backend_json("https://superplanner.ai/notion/oauth/api/refresh", {"integration": "agent-labbook"})
-
-        request_obj = urlopen_mock.call_args.args[0]
-        self.assertEqual(
-            request_obj.headers["X-notion-access-broker-accept-api-versions"],
-            BROKER_API_VERSIONS_HEADER,
-        )
-
-    def test_api_context_exposes_selection_scope_metadata(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
             save_project_session(
-                root,
+                tmpdir,
                 {
-                    "access_token": "test-access-token",
-                    "refresh_token": "test-refresh-token",
-                    "workspace_name": "Workspace",
+                    "storage": "keychain",
+                    "workspace_name": "Workspace One",
                     "workspace_id": "workspace-id",
                     "bot_id": "bot-id",
+                    "keyring_service": KEYRING_SERVICE_NAME,
+                    "keyring_account": "project-root:/tmp/example",
                 },
             )
             save_project_bindings(
-                root,
+                tmpdir,
                 {
-                    "version": 1,
-                    "project_root": str(root),
+                    "project_root": tmpdir,
                     "default_resource_alias": "project-home",
                     "resources": [
                         {
                             "alias": "project-home",
                             "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
                             "resource_type": "page",
-                            "title": "Project Home",
                             "resource_url": "https://www.notion.so/example",
-                            "source": "oauth_selection",
-                            "bound_at": "2026-04-03T00:00:00+00:00",
+                            "title": "Project Home",
+                            "source": "manual_bind",
+                            "bound_at": "2026-04-10T00:00:00+00:00",
                             "selection_scope": "subtree",
                         }
                     ],
                 },
             )
+            keyring_mock = mock.Mock()
+            keyring_mock.get_password.return_value = "secret_keyring_token"
+            with mock.patch("labbook.service.keyring", new=keyring_mock):
+                payload = get_api_context(tmpdir)
 
-            payload = get_api_context(root)
+        self.assertEqual(payload["token_source"], "keychain")
+        self.assertEqual(payload["storage"], "keychain")
+        self.assertEqual(payload["access_token"], "secret_keyring_token")
+        self.assertEqual(payload["workspace_name"], "Workspace One")
+        self.assertEqual(len(payload["bound_resources"]), 1)
 
-        self.assertEqual(payload["binding_model"], "explicit_roots_with_selection_scope")
-        self.assertIn("selection_scope='subtree'", payload["selection_scope_note"])
-        self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
-        self.assertEqual(
-            payload["docs_markdown_content"],
-            "https://developers.notion.com/guides/data-apis/working-with-markdown-content",
-        )
-        self.assertIn("POST /v1/pages", payload["usage"])
-        self.assertIn("GET /v1/pages/{page_id}/markdown", payload["usage"])
-        self.assertIn("PATCH /v1/pages/{page_id}/markdown", payload["usage"])
-        self.assertIn("${NOTION_TOKEN}", payload["curl_example"])
-        self.assertNotIn("test-access-token", payload["curl_example"])
-
-    def test_refresh_session_uses_shared_oauth_backend(self) -> None:
+    def test_get_api_context_reads_secret_from_onepassword(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
             save_project_session(
-                root,
+                tmpdir,
                 {
-                    "access_token": "test-access-token",
-                    "refresh_token": "test-refresh-token",
-                    "backend_url": "https://superplanner.ai/notion/agent-labbook",
-                    "oauth_base_url": "https://superplanner.ai/notion/oauth",
+                    "storage": "1password",
+                    "workspace_name": "Workspace One",
+                    "workspace_id": "workspace-id",
+                    "bot_id": "bot-id",
+                    "op_item_id": "item-123",
+                    "op_vault_id": "vault-123",
+                    "op_ref": "op://vault-123/item-123/password",
                 },
             )
+            with mock.patch("labbook.service._op_command", return_value=("secret_op_token", None)):
+                payload = get_api_context(tmpdir)
 
-            with mock.patch(
-                "labbook.service._post_backend_json",
-                return_value={
-                    "ok": True,
-                    "api_version": BROKER_API_VERSION,
-                    "supported_api_versions": [BROKER_API_VERSION],
-                    "token": {
-                        "access_token": "refreshed-access-token",
-                        "refresh_token": "refreshed-refresh-token",
-                        "workspace_name": "Workspace",
-                        "workspace_id": "workspace-id",
-                    },
-                },
-            ) as post_backend_mock:
-                with mock.patch(
-                    "labbook.service._store_token_credential",
-                    return_value={
-                        "provider": "keyring",
-                        "credential_ref": "cred-123",
-                        "metadata": {"service_name": "notion-access-broker/agent-labbook"},
-                    },
-                ):
-                    payload = refresh_session(root)
-                    saved_session = load_project_session(root)
+        self.assertEqual(payload["token_source"], "1password")
+        self.assertEqual(payload["storage"], "1password")
+        self.assertEqual(payload["access_token"], "secret_op_token")
 
-        self.assertEqual(payload["oauth_base_url"], "https://superplanner.ai/notion/oauth")
-        self.assertEqual(payload["backend_url"], "https://superplanner.ai/notion/agent-labbook")
-        post_backend_mock.assert_called_once_with(
-            "https://superplanner.ai/notion/oauth/api/refresh",
-            {
-                "integration": "agent-labbook",
-                "refresh_token": "test-refresh-token",
-            },
-        )
-        self.assertIsNotNone(saved_session)
-        self.assertEqual(saved_session["credential_provider"], "keyring")
-        self.assertEqual(saved_session["credential_ref"], "cred-123")
-        self.assertNotIn("access_token", saved_session)
-        self.assertNotIn("refresh_token", saved_session)
-
-    def test_list_saved_credentials_marks_project_attachment(self) -> None:
+    def test_status_recommends_current_configured_backend_when_it_is_working(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
             save_project_session(
-                root,
+                tmpdir,
                 {
-                    "credential_provider": "keyring",
-                    "credential_ref": "cred-1",
+                    "storage": "1password",
+                    "op_item_id": "item-123",
+                    "op_vault_id": "vault-123",
+                    "op_ref": "op://vault-123/item-123/password",
                 },
             )
-            with mock.patch(
-                "labbook.service._list_saved_token_credentials",
-                return_value=[
-                    {
-                        "provider": "keyring",
-                        "credential_ref": "cred-1",
-                        "workspace_name": "Workspace One",
-                        "workspace_id": "workspace-1",
-                        "metadata": {"service_name": "notion-access-broker/agent-labbook"},
-                    },
-                    {
-                        "provider": "keyring",
-                        "credential_ref": "cred-2",
-                        "workspace_name": "Workspace Two",
-                        "workspace_id": "workspace-2",
-                        "metadata": {"service_name": "notion-access-broker/agent-labbook"},
-                    },
-                ],
-            ):
-                payload = list_saved_credentials(project_root=root)
+            with mock.patch("labbook.service._available_storage_backends", return_value=BACKENDS_BOTH):
+                with mock.patch("labbook.service._op_command", return_value=("secret_op_token", None)):
+                    payload = status(tmpdir)
 
-        self.assertEqual(payload["saved_credential_count"], 2)
-        self.assertTrue(payload["credentials"][0]["attached_to_project"])
-        self.assertFalse(payload["credentials"][1]["attached_to_project"])
+        self.assertEqual(payload["token_source"], "1password")
+        self.assertEqual(payload["secret_plan"]["mode"], "1password")
+        self.assertIn("already using 1Password successfully", payload["secret_plan"]["reason"])
 
-    def test_attach_saved_credential_persists_reference_without_tokens(self) -> None:
+    def test_clear_project_auth_deletes_keyring_secret_and_bindings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            with mock.patch(
-                "labbook.service._list_saved_token_credentials",
-                return_value=[
-                    {
-                        "provider": "keyring",
-                        "credential_ref": "cred-1",
-                        "workspace_name": "Workspace One",
-                        "workspace_id": "workspace-1",
-                        "bot_id": "bot-1",
-                        "authorized_at": "2026-04-04T00:00:00+00:00",
-                        "updated_at": "2026-04-04T01:00:00+00:00",
-                        "metadata": {"service_name": "notion-access-broker/agent-labbook"},
-                    }
-                ],
-            ):
-                with mock.patch(
-                    "labbook.service._load_token_credential",
-                    return_value={
-                        "access_token": "access-1",
-                        "refresh_token": "refresh-1",
-                        "workspace_name": "Workspace One",
-                        "workspace_id": "workspace-1",
-                        "bot_id": "bot-1",
-                    },
-                ):
-                    payload = attach_saved_credential(project_root=root)
-                    saved_session = load_project_session(root)
-
-        self.assertTrue(payload["attached_existing_credential"])
-        self.assertEqual(payload["credential_ref"], "cred-1")
-        self.assertIsNotNone(saved_session)
-        self.assertEqual(saved_session["credential_provider"], "keyring")
-        self.assertEqual(saved_session["credential_ref"], "cred-1")
-        self.assertEqual(saved_session["session_source"], "saved_credential")
-        self.assertNotIn("access_token", saved_session)
-        self.assertNotIn("refresh_token", saved_session)
-
-    def test_attach_saved_credential_requires_explicit_ref_when_multiple_exist(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch(
-                "labbook.service._list_saved_token_credentials",
-                return_value=[
-                    {"provider": "keyring", "credential_ref": "cred-1"},
-                    {"provider": "keyring", "credential_ref": "cred-2"},
-                ],
-            ):
-                with self.assertRaises(LabbookError):
-                    attach_saved_credential(project_root=tmpdir)
-
-    def test_attach_saved_credential_refuses_to_overwrite_bindings_without_clear_flag(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            save_project_bindings(
-                root,
-                {
-                    "version": 1,
-                    "project_root": str(root),
-                    "default_resource_alias": "project-home",
-                    "resources": [
-                        {
-                            "alias": "project-home",
-                            "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
-                            "resource_type": "page",
-                            "title": "Project Home",
-                            "resource_url": "https://www.notion.so/example",
-                            "source": "manual_bind",
-                            "bound_at": "2026-04-03T00:00:00+00:00",
-                            "selection_scope": "resource",
-                        }
-                    ],
-                },
-            )
-            with mock.patch(
-                "labbook.service._list_saved_token_credentials",
-                return_value=[{"provider": "keyring", "credential_ref": "cred-1"}],
-            ):
-                with self.assertRaises(LabbookError):
-                    attach_saved_credential(project_root=root)
-
-    def test_selection_browser_reuses_saved_credential_without_oauth(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            with mock.patch("labbook.service._browser_environment", return_value=LOCAL_BROWSER_ENVIRONMENT.copy()):
-                with mock.patch(
-                    "labbook.service._list_saved_token_credentials",
-                    return_value=[
-                        {
-                            "provider": "keyring",
-                            "credential_ref": "cred-1",
-                            "workspace_name": "Workspace One",
-                            "workspace_id": "workspace-1",
-                            "metadata": {"service_name": "notion-access-broker/agent-labbook"},
-                        }
-                    ],
-                ):
-                    with mock.patch(
-                        "labbook.service._load_token_credential",
-                        return_value={
-                            "access_token": "access-1",
-                            "refresh_token": "refresh-1",
-                            "workspace_name": "Workspace One",
-                            "workspace_id": "workspace-1",
-                        },
-                    ):
-                        with mock.patch(
-                            "labbook.service._spawn_persistent_local_handoff_server",
-                            return_value={"return_to": "http://127.0.0.1:8765/oauth/handoff", "session_id": "server-session"},
-                        ):
-                            with mock.patch(
-                                "labbook.service._post_backend_json",
-                                return_value={
-                                    "ok": True,
-                                    "api_version": BROKER_API_VERSION,
-                                    "supported_api_versions": [BROKER_API_VERSION],
-                                    "continue_url": "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session",
-                                },
-                            ) as post_backend_mock:
-                                with mock.patch("labbook.service._open_browser_url", return_value=True):
-                                    payload = selection_browser(project_root=root, replace_existing_bindings=False)
-                                    pending_auth = load_pending_auth(root)
-
-        self.assertEqual(payload["selection_mode"], "local_browser")
-        self.assertEqual(payload["credential_ref"], "cred-1")
-        self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["auth_url"], "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session")
-        post_backend_mock.assert_called_once()
-        self.assertEqual(
-            post_backend_mock.call_args[0][0],
-            "https://superplanner.ai/notion/oauth/api/create-session",
-        )
-
-    def test_selection_browser_auto_switches_to_headless_when_ssh_detected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            with mock.patch(
-                "labbook.service._list_saved_token_credentials",
-                return_value=[
-                    {
-                        "provider": "keyring",
-                        "credential_ref": "cred-1",
-                        "workspace_name": "Workspace One",
-                        "workspace_id": "workspace-1",
-                    }
-                ],
-            ):
-                with mock.patch(
-                    "labbook.service._load_token_credential",
-                    return_value={
-                        "access_token": "access-1",
-                        "refresh_token": "refresh-1",
-                        "workspace_name": "Workspace One",
-                        "workspace_id": "workspace-1",
-                    },
-                ):
-                    with mock.patch(
-                        "labbook.service._post_backend_json",
-                        return_value={
-                            "ok": True,
-                            "api_version": BROKER_API_VERSION,
-                            "supported_api_versions": [BROKER_API_VERSION],
-                            "continue_url": "https://superplanner.ai/notion/agent-labbook/oauth/continue?oauth_session=reused-session",
-                        },
-                    ):
-                        with mock.patch.dict(os.environ, {"SSH_CONNECTION": "client 123 server 22"}, clear=False):
-                            with mock.patch("labbook.service._spawn_persistent_local_handoff_server") as spawn_mock:
-                                payload = selection_browser(project_root=root, replace_existing_bindings=False)
-                                pending_auth = load_pending_auth(root)
-
-        spawn_mock.assert_not_called()
-        self.assertEqual(payload["selection_mode"], "headless")
-        self.assertTrue(payload["auto_switched_to_headless"])
-        self.assertIn("SSH session variables were detected", payload["reason"])
-        self.assertIn("print the raw URL exactly once", payload["agent_response_hint"])
-        self.assertIsNotNone(pending_auth)
-        self.assertEqual(pending_auth["mode"], "headless")
-
-    def test_open_browser_url_prefers_graphical_launcher_over_text_browser_default(self) -> None:
-        process = mock.Mock()
-        process.poll.return_value = None
-
-        def which_side_effect(name: str) -> str | None:
-            return "/usr/bin/xdg-open" if name == "xdg-open" else None
-
-        with mock.patch("labbook.service.shutil.which", side_effect=which_side_effect):
-            with mock.patch("labbook.service.subprocess.Popen", return_value=process) as popen_mock:
-                with mock.patch("labbook.service.webbrowser.get") as get_mock:
-                    opened = _open_browser_url("https://example.com")
-
-        self.assertTrue(opened)
-        get_mock.assert_not_called()
-        popen_mock.assert_called_once()
-        self.assertEqual(
-            popen_mock.call_args[0][0],
-            ["/usr/bin/xdg-open", "https://example.com"],
-        )
-
-    def test_open_browser_url_rejects_text_browser_controller_without_graphical_launcher(self) -> None:
-        controller = mock.Mock(spec=webbrowser.GenericBrowser)
-        controller.name = "www-browser"
-        controller.args = ["%s"]
-
-        with mock.patch("labbook.service.shutil.which", return_value=None):
-            with mock.patch("labbook.service.webbrowser.get", return_value=controller):
-                opened = _open_browser_url("https://example.com")
-
-        self.assertFalse(opened)
-
-    def test_selection_browser_requires_explicit_binding_replacement(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
             save_project_session(
-                root,
+                tmpdir,
                 {
-                    "access_token": "test-access-token",
-                    "refresh_token": "test-refresh-token",
+                    "storage": "keychain",
+                    "keyring_service": KEYRING_SERVICE_NAME,
+                    "keyring_account": "project-root:/tmp/example",
                 },
             )
             save_project_bindings(
-                root,
+                tmpdir,
                 {
-                    "version": 1,
-                    "project_root": str(root),
-                    "default_resource_alias": "project-home",
-                    "resources": [
-                        {
-                            "alias": "project-home",
-                            "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
-                            "resource_type": "page",
-                            "title": "Project Home",
-                            "resource_url": "https://www.notion.so/example",
-                            "source": "manual_bind",
-                            "bound_at": "2026-04-03T00:00:00+00:00",
-                            "selection_scope": "resource",
-                        }
-                    ],
+                    "project_root": tmpdir,
+                    "default_resource_alias": None,
+                    "resources": [],
                 },
             )
+            keyring_mock = mock.Mock()
+            with mock.patch("labbook.service.keyring", new=keyring_mock):
+                payload = clear_project_auth(project_root=tmpdir, clear_bindings=True)
 
-            with self.assertRaises(LabbookError):
-                selection_browser(project_root=root)
+            remaining_session = load_project_session(tmpdir)
+            remaining_bindings = load_project_bindings(tmpdir)
 
-    def test_manual_bind_resources_can_request_subtree_scope(self) -> None:
+        keyring_mock.delete_password.assert_called_once()
+        self.assertEqual(payload["storage"], "keychain")
+        self.assertTrue(payload["session_cleared"])
+        self.assertTrue(payload["stored_secret_deleted"])
+        self.assertTrue(payload["bindings_cleared"])
+        self.assertIsNone(remaining_session)
+        self.assertIsNone(remaining_bindings)
+
+    def test_clear_project_auth_deletes_onepassword_item(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
             save_project_session(
-                root,
+                tmpdir,
                 {
-                    "access_token": "test-access-token",
-                    "refresh_token": "test-refresh-token",
+                    "storage": "1password",
+                    "op_item_id": "item-123",
+                    "op_vault_id": "vault-123",
                 },
             )
+            with mock.patch("labbook.service._op_command", return_value=("", None)) as op_mock:
+                payload = clear_project_auth(project_root=tmpdir)
 
-            mock_client = mock.Mock()
-            mock_client.retrieve_resource.return_value = {
-                "id": "01234567-89ab-cdef-0123-456789abcdef",
-                "object": "page",
-                "url": "https://www.notion.so/example",
-                "properties": {
-                    "title": {
-                        "type": "title",
-                        "title": [{"plain_text": "Manual Root"}],
-                    }
-                },
-            }
+        op_mock.assert_called_once()
+        self.assertEqual(payload["storage"], "1password")
+        self.assertTrue(payload["stored_secret_deleted"])
 
-            with mock.patch("labbook.service._notion_client", return_value=mock_client):
-                payload = bind_resources(
-                    project_root=root,
-                    resource_refs=[
-                        {
-                            "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
-                            "selection_scope": "subtree",
-                        }
-                    ],
-                )
+    def test_search_page_size_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
+                with mock.patch("labbook.service.NotionClient.search", return_value={"results": []}) as search_mock:
+                    payload = search_resources(project_root=tmpdir)
 
-        self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
+        self.assertEqual(payload["page_size"], DEFAULT_SEARCH_PAGE_SIZE)
+        search_mock.assert_called_once()
 
 
 if __name__ == "__main__":

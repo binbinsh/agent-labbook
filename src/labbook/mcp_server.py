@@ -15,42 +15,38 @@ from . import __version__
 from .service import (
     BINDINGS_RESOURCE_TEMPLATE,
     BINDINGS_RESOURCE_URI,
-    DEFAULT_BROWSER_AUTH_PAGE_LIMIT,
-    DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS,
+    DEFAULT_SEARCH_PAGE_SIZE,
     SETUP_GUIDE_RESOURCE_URI,
     STATUS_RESOURCE_TEMPLATE,
     STATUS_RESOURCE_URI,
-    attach_saved_credential,
-    auth_browser,
     bind_resources,
     clear_project_auth,
-    complete_headless_auth,
-    finalize_pending_auth,
+    configure_internal_integration,
     get_api_context,
     list_bindings,
-    list_saved_credentials,
+    prepare_internal_integration,
     project_bindings_resource,
     project_status_resource,
-    refresh_session,
-    selection_browser,
+    search_resources,
     setup_guide,
-    start_headless_auth,
     status,
 )
-from .state import LabbookError
+from .state import LabbookError, TOKEN_ENV_VAR
 
 
 StructuredToolResult = dict[str, Any]
-ToolSuccessResult = StructuredToolResult | tuple[list[types.TextContent], StructuredToolResult]
+ToolSuccessResult = (
+    StructuredToolResult | tuple[list[types.TextContent], StructuredToolResult]
+)
 ToolHandler = Callable[[dict[str, Any]], ToolSuccessResult]
 
-SERVER_NAME = "agent-labbook"
+SERVER_NAME = "notion-agent-labbook"
 SERVER_INSTRUCTIONS = (
-    "Agent Labbook exposes read-only project context through MCP resources and mutating workflow steps through tools. "
-    "Prefer the status and bindings resources before calling tools. Use notion_finalize_pending_auth only after "
-    "notion_status reports pending_handoff_ready=true. Use notion_get_api_context only when you are ready to call "
-    "the official Notion API, and treat the returned access token as sensitive. If you are creating or updating "
-    "page content from markdown, prefer Notion's markdown content endpoints over manual block conversion."
+    "Notion Agent Labbook exposes read-only project context through MCP resources and mutating "
+    "steps through tools. This version uses a Notion Internal Integration secret directly. Prefer "
+    "the status and bindings resources before calling tools. Detect available storage backends and "
+    "ask the user to choose between system keychain and 1Password when both are available. Do not "
+    "echo the integration secret back to the user."
 )
 server = Server(SERVER_NAME, instructions=SERVER_INSTRUCTIONS)
 
@@ -151,7 +147,7 @@ def _binding_resource_schema() -> dict[str, Any]:
         {
             "alias": _string_schema(),
             "resource_id": _string_schema(),
-            "resource_type": _string_schema(),
+            "resource_type": _string_schema(enum=["page", "data_source"]),
             "resource_url": _nullable(_string_schema()),
             "title": _string_schema(),
             "source": _string_schema(),
@@ -162,236 +158,102 @@ def _binding_resource_schema() -> dict[str, Any]:
     )
 
 
-def _saved_credential_schema() -> dict[str, Any]:
+def _storage_backend_schema() -> dict[str, Any]:
     return _object_schema(
         {
-            "provider": _string_schema(enum=["keyring", "1password"]),
-            "credential_ref": _string_schema(),
+            "backend": _string_schema(enum=["keychain", "1password"]),
             "display_name": _string_schema(),
-            "workspace_name": _nullable(_string_schema()),
-            "workspace_id": _nullable(_string_schema()),
-            "bot_id": _nullable(_string_schema()),
-            "authorized_at": _nullable(_string_schema()),
-            "updated_at": _nullable(_string_schema()),
-            "attached_to_project": _boolean_schema(),
-            "metadata": _nullable(_object_schema({}, additional_properties=True)),
-        },
-        required=["provider", "credential_ref", "display_name", "attached_to_project"],
-    )
-
-
-def _provider_status_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "provider": _string_schema(enum=["keyring", "1password"]),
             "available": _boolean_schema(),
             "selected_by_default": _boolean_schema(),
             "reason": _nullable(_string_schema()),
-            "details": _nullable(_object_schema({}, additional_properties=True)),
+            "details": _object_schema({}, additional_properties=True),
         },
-        required=["provider", "available", "selected_by_default"],
+        required=[
+            "backend",
+            "display_name",
+            "available",
+            "selected_by_default",
+            "details",
+        ],
     )
 
 
-def _credential_provider_diagnostics_schema() -> dict[str, Any]:
+def _secret_plan_schema() -> dict[str, Any]:
     return _object_schema(
         {
-            "requested_provider": _string_schema(),
-            "resolved_provider": _string_schema(),
-            "providers": _array_schema(_provider_status_schema()),
-        },
-        required=["requested_provider", "resolved_provider", "providers"],
-    )
-
-
-def _pending_auth_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "integration": _string_schema(),
-            "mode": _string_schema(enum=["local_browser", "headless"]),
-            "session_id": _string_schema(),
-            "auth_url": _string_schema(),
-            "return_to": _nullable(_string_schema()),
-            "timeout_seconds": _nullable(_integer_schema()),
-            "page_limit": _nullable(_integer_schema()),
-            "started_at": _string_schema(),
-        },
-        required=["integration", "mode", "session_id", "auth_url", "started_at"],
-    )
-
-
-def _pending_handoff_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "session_id": _nullable(_string_schema()),
-            "received_at": _nullable(_string_schema()),
-            "return_to": _nullable(_string_schema()),
-        }
-    )
-
-
-def _browser_environment_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "preferred_browser_flow": _string_schema(enum=["local_browser", "headless"]),
-            "recommended_open_browser": _boolean_schema(),
-            "ssh_session_detected": _boolean_schema(),
-            "display_detected": _boolean_schema(),
-            "graphical_launcher_available": _boolean_schema(),
-            "override_source": _nullable(_string_schema()),
+            "mode": _string_schema(enum=["env", "keychain", "1password"]),
             "reason": _string_schema(),
         },
-        required=[
-            "preferred_browser_flow",
-            "recommended_open_browser",
-            "ssh_session_detected",
-            "display_detected",
-            "graphical_launcher_available",
-            "reason",
-        ],
-    )
-
-
-def _connect_question_option_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "id": _string_schema(),
-            "label": _string_schema(),
-            "description": _string_schema(),
-        },
-        required=["id", "label", "description"],
-    )
-
-
-def _connect_question_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "header": _string_schema(),
-            "id": _string_schema(),
-            "question": _string_schema(),
-            "recommended_option_id": _string_schema(),
-            "options": _array_schema(_connect_question_option_schema()),
-        },
-        required=["header", "id", "question", "recommended_option_id", "options"],
-    )
-
-
-def _connect_route_step_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "tool": _string_schema(),
-            "arguments": _object_schema({}, additional_properties=True),
-        },
-        required=["tool", "arguments"],
-    )
-
-
-def _connect_route_template_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "scope_mode": _string_schema(enum=["bind_existing_scope", "expand_oauth_scope"]),
-            "browser_mode": _string_schema(enum=["local_browser", "headless"]),
-            "action_sequence": _array_schema(_connect_route_step_schema()),
-        },
-        required=["scope_mode", "browser_mode", "action_sequence"],
-    )
-
-
-def _connect_decision_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "requires_user_choice": _boolean_schema(),
-            "blocking_hint": _string_schema(),
-            "questions": _array_schema(_connect_question_schema()),
-            "recommended_answers": _object_schema(
-                {
-                    "scope_mode": _string_schema(enum=["bind_existing_scope", "expand_oauth_scope"]),
-                    "browser_mode": _string_schema(enum=["local_browser", "headless"]),
-                },
-                required=["scope_mode", "browser_mode"],
-            ),
-            "client_prompt_hint": _string_schema(),
-            "manual_prompt_markdown": _string_schema(),
-            "manual_response_hint": _string_schema(),
-            "route_templates": _array_schema(_connect_route_template_schema()),
-            "known_authorized_root_pages": _array_schema(_binding_resource_schema()),
-            "known_authorized_root_pages_available": _boolean_schema(),
-            "known_authorized_root_pages_hint": _string_schema(),
-            "known_project_bindings": _array_schema(_binding_resource_schema()),
-            "next_step_hint": _string_schema(),
-        },
-        required=[
-            "requires_user_choice",
-            "blocking_hint",
-            "questions",
-            "recommended_answers",
-            "client_prompt_hint",
-            "manual_prompt_markdown",
-            "manual_response_hint",
-            "route_templates",
-            "known_authorized_root_pages",
-            "known_authorized_root_pages_available",
-            "known_authorized_root_pages_hint",
-            "known_project_bindings",
-            "next_step_hint",
-        ],
+        required=["mode", "reason"],
     )
 
 
 def _status_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
-            "project_root": _string_schema(),
             "integration": _string_schema(),
+            "project_root": _string_schema(),
+            "authentication_mode": _string_schema(enum=["internal_integration"]),
             "authenticated": _boolean_schema(),
-            "ready": _boolean_schema(),
-            "recommended_action": _string_schema(),
-            "credential_provider": _nullable(_string_schema()),
+            "token_source": _nullable(
+                _string_schema(enum=["env", "keychain", "1password"])
+            ),
+            "storage": _nullable(_string_schema(enum=["keychain", "1password"])),
+            "env_token_present": _boolean_schema(),
+            "keyring_backend": _string_schema(),
+            "keyring_error": _nullable(_string_schema()),
+            "onepassword_error": _nullable(_string_schema()),
+            "storage_error": _nullable(_string_schema()),
+            "storage_options": _array_schema(_storage_backend_schema()),
+            "storage_default": _nullable(
+                _string_schema(enum=["keychain", "1password"])
+            ),
+            "secret_plan": _secret_plan_schema(),
+            "storage_choice_required": _boolean_schema(),
             "workspace_name": _nullable(_string_schema()),
             "workspace_id": _nullable(_string_schema()),
             "bot_id": _nullable(_string_schema()),
-            "available_saved_credentials_count": _integer_schema(),
-            "available_saved_credentials": _array_schema(_saved_credential_schema()),
-            "bound_resource_count": _integer_schema(),
-            "resources": _array_schema(_binding_resource_schema()),
-            "pending_auth": _nullable(_pending_auth_schema()),
-            "pending_auth_stale": _boolean_schema(),
-            "pending_handoff_ready": _boolean_schema(),
-            "pending_handoff": _nullable(_pending_handoff_schema()),
-            "pending_handoff_hint": _nullable(_string_schema()),
-            "preferred_browser_flow": _string_schema(enum=["local_browser", "headless"]),
-            "recommended_open_browser": _boolean_schema(),
-            "browser_environment_hint": _string_schema(),
-            "browser_environment": _browser_environment_schema(),
-            "scope_choice_hint": _string_schema(),
-            "connect_decision": _connect_decision_schema(),
-            "credential_provider_diagnostics": _nullable(_credential_provider_diagnostics_schema()),
-            "credential_provider_diagnostics_error": _nullable(_string_schema()),
-            "setup_guide_resource_uri": _string_schema(),
-            "status_resource_uri": _string_schema(),
-            "bindings_resource_uri": _string_schema(),
+            "bot_owner_type": _nullable(_string_schema()),
+            "configured_at": _nullable(_string_schema()),
+            "session_path": _string_schema(),
+            "session_exists": _boolean_schema(),
+            "bindings_path": _string_schema(),
+            "bindings_configured": _boolean_schema(),
+            "bindings_count": _integer_schema(),
+            "recommended_action": _string_schema(),
+            "authentication_hint": _string_schema(),
+            "storage_hint": _string_schema(),
+            "binding_hint": _string_schema(),
+            "setup_resource_uri": _string_schema(),
+            "available_env_var": _string_schema(),
+            "notion_integrations_url": _string_schema(),
+            "notion_docs_url": _string_schema(),
+            "notion_version": _string_schema(),
         },
         required=[
-            "project_root",
             "integration",
+            "project_root",
+            "authentication_mode",
             "authenticated",
-            "ready",
+            "env_token_present",
+            "keyring_backend",
+            "storage_options",
+            "secret_plan",
+            "storage_choice_required",
+            "session_path",
+            "session_exists",
+            "bindings_path",
+            "bindings_configured",
+            "bindings_count",
             "recommended_action",
-            "available_saved_credentials_count",
-            "available_saved_credentials",
-            "bound_resource_count",
-            "resources",
-            "pending_auth_stale",
-            "pending_handoff_ready",
-            "preferred_browser_flow",
-            "recommended_open_browser",
-            "browser_environment_hint",
-            "browser_environment",
-            "scope_choice_hint",
-            "connect_decision",
-            "setup_guide_resource_uri",
-            "status_resource_uri",
-            "bindings_resource_uri",
+            "authentication_hint",
+            "storage_hint",
+            "binding_hint",
+            "setup_resource_uri",
+            "available_env_var",
+            "notion_integrations_url",
+            "notion_docs_url",
+            "notion_version",
         ],
     )
 
@@ -406,206 +268,93 @@ def _setup_guide_output_schema() -> dict[str, Any]:
     )
 
 
-def _auth_browser_output_schema() -> dict[str, Any]:
+def _prepare_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
             "project_root": _string_schema(),
-            "integration": _string_schema(),
-            "backend_url": _string_schema(),
-            "oauth_base_url": _string_schema(),
-            "auth_mode": _string_schema(enum=["local_browser", "headless"]),
-            "auth_url": _string_schema(),
-            "session_id": _string_schema(),
-            "return_to": _nullable(_string_schema()),
-            "timeout_seconds": _integer_schema(),
-            "page_limit": _integer_schema(),
+            "notion_integrations_url": _string_schema(),
+            "notion_docs_url": _string_schema(),
             "browser_opened": _boolean_schema(),
+            "open_browser_attempted": _boolean_schema(),
+            "storage_options": _array_schema(_storage_backend_schema()),
+            "storage_default": _nullable(
+                _string_schema(enum=["keychain", "1password"])
+            ),
+            "storage_choice_required": _boolean_schema(),
+            "secret_label": _string_schema(),
+            "setup_steps": _array_schema(_string_schema()),
             "recommended_next_action": _string_schema(),
-            "auto_switched_to_headless": _boolean_schema(),
-            "reason": _string_schema(),
-            "agent_response_hint": _string_schema(),
-            "instructions": _string_schema(),
         },
         required=[
             "project_root",
-            "integration",
-            "backend_url",
-            "oauth_base_url",
-            "auth_mode",
-            "auth_url",
-            "session_id",
-            "page_limit",
-            "agent_response_hint",
-            "instructions",
+            "notion_integrations_url",
+            "notion_docs_url",
+            "browser_opened",
+            "open_browser_attempted",
+            "storage_options",
+            "storage_choice_required",
+            "secret_label",
+            "setup_steps",
+            "recommended_next_action",
         ],
     )
 
 
-def _start_headless_auth_output_schema() -> dict[str, Any]:
+def _configure_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
+            "ok": _boolean_schema(),
+            "authentication_mode": _string_schema(enum=["internal_integration"]),
             "project_root": _string_schema(),
-            "integration": _string_schema(),
-            "backend_url": _string_schema(),
-            "oauth_base_url": _string_schema(),
-            "auth_url": _string_schema(),
-            "session_id": _string_schema(),
-            "page_limit": _integer_schema(),
-            "agent_response_hint": _string_schema(),
-            "instructions": _string_schema(),
-        },
-        required=[
-            "project_root",
-            "integration",
-            "backend_url",
-            "oauth_base_url",
-            "auth_url",
-            "session_id",
-            "page_limit",
-            "agent_response_hint",
-            "instructions",
-        ],
-    )
-
-
-def _selection_browser_output_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "project_root": _string_schema(),
-            "integration": _string_schema(),
-            "backend_url": _string_schema(),
-            "oauth_base_url": _string_schema(),
-            "selection_mode": _string_schema(enum=["local_browser", "headless"]),
-            "selection_url": _string_schema(),
-            "session_id": _string_schema(),
-            "page_limit": _integer_schema(),
-            "timeout_seconds": _integer_schema(),
-            "return_to": _nullable(_string_schema()),
-            "credential_provider": _nullable(_string_schema(enum=["keyring", "1password"])),
-            "credential_ref": _nullable(_string_schema()),
-            "browser_opened": _boolean_schema(),
-            "recommended_next_action": _string_schema(),
-            "auto_switched_to_headless": _boolean_schema(),
-            "reason": _string_schema(),
-            "replaces_existing_bindings": _boolean_schema(),
-            "agent_response_hint": _string_schema(),
-            "instructions": _string_schema(),
-        },
-        required=[
-            "project_root",
-            "integration",
-            "backend_url",
-            "oauth_base_url",
-            "selection_mode",
-            "selection_url",
-            "session_id",
-            "page_limit",
-            "credential_provider",
-            "credential_ref",
-            "replaces_existing_bindings",
-            "agent_response_hint",
-            "instructions",
-        ],
-    )
-
-
-def _auth_completion_output_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "project_root": _string_schema(),
-            "integration": _string_schema(),
-            "backend_url": _string_schema(),
-            "oauth_base_url": _string_schema(),
-            "workspace_name": _nullable(_string_schema()),
-            "workspace_id": _nullable(_string_schema()),
-            "session_path": _string_schema(),
-            "binding_path": _string_schema(),
-            "default_resource_alias": _nullable(_string_schema()),
-            "resources": _array_schema(_binding_resource_schema()),
-        },
-        required=[
-            "project_root",
-            "integration",
-            "backend_url",
-            "oauth_base_url",
-            "session_path",
-            "binding_path",
-            "resources",
-        ],
-    )
-
-
-def _list_saved_credentials_output_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "project_root": _string_schema(),
-            "integration": _string_schema(),
-            "credential_provider": _nullable(_string_schema(enum=["keyring", "1password"])),
-            "saved_credential_count": _integer_schema(),
-            "credentials": _array_schema(_saved_credential_schema()),
-        },
-        required=[
-            "project_root",
-            "integration",
-            "credential_provider",
-            "saved_credential_count",
-            "credentials",
-        ],
-    )
-
-
-def _attach_saved_credential_output_schema() -> dict[str, Any]:
-    return _object_schema(
-        {
-            "project_root": _string_schema(),
-            "integration": _string_schema(),
-            "backend_url": _string_schema(),
-            "oauth_base_url": _string_schema(),
-            "credential_provider": _string_schema(enum=["keyring", "1password"]),
-            "credential_ref": _string_schema(),
+            "token_source": _string_schema(enum=["keychain", "1password"]),
+            "storage": _string_schema(enum=["keychain", "1password"]),
             "workspace_name": _nullable(_string_schema()),
             "workspace_id": _nullable(_string_schema()),
             "bot_id": _nullable(_string_schema()),
-            "session_path": _string_schema(),
-            "binding_path": _string_schema(),
-            "cleared_bindings": _boolean_schema(),
-            "attached_existing_credential": _boolean_schema(),
+            "bot_owner_type": _nullable(_string_schema()),
+            "storage_options": _array_schema(_storage_backend_schema()),
+            "recommended_next_action": _string_schema(),
+            "op_vault": _nullable(_string_schema()),
+            "op_item_title": _nullable(_string_schema()),
+            "keyring_backend": _string_schema(),
         },
         required=[
+            "ok",
+            "authentication_mode",
             "project_root",
-            "integration",
-            "backend_url",
-            "oauth_base_url",
-            "credential_provider",
-            "credential_ref",
-            "session_path",
-            "binding_path",
-            "cleared_bindings",
-            "attached_existing_credential",
+            "token_source",
+            "storage",
+            "storage_options",
+            "recommended_next_action",
+            "keyring_backend",
         ],
     )
 
 
-def _clear_project_auth_output_schema() -> dict[str, Any]:
+def _search_result_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "resource_id": _string_schema(),
+            "resource_type": _string_schema(enum=["page", "data_source"]),
+            "resource_url": _nullable(_string_schema()),
+            "title": _string_schema(),
+            "last_edited_time": _nullable(_string_schema()),
+            "parent": _nullable(_object_schema({}, additional_properties=True)),
+        },
+        required=["resource_id", "resource_type", "title"],
+    )
+
+
+def _search_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
             "project_root": _string_schema(),
-            "cleared_session": _boolean_schema(),
-            "cleared_pending_auth": _boolean_schema(),
-            "cleared_pending_handoff": _boolean_schema(),
-            "cleared_local_handoff_server": _boolean_schema(),
-            "cleared_bindings": _boolean_schema(),
-            "shared_credentials_retained": _boolean_schema(),
+            "query": _nullable(_string_schema()),
+            "page_size": _integer_schema(),
+            "result_count": _integer_schema(),
+            "results": _array_schema(_search_result_schema()),
         },
-        required=[
-            "project_root",
-            "cleared_session",
-            "cleared_pending_auth",
-            "cleared_pending_handoff",
-            "cleared_local_handoff_server",
-            "cleared_bindings",
-            "shared_credentials_retained",
-        ],
+        required=["project_root", "page_size", "result_count", "results"],
     )
 
 
@@ -613,33 +362,32 @@ def _bindings_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
             "project_root": _string_schema(),
-            "binding_path": _string_schema(),
             "default_resource_alias": _nullable(_string_schema()),
+            "resource_count": _integer_schema(),
             "resources": _array_schema(_binding_resource_schema()),
         },
-        required=["project_root", "binding_path", "default_resource_alias", "resources"],
+        required=["project_root", "resource_count", "resources"],
     )
 
 
-def _refresh_session_output_schema() -> dict[str, Any]:
+def _clear_project_auth_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
+            "ok": _boolean_schema(),
             "project_root": _string_schema(),
-            "integration": _string_schema(),
-            "backend_url": _string_schema(),
-            "oauth_base_url": _string_schema(),
-            "workspace_name": _nullable(_string_schema()),
-            "workspace_id": _nullable(_string_schema()),
-            "session_path": _string_schema(),
-            "refreshed": _boolean_schema(),
+            "storage": _nullable(_string_schema(enum=["keychain", "1password"])),
+            "session_cleared": _boolean_schema(),
+            "stored_secret_deleted": _boolean_schema(),
+            "bindings_cleared": _boolean_schema(),
+            "env_token_still_present": _boolean_schema(),
         },
         required=[
+            "ok",
             "project_root",
-            "integration",
-            "backend_url",
-            "oauth_base_url",
-            "session_path",
-            "refreshed",
+            "session_cleared",
+            "stored_secret_deleted",
+            "bindings_cleared",
+            "env_token_still_present",
         ],
     )
 
@@ -648,47 +396,29 @@ def _api_context_output_schema() -> dict[str, Any]:
     return _object_schema(
         {
             "project_root": _string_schema(),
-            "api_base": _string_schema(),
-            "notion_version": _string_schema(),
-            "docs_reference": _string_schema(),
-            "docs_versioning": _string_schema(),
-            "docs_markdown_content": _string_schema(),
+            "authentication_mode": _string_schema(enum=["internal_integration"]),
+            "token_source": _string_schema(enum=["env", "keychain", "1password"]),
+            "storage": _nullable(_string_schema(enum=["keychain", "1password"])),
             "access_token": _string_schema(),
-            "credential_provider": _nullable(_string_schema(enum=["keyring", "1password"])),
-            "headers": _object_schema({}, additional_properties=_string_schema()),
+            "api_base_url": _string_schema(),
+            "notion_version": _string_schema(),
+            "headers": _object_schema({}, additional_properties=True),
             "workspace_name": _nullable(_string_schema()),
             "workspace_id": _nullable(_string_schema()),
             "bot_id": _nullable(_string_schema()),
-            "default_resource_alias": _nullable(_string_schema()),
-            "default_binding": _nullable(_binding_resource_schema()),
-            "resources": _array_schema(_binding_resource_schema()),
-            "binding_model": _string_schema(),
+            "bound_resources": _array_schema(_binding_resource_schema()),
             "selection_scope_note": _string_schema(),
-            "binding_path": _string_schema(),
-            "session_path": _string_schema(),
-            "refresh_supported": _boolean_schema(),
-            "refresh_tool": _string_schema(),
-            "usage": _string_schema(),
-            "curl_example": _nullable(_string_schema()),
         },
         required=[
             "project_root",
-            "api_base",
-            "notion_version",
-            "docs_reference",
-            "docs_versioning",
-            "docs_markdown_content",
+            "authentication_mode",
+            "token_source",
             "access_token",
+            "api_base_url",
+            "notion_version",
             "headers",
-            "resources",
-            "binding_model",
+            "bound_resources",
             "selection_scope_note",
-            "binding_path",
-            "session_path",
-            "refresh_supported",
-            "refresh_tool",
-            "usage",
-            "curl_example",
         ],
     )
 
@@ -711,7 +441,11 @@ def _tool_definitions() -> list[types.Tool]:
             "resource_id_or_url": {"type": "string"},
             "resource_id": {"type": "string"},
             "resource_url": {"type": "string"},
-            "resource_type": {"type": "string"},
+            "resource_type": {
+                "type": "string",
+                "enum": ["page", "data_source", "database"],
+            },
+            "title": {"type": "string"},
             "alias": {"type": "string"},
             "selection_scope": {"type": "string", "enum": ["resource", "subtree"]},
         },
@@ -720,7 +454,7 @@ def _tool_definitions() -> list[types.Tool]:
         _tool(
             name="notion_status",
             title="Notion Project Status",
-            description="Read the current auth, binding, and pending-handoff status for this project.",
+            description="Read the current Internal Integration auth, storage backend, and bindings status for this project.",
             properties={"project_root": {"type": "string"}},
             output_schema=_status_output_schema(),
             read_only=True,
@@ -730,7 +464,7 @@ def _tool_definitions() -> list[types.Tool]:
         _tool(
             name="notion_setup_guide",
             title="Notion Setup Guide",
-            description="Return the setup guide for the hosted public integration and its Cloudflare Worker backend.",
+            description="Return the setup guide for the Internal Integration workflow.",
             properties={},
             output_schema=_setup_guide_output_schema(),
             read_only=True,
@@ -738,150 +472,70 @@ def _tool_definitions() -> list[types.Tool]:
             idempotent=True,
         ),
         _tool(
-            name="notion_auth_browser",
-            title="Start Browser Auth",
+            name="notion_prepare_internal_integration",
+            title="Prepare Internal Integration Setup",
+            description="Open the Notion integrations dashboard and detect available local storage backends before collecting the Internal Integration Secret.",
+            properties={
+                "project_root": {"type": "string"},
+                "open_browser": {"type": "boolean"},
+            },
+            output_schema=_prepare_output_schema(),
+            read_only=False,
+            destructive=False,
+            idempotent=False,
+            open_world=True,
+        ),
+        _tool(
+            name="notion_configure_internal_integration",
+            title="Configure Internal Integration",
             description=(
-                "Open the official Notion public-integration consent flow in a browser and start a localhost handoff "
-                "listener for this project. The browser flow completes asynchronously, so call notion_status after "
-                "you finish consent and selection. The default localhost listener timeout is "
-                f"{DEFAULT_BROWSER_AUTH_TIMEOUT_SECONDS} seconds, and the default page_limit is "
-                f"{DEFAULT_BROWSER_AUTH_PAGE_LIMIT}. Use this when you need the official Notion OAuth/root-page chooser "
-                "again to expand what the integration can access. If called with open_browser=false, this tool switches "
-                "to the headless flow instead."
+                "Validate and store a Notion Internal Integration secret for this project. Pass storage='keychain' "
+                "to use the local system keychain or storage='1password' to use 1Password. "
+                f"Use {TOKEN_ENV_VAR} instead when you prefer an environment-only override."
             ),
             properties={
                 "project_root": {"type": "string"},
-                "timeout_seconds": {"type": "integer"},
-                "open_browser": {"type": "boolean"},
-                "page_limit": {"type": "integer"},
+                "secret": {"type": "string"},
+                "storage": {
+                    "type": "string",
+                    "enum": ["auto", "keychain", "1password"],
+                },
+                "op_vault": {"type": "string"},
+                "op_item_title": {"type": "string"},
             },
-            output_schema=_auth_browser_output_schema(),
+            required=["secret"],
+            output_schema=_configure_output_schema(),
             read_only=False,
             destructive=False,
             idempotent=False,
             open_world=True,
         ),
         _tool(
-            name="notion_start_headless_auth",
-            title="Start Headless Auth",
-            description="Create a headless public-integration auth URL. Use this when you need the official Notion OAuth/root-page chooser again from SSH or another headless environment. The user can finish auth in any browser and then paste the returned handoff bundle back into Codex.",
+            name="notion_search_resources",
+            title="Search Notion Resources",
+            description=(
+                "Search the pages and data sources that the Internal Integration bot can access. "
+                f"Defaults to {DEFAULT_SEARCH_PAGE_SIZE} results."
+            ),
             properties={
                 "project_root": {"type": "string"},
-                "page_limit": {"type": "integer"},
+                "query": {"type": "string"},
+                "page_size": {"type": "integer"},
             },
-            output_schema=_start_headless_auth_output_schema(),
-            read_only=False,
-            destructive=False,
-            idempotent=False,
-            open_world=True,
-        ),
-        _tool(
-            name="notion_complete_headless_auth",
-            title="Complete Headless Auth",
-            description="Finish a headless public-integration auth flow using the handoff bundle shown by the Worker callback page.",
-            properties={
-                "project_root": {"type": "string"},
-                "handoff_bundle": {"type": "string"},
-            },
-            required=["handoff_bundle"],
-            output_schema=_auth_completion_output_schema(),
-            read_only=False,
-            destructive=False,
-            idempotent=False,
-            open_world=True,
-        ),
-        _tool(
-            name="notion_finalize_pending_auth",
-            title="Finalize Pending Browser Auth",
-            description="Persist a pending browser auth or browser selection handoff that has already reached the local MCP server. Use this after notion_status reports pending_handoff_ready=true.",
-            properties={"project_root": {"type": "string"}},
-            output_schema=_auth_completion_output_schema(),
-            read_only=False,
-            destructive=False,
-            idempotent=False,
-        ),
-        _tool(
-            name="notion_refresh_session",
-            title="Refresh Notion Session",
-            description="Refresh the saved Notion public-integration session for this project through the Worker backend.",
-            properties={"project_root": {"type": "string"}},
-            output_schema=_refresh_session_output_schema(),
-            read_only=False,
-            destructive=False,
-            idempotent=False,
-            open_world=True,
-        ),
-        _tool(
-            name="notion_list_saved_credentials",
-            title="List Saved Credentials",
-            description="List saved shared Notion credentials for this integration from the configured keyring or 1Password provider, without re-running OAuth.",
-            properties={
-                "project_root": {"type": "string"},
-                "credential_provider": {"type": "string", "enum": ["keyring", "1password"]},
-            },
-            output_schema=_list_saved_credentials_output_schema(),
+            output_schema=_search_output_schema(),
             read_only=True,
             destructive=False,
             idempotent=True,
-        ),
-        _tool(
-            name="notion_attach_saved_credential",
-            title="Attach Saved Credential",
-            description="Attach one previously saved shared Notion credential to this project so you can bind resources without re-running OAuth. If multiple saved credentials exist, pass credential_ref explicitly.",
-            properties={
-                "project_root": {"type": "string"},
-                "credential_ref": {"type": "string"},
-                "credential_provider": {"type": "string", "enum": ["keyring", "1password"]},
-                "clear_bindings": {"type": "boolean"},
-            },
-            output_schema=_attach_saved_credential_output_schema(),
-            read_only=False,
-            destructive=True,
-            idempotent=False,
-        ),
-        _tool(
-            name="notion_selection_browser",
-            title="Reopen Selection UI",
-            description=(
-                "Open the hosted Notion resource-selection UI using the current saved session or a saved shared "
-                "credential, without re-running OAuth consent. Use this only when the current Notion OAuth scope already "
-                "includes the content you need and you only want to choose project bindings. This can replace the "
-                "project's current bindings, so pass replace_existing_bindings=true when rebinding an already-configured "
-                "project. If you actually need to expand root-page access, use notion_auth_browser or notion_start_headless_auth instead. "
-                "If called with open_browser=false, this tool switches to a headless selection URL."
-            ),
-            properties={
-                "project_root": {"type": "string"},
-                "timeout_seconds": {"type": "integer"},
-                "open_browser": {"type": "boolean"},
-                "page_limit": {"type": "integer"},
-                "credential_ref": {"type": "string"},
-                "credential_provider": {"type": "string", "enum": ["keyring", "1password"]},
-                "replace_existing_bindings": {"type": "boolean"},
-            },
-            output_schema=_selection_browser_output_schema(),
-            read_only=False,
-            destructive=False,
-            idempotent=False,
             open_world=True,
-        ),
-        _tool(
-            name="notion_clear_project_auth",
-            title="Clear Project Auth",
-            description="Remove the saved project-local Notion session, and optionally the bound resources too. Shared keyring or 1Password credentials are not deleted.",
-            properties={
-                "project_root": {"type": "string"},
-                "clear_bindings": {"type": "boolean"},
-            },
-            output_schema=_clear_project_auth_output_schema(),
-            read_only=False,
-            destructive=True,
-            idempotent=False,
         ),
         _tool(
             name="notion_bind_resources",
             title="Bind Resources",
-            description="Bind one or more existing Notion pages or data sources to the current project using the saved access token. Pass selection_scope='subtree' to bind a root resource and treat nested content under it as included.",
+            description=(
+                "Bind one or more existing Notion pages or data sources to the current project using the "
+                "configured Internal Integration secret. Pass selection_scope='subtree' to mark a root "
+                "resource and treat nested content as included."
+            ),
             properties={
                 "project_root": {"type": "string"},
                 "resource_refs": {"type": "array", "items": resource_ref_schema},
@@ -907,7 +561,7 @@ def _tool_definitions() -> list[types.Tool]:
         _tool(
             name="notion_get_api_context",
             title="Get API Context",
-            description="Return the current public-integration access token, official API headers, and bound resource IDs so the agent can call the original Notion REST API directly.",
+            description="Return the Internal Integration secret, official Notion API headers, and bound resource IDs for direct API calls.",
             properties={"project_root": {"type": "string"}},
             output_schema=_api_context_output_schema(),
             read_only=True,
@@ -915,61 +569,61 @@ def _tool_definitions() -> list[types.Tool]:
             idempotent=True,
             open_world=True,
         ),
+        _tool(
+            name="notion_clear_project_auth",
+            title="Clear Project Auth",
+            description="Remove the saved project-local session and delete the stored keychain or 1Password secret. Optionally clear bound resources too.",
+            properties={
+                "project_root": {"type": "string"},
+                "clear_bindings": {"type": "boolean"},
+            },
+            output_schema=_clear_project_auth_output_schema(),
+            read_only=False,
+            destructive=True,
+            idempotent=False,
+        ),
     ]
 
 
 def _handlers() -> dict[str, ToolHandler]:
     return {
         "notion_status": lambda args: status(project_root=args.get("project_root")),
-        "notion_setup_guide": lambda args: _setup_guide_tool_payload(),
-        "notion_auth_browser": lambda args: auth_browser(
-            project_root=args.get("project_root"),
-            timeout_seconds=args.get("timeout_seconds"),
-            open_browser=bool(args.get("open_browser", True)),
-            page_limit=args.get("page_limit"),
+        "notion_setup_guide": lambda _args: _setup_guide_tool_payload(),
+        "notion_prepare_internal_integration": lambda args: (
+            prepare_internal_integration(
+                project_root=args.get("project_root"),
+                open_browser=bool(args.get("open_browser", True)),
+            )
         ),
-        "notion_start_headless_auth": lambda args: start_headless_auth(
-            project_root=args.get("project_root"),
-            page_limit=args.get("page_limit"),
+        "notion_configure_internal_integration": lambda args: (
+            configure_internal_integration(
+                project_root=args.get("project_root"),
+                secret=str(args.get("secret") or ""),
+                storage=args.get("storage"),
+                op_vault=args.get("op_vault"),
+                op_item_title=args.get("op_item_title"),
+            )
         ),
-        "notion_complete_headless_auth": lambda args: complete_headless_auth(
+        "notion_search_resources": lambda args: search_resources(
             project_root=args.get("project_root"),
-            handoff_bundle=str(args.get("handoff_bundle") or ""),
-        ),
-        "notion_finalize_pending_auth": lambda args: finalize_pending_auth(
-            project_root=args.get("project_root"),
-        ),
-        "notion_refresh_session": lambda args: refresh_session(project_root=args.get("project_root")),
-        "notion_list_saved_credentials": lambda args: list_saved_credentials(
-            project_root=args.get("project_root"),
-            credential_provider=args.get("credential_provider"),
-        ),
-        "notion_attach_saved_credential": lambda args: attach_saved_credential(
-            project_root=args.get("project_root"),
-            credential_ref=args.get("credential_ref"),
-            credential_provider=args.get("credential_provider"),
-            clear_bindings=bool(args.get("clear_bindings", False)),
-        ),
-        "notion_selection_browser": lambda args: selection_browser(
-            project_root=args.get("project_root"),
-            timeout_seconds=args.get("timeout_seconds"),
-            open_browser=bool(args.get("open_browser", True)),
-            page_limit=args.get("page_limit"),
-            credential_ref=args.get("credential_ref"),
-            credential_provider=args.get("credential_provider"),
-            replace_existing_bindings=bool(args.get("replace_existing_bindings", False)),
-        ),
-        "notion_clear_project_auth": lambda args: clear_project_auth(
-            project_root=args.get("project_root"),
-            clear_bindings=bool(args.get("clear_bindings", False)),
+            query=args.get("query"),
+            page_size=args.get("page_size"),
         ),
         "notion_bind_resources": lambda args: bind_resources(
             project_root=args.get("project_root"),
             resource_refs=list(args.get("resource_refs") or []),
             default_alias=args.get("default_alias"),
         ),
-        "notion_list_bindings": lambda args: list_bindings(project_root=args.get("project_root")),
-        "notion_get_api_context": lambda args: get_api_context(project_root=args.get("project_root")),
+        "notion_list_bindings": lambda args: list_bindings(
+            project_root=args.get("project_root")
+        ),
+        "notion_get_api_context": lambda args: get_api_context(
+            project_root=args.get("project_root")
+        ),
+        "notion_clear_project_auth": lambda args: clear_project_auth(
+            project_root=args.get("project_root"),
+            clear_bindings=bool(args.get("clear_bindings", False)),
+        ),
     }
 
 
@@ -979,14 +633,14 @@ def _resource_definitions() -> list[types.Resource]:
             name="notion_setup_guide",
             title="Notion Setup Guide",
             uri=SETUP_GUIDE_RESOURCE_URI,
-            description="Static setup guidance for the shared Notion access-broker and the Agent Labbook MCP server.",
+            description="Static setup guidance for using a Notion Internal Integration secret with Notion Agent Labbook.",
             mimeType="text/markdown",
         ),
         types.Resource(
             name="notion_project_status",
             title="Notion Project Status",
             uri=STATUS_RESOURCE_URI,
-            description="Read-only JSON snapshot of the current project's auth, binding, and pending-handoff state.",
+            description="Read-only JSON snapshot of the current project's Internal Integration auth, storage backend, and bindings state.",
             mimeType="application/json",
         ),
         types.Resource(
@@ -1023,7 +677,7 @@ def _prompt_definitions() -> list[types.Prompt]:
         types.Prompt(
             name="notion_connect_project",
             title="Connect Project To Notion",
-            description="Recommended workflow for connecting the current project to Notion while preferring credential reuse over a new OAuth flow.",
+            description="Recommended workflow for connecting the current project to Notion with an Internal Integration secret.",
             arguments=[
                 types.PromptArgument(
                     name="project_root",
@@ -1035,7 +689,7 @@ def _prompt_definitions() -> list[types.Prompt]:
         types.Prompt(
             name="notion_use_bound_resources",
             title="Use Bound Notion Resources",
-            description="Recommended workflow for checking bindings and then calling the official Notion API with the project's saved access token.",
+            description="Recommended workflow for checking bindings and then calling the official Notion API with the project's configured Internal Integration secret.",
             arguments=[
                 types.PromptArgument(
                     name="project_root",
@@ -1054,29 +708,24 @@ def _prompt_project_suffix(arguments: dict[str, str] | None) -> str:
     return f"Use {project_root} as the project root."
 
 
-def _prompt_result(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+def _prompt_result(
+    name: str, arguments: dict[str, str] | None
+) -> types.GetPromptResult:
     project_suffix = _prompt_project_suffix(arguments)
     if name == "notion_connect_project":
         text = "\n".join(
             [
-                "Connect this project to Notion with the MCP server's preferred workflow.",
+                "Connect this project to Notion with an Internal Integration secret.",
                 project_suffix,
                 f"1. Read {STATUS_RESOURCE_URI} or call notion_status.",
-                "2. If notion_status reports saved_credentials_error or credential_provider_diagnostics_error, stop and fix the local notion-access-broker helper setup before starting OAuth.",
-                "3. If saved shared credentials already exist, prefer notion_list_saved_credentials and notion_attach_saved_credential before starting OAuth again.",
-                "4. notion_status.connect_decision is a blocking decision. Do not choose scope_mode or browser_mode on the user's behalf unless they already provided both values explicitly.",
-                "5. If your client can ask the user follow-up questions, map notion_status.connect_decision.questions into those prompts and wait for the user's response before choosing tools.",
-                "6. If it cannot, show notion_status.connect_decision.manual_prompt_markdown to the user and wait for a plain-text answer before choosing any connect tool.",
-                "7. When a headless flow returns auth_url or selection_url, print that raw URL exactly once on its own line. Do not repeat the same URL in markdown link syntax or parentheses.",
-                "8. Use notion_status.scope_choice_hint and notion_status.connect_decision.route_templates to decide whether you need fresh OAuth scope or only project bindings within the existing scope.",
-                "9. If you need the official Notion root-page chooser again to expand access, use notion_auth_browser for same-machine browser flows or notion_start_headless_auth for remote/headless flows.",
-                "10. If the current integration access scope is already enough and you only need to pick which authorized pages or databases this project should bind, use notion_selection_browser instead of re-running OAuth.",
-                "11. Check notion_status.preferred_browser_flow and notion_status.recommended_open_browser before starting any browser flow.",
-                "12. If you reopen notion_selection_browser in a remote or SSH session, pass open_browser=false unless you are sure the browser can reach the MCP host's localhost callback.",
-                "13. After the browser says the project is connected, call notion_status again.",
-                "14. If notion_status reports pending_handoff_ready=true, call notion_finalize_pending_auth.",
-                "15. If the browser shows a handoff bundle instead, call notion_complete_headless_auth with that bundle.",
-                "16. Once authenticated, bind additional resources only when needed.",
+                "2. If the project is not authenticated, call notion_prepare_internal_integration to open the Notion integrations dashboard and detect available storage backends.",
+                "3. If notion_status.storage_choice_required is true, ask the user whether to store the secret in system keychain or 1Password.",
+                "4. Use notion_configure_internal_integration with the chosen storage value to validate and store the secret.",
+                "5. Remind the user to share the target pages or data sources with the integration bot inside Notion.",
+                "6. Use notion_search_resources to discover accessible pages or data sources.",
+                "7. Bind the relevant roots with notion_bind_resources.",
+                "8. Call notion_get_api_context only when you are ready to use the official Notion API.",
+                "9. Never echo the secret back to the user or store it in project files.",
             ]
         )
     elif name == "notion_use_bound_resources":
@@ -1084,13 +733,12 @@ def _prompt_result(name: str, arguments: dict[str, str] | None) -> types.GetProm
             [
                 "Use the project's bound Notion resources safely.",
                 project_suffix,
-                f"1. Read {BINDINGS_RESOURCE_URI} or call notion_list_bindings to understand the current explicit roots and selection_scope values.",
+                f"1. Read {BINDINGS_RESOURCE_URI} or call notion_list_bindings to inspect the current explicit roots and selection_scope values.",
                 "2. Call notion_get_api_context only when you are ready to use the official Notion API.",
                 "3. If your source content is already markdown, prefer Notion's markdown content APIs over manual block conversion: POST /v1/pages with markdown to create content, GET /v1/pages/{page_id}/markdown to read it back, and PATCH /v1/pages/{page_id}/markdown to update it.",
                 "4. See https://developers.notion.com/guides/data-apis/working-with-markdown-content for the markdown API details.",
-                "5. Use the returned headers and access token with the official Notion REST API.",
-                "6. Treat the access token like a password and avoid echoing it into logs or chat transcripts.",
-                "7. If the project is not authenticated or the session is stale, use notion_status to choose the next auth step first.",
+                "5. Treat the Internal Integration secret like a password and avoid echoing it into logs or chat transcripts.",
+                "6. If the project is not authenticated, use notion_status, notion_prepare_internal_integration, and notion_configure_internal_integration first.",
             ]
         )
     else:
@@ -1119,7 +767,9 @@ def _structured_payload(payload: dict[str, Any] | str) -> dict[str, Any]:
     return {"result": payload}
 
 
-def _tool_result(payload: dict[str, Any] | str, *, is_error: bool = False) -> types.CallToolResult:
+def _tool_result(
+    payload: dict[str, Any] | str, *, is_error: bool = False
+) -> types.CallToolResult:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=_result_text(payload))],
         structuredContent=_structured_payload(payload),
@@ -1143,17 +793,26 @@ async def handle_list_tools() -> list[types.Tool]:
 async def handle_call_tool(
     name: str,
     arguments: dict[str, Any] | None,
-) -> types.CallToolResult | ToolSuccessResult:
+) -> types.CallToolResult:
     handler = _handlers().get(name)
     if handler is None:
         return _tool_result({"error": f"Unknown tool: {name}"}, is_error=True)
 
     try:
-        return handler(arguments or {})
+        result = handler(arguments or {})
     except LabbookError as exc:
         return _tool_result({"error": str(exc)}, is_error=True)
     except Exception as exc:  # noqa: BLE001
         return _tool_result({"error": f"Internal error: {exc}"}, is_error=True)
+
+    if isinstance(result, tuple):
+        content_items, structured = result
+        return types.CallToolResult(
+            content=content_items,
+            structuredContent=structured,
+            isError=False,
+        )
+    return _tool_result(result)
 
 
 @server.list_resources()
@@ -1194,7 +853,9 @@ async def handle_list_prompts() -> list[types.Prompt]:
 
 
 @server.get_prompt()
-async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+async def handle_get_prompt(
+    name: str, arguments: dict[str, str] | None
+) -> types.GetPromptResult:
     return _prompt_result(name, arguments)
 
 

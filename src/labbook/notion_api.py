@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib import error, parse, request
+from urllib import error, request
 
 from .state import DEFAULT_NOTION_VERSION, LabbookError, normalize_notion_id
 
@@ -56,22 +56,15 @@ class NotionClient:
         path: str,
         *,
         body: dict[str, Any] | None = None,
-        query: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         url = f"{NOTION_API_BASE}{path}"
-        if query:
-            encoded = parse.urlencode(
-                {key: value for key, value in query.items() if value is not None},
-                doseq=True,
-            )
-            if encoded:
-                url = f"{url}?{encoded}"
-
         data = None
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
-        req = request.Request(url, data=data, headers=self._headers(), method=method.upper())
+        req = request.Request(
+            url, data=data, headers=self._headers(), method=method.upper()
+        )
         try:
             with request.urlopen(req, timeout=self.timeout) as response:
                 payload = response.read().decode("utf-8")
@@ -82,7 +75,9 @@ class NotionClient:
             except json.JSONDecodeError:
                 parsed_error = {"message": raw}
             message = parsed_error.get("message") or str(exc)
-            raise NotionApiError(f"Notion API {exc.code}: {message}", status_code=exc.code) from exc
+            raise NotionApiError(
+                f"Notion API {exc.code}: {message}", status_code=exc.code
+            ) from exc
         except error.URLError as exc:
             raise NotionApiError(f"Could not reach Notion API: {exc.reason}") from exc
 
@@ -95,22 +90,31 @@ class NotionClient:
         return self._request("GET", f"/pages/{normalize_notion_id(page_id)}")
 
     def retrieve_data_source(self, data_source_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/data_sources/{normalize_notion_id(data_source_id)}")
-
-    def search(self, *, page_size: int = 50) -> dict[str, Any]:
         return self._request(
-            "POST",
-            "/search",
-            body={
-                "page_size": page_size,
-                "sort": {
-                    "direction": "descending",
-                    "timestamp": "last_edited_time",
-                },
-            },
+            "GET", f"/data_sources/{normalize_notion_id(data_source_id)}"
         )
 
-    def retrieve_resource(self, resource_id: str, resource_type: str | None = None) -> dict[str, Any]:
+    def search(
+        self,
+        *,
+        query: str | None = None,
+        page_size: int = 25,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "page_size": page_size,
+            "sort": {
+                "direction": "descending",
+                "timestamp": "last_edited_time",
+            },
+        }
+        clean_query = str(query or "").strip()
+        if clean_query:
+            body["query"] = clean_query
+        return self._request("POST", "/search", body=body)
+
+    def retrieve_resource(
+        self, resource_id: str, resource_type: str | None = None
+    ) -> dict[str, Any]:
         normalized_type = str(resource_type or "").strip().lower()
         normalized_id = normalize_notion_id(resource_id)
 

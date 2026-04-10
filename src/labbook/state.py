@@ -4,25 +4,18 @@ import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
 from uuid import UUID
 
 
-DEFAULT_BACKEND_URL = "https://superplanner.ai/notion/agent-labbook"
-DEFAULT_OAUTH_BASE_URL = "https://superplanner.ai/notion/oauth"
-INTEGRATION_ID = "agent-labbook"
+INTEGRATION_ID = "notion-agent-labbook"
 DEFAULT_NOTION_VERSION = "2026-03-11"
 PROJECT_STATE_DIRNAME = ".labbook"
 SESSION_FILENAME = "session.json"
 BINDINGS_FILENAME = "bindings.json"
-PENDING_AUTH_FILENAME = "pending-auth.json"
-PENDING_HANDOFF_FILENAME = "pending-handoff.json"
-LOCAL_HANDOFF_SERVER_FILENAME = "local-handoff-server.json"
-SESSION_STATE_VERSION = 1
+SESSION_STATE_VERSION = 3
 BINDINGS_STATE_VERSION = 1
-PENDING_AUTH_STATE_VERSION = 1
-PENDING_HANDOFF_STATE_VERSION = 1
-LOCAL_HANDOFF_SERVER_STATE_VERSION = 1
+TOKEN_ENV_VAR = "NOTION_AGENT_LABBOOK_TOKEN"
+KEYRING_SERVICE_NAME = INTEGRATION_ID
 
 
 class LabbookError(RuntimeError):
@@ -40,52 +33,7 @@ _STATE_SCHEMA_SPECS = {
         "version": BINDINGS_STATE_VERSION,
         "inject_integration": False,
     },
-    PENDING_AUTH_FILENAME: {
-        "label": "Pending auth state",
-        "version": PENDING_AUTH_STATE_VERSION,
-        "inject_integration": True,
-    },
-    PENDING_HANDOFF_FILENAME: {
-        "label": "Pending handoff state",
-        "version": PENDING_HANDOFF_STATE_VERSION,
-        "inject_integration": False,
-    },
-    LOCAL_HANDOFF_SERVER_FILENAME: {
-        "label": "Local handoff server state",
-        "version": LOCAL_HANDOFF_SERVER_STATE_VERSION,
-        "inject_integration": False,
-    },
 }
-
-
-def _normalize_http_url(value: str, *, env_name: str) -> str:
-    if not value:
-        raise LabbookError(f"{env_name} cannot be empty.")
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise LabbookError(f"Invalid backend URL: {value!r}")
-    if parsed.params or parsed.query or parsed.fragment:
-        raise LabbookError(f"{env_name} must not include params, query, or fragment.")
-    normalized_path = parsed.path.rstrip("/")
-    return urlunparse((parsed.scheme, parsed.netloc, normalized_path, "", "", ""))
-
-
-def effective_backend_url() -> str:
-    value = str(os.getenv("AGENT_LABBOOK_BACKEND_URL") or DEFAULT_BACKEND_URL).strip()
-    return _normalize_http_url(value, env_name="AGENT_LABBOOK_BACKEND_URL")
-
-
-def effective_oauth_base_url() -> str:
-    value = str(os.getenv("AGENT_LABBOOK_OAUTH_BASE_URL") or DEFAULT_OAUTH_BASE_URL).strip()
-    return _normalize_http_url(value, env_name="AGENT_LABBOOK_OAUTH_BASE_URL")
-
-
-def oauth_callback_uri(oauth_base_url: str | None = None) -> str:
-    return f"{oauth_base_url or effective_oauth_base_url()}/callback"
-
-
-def backend_redirect_uri(backend_url: str | None = None) -> str:
-    return oauth_callback_uri(backend_url)
 
 
 def resolve_project_root(project_root: str | Path | None = None) -> Path:
@@ -109,18 +57,6 @@ def session_path(project_root: str | Path | None = None) -> Path:
 
 def bindings_path(project_root: str | Path | None = None) -> Path:
     return project_state_dir(project_root) / BINDINGS_FILENAME
-
-
-def pending_auth_path(project_root: str | Path | None = None) -> Path:
-    return project_state_dir(project_root) / PENDING_AUTH_FILENAME
-
-
-def pending_handoff_path(project_root: str | Path | None = None) -> Path:
-    return project_state_dir(project_root) / PENDING_HANDOFF_FILENAME
-
-
-def local_handoff_server_path(project_root: str | Path | None = None) -> Path:
-    return project_state_dir(project_root) / LOCAL_HANDOFF_SERVER_FILENAME
 
 
 def _state_schema_spec(path: Path) -> dict[str, object] | None:
@@ -223,54 +159,6 @@ def load_project_bindings(project_root: str | Path | None = None) -> dict | None
 
 def save_project_bindings(project_root: str | Path | None, payload: dict) -> Path:
     return _save_json(bindings_path(project_root), payload)
-
-
-def load_pending_auth(project_root: str | Path | None = None) -> dict | None:
-    return _load_json(pending_auth_path(project_root))
-
-
-def save_pending_auth(project_root: str | Path | None, payload: dict) -> Path:
-    return _save_json(pending_auth_path(project_root), payload)
-
-
-def load_pending_handoff(project_root: str | Path | None = None) -> dict | None:
-    return _load_json(pending_handoff_path(project_root))
-
-
-def save_pending_handoff(project_root: str | Path | None, payload: dict) -> Path:
-    return _save_json(pending_handoff_path(project_root), payload)
-
-
-def load_local_handoff_server(project_root: str | Path | None = None) -> dict | None:
-    return _load_json(local_handoff_server_path(project_root))
-
-
-def save_local_handoff_server(project_root: str | Path | None, payload: dict) -> Path:
-    return _save_json(local_handoff_server_path(project_root), payload)
-
-
-def clear_pending_auth(project_root: str | Path | None = None) -> bool:
-    path = pending_auth_path(project_root)
-    if not path.exists():
-        return False
-    path.unlink()
-    return True
-
-
-def clear_pending_handoff(project_root: str | Path | None = None) -> bool:
-    path = pending_handoff_path(project_root)
-    if not path.exists():
-        return False
-    path.unlink()
-    return True
-
-
-def clear_local_handoff_server(project_root: str | Path | None = None) -> bool:
-    path = local_handoff_server_path(project_root)
-    if not path.exists():
-        return False
-    path.unlink()
-    return True
 
 
 def clear_project_session(project_root: str | Path | None = None) -> bool:
