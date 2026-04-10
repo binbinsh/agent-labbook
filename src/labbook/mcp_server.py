@@ -40,7 +40,7 @@ ToolSuccessResult = (
 )
 ToolHandler = Callable[[dict[str, Any]], ToolSuccessResult]
 
-SERVER_NAME = "notion-agent-labbook"
+SERVER_NAME = "agent-labbook"
 SERVER_INSTRUCTIONS = (
     "Notion Agent Labbook exposes read-only project context through MCP resources and mutating "
     "steps through tools. This version uses a Notion Internal Integration secret directly. Prefer "

@@ -1,76 +1,59 @@
 # Versioning Strategy
 
-This repository currently has three independent version boundaries.
+This repository now has two local version boundaries.
 
-## 1. Broker HTTP Contract
-
-- The shared `notion-access-broker` JSON APIs return `api_version`.
-- The shared `notion-access-broker` JSON APIs also return `supported_api_versions`.
-- `agent-labbook` validates that value against its local `BROKER_API_VERSION`.
-- `agent-labbook` sends `X-Notion-Access-Broker-Accept-Api-Versions` on broker JSON requests so incompatible upgrades fail before a flow continues.
-- A mismatched broker API version is treated as a hard compatibility error.
-
-Why:
-
-- browser flows and local MCP flows both depend on the broker
-- silent field drift is harder to debug than an explicit version error
-
-When changing the broker API:
-
-1. bump the broker contract docs and snapshot
-2. bump `BROKER_API_VERSION` in clients that consume the new contract
-3. keep old clients pinned to the previous broker deployment, or add an explicit compatibility path
-
-## 2. `.labbook` Project State
+## 1. `.labbook` Project State
 
 The local state files are independently versioned:
 
 - `session.json`
 - `bindings.json`
-- `pending-auth.json`
-- `pending-handoff.json`
-- `local-handoff-server.json`
 
 Current strategy:
 
-- current schema version for each file is `1`
-- load paths accept legacy versionless payloads and normalize them to version `1`
-- session and pending-auth state also inject the current integration id when it is missing
-- session and pending-auth state reject payloads that claim a different integration id
-- future versions are rejected explicitly
-
-Why:
-
-- older local state written before schema versioning should keep working
-- newer state should not be read incorrectly by older binaries
+- current `session.json` schema version is `3`
+- current `bindings.json` schema version is `1`
+- load paths accept versionless payloads and normalize them to the current version
+- `session.json` stores metadata such as `storage`, `op_ref`, workspace info, and bot info, but not the secret itself
+- unsupported future versions are rejected explicitly
 
 When changing a local state schema:
 
-1. bump the corresponding version constant in `src/labbook/state.py`
-2. add a migration path for older payloads in `_normalize_state_payload`
-3. add tests for both the legacy and future-version cases
+1. bump the corresponding version constant in [src/labbook/state.py](../src/labbook/state.py)
+2. update `_normalize_state_payload`
+3. add tests for current and future-version cases
 
-## 3. Shared Credential Index
+## 2. MCP Surface
 
-The shared credential index stored by `notion_access_broker.credentials` also has its own version.
+The MCP tool, prompt, and resource names are now part of the compatibility surface.
 
 Current strategy:
 
-- current `INDEX_VERSION` is `1`
-- versionless stored indexes are normalized to version `1`
-- unsupported future versions are rejected explicitly
+- additive changes are preferred
+- breaking renames should be paired with explicit release notes
+- tool output schemas should continue to match the server implementation
 
-When changing the index format:
+When changing the MCP surface:
 
-1. bump `INDEX_VERSION`
-2. add migration logic in `_parse_index_payload`
-3. add tests for versionless, current, and future-version payloads
+1. update the tool and resource definitions in [src/labbook/mcp_server.py](../src/labbook/mcp_server.py)
+2. update the related tests in [tests/test_mcp_server.py](../tests/test_mcp_server.py)
+3. document the user-visible change in the README or release notes
+
+## 0.17.1 Migration Note
+
+Version 0.17.1 is a clean architectural break. It removes the OAuth/Cloudflare Worker model entirely and replaces it with direct Notion Internal Integration secret management. As a result:
+
+- `session.json` files from versions prior to 0.17.1 (schema versions 1 and 2) are intentionally rejected on load.
+- There is no automated migration path from earlier schema versions.
+- Users upgrading from 0.13.x or 0.14.x should delete their existing `.labbook/` directory and reconfigure with `notion_configure_internal_integration`.
+
+This is intentional. The old session schema stored OAuth-specific fields that no longer apply.
 
 ## Upgrade Philosophy
 
 The default rule is:
 
-- migrate old known formats deliberately
+- keep the current state format explicit
 - reject unknown future formats loudly
 
-That keeps the current release easy to reason about, while still giving us a clean place to add real migrations later.
+That keeps the local project state predictable and avoids carrying long-lived compatibility branches inside the server.

@@ -8,7 +8,7 @@
         {
           "glass" : false,
           "image-name" : "agent-labbook.png",
-          "name" : "agent-labbook",
+          "name" : "notion-agent-labbook",
           "position" : {
             "scale" : 1.2,
             "translation-in-points" : [

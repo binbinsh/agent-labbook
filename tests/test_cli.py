@@ -31,7 +31,7 @@ class CliTests(unittest.TestCase):
                 "mcpServers": {
                     "labbook": {
                         "command": "uvx",
-                        "args": ["notion-agent-labbook", "mcp"],
+                        "args": ["agent-labbook", "mcp"],
                     }
                 }
             },

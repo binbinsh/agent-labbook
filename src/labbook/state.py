@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 
-INTEGRATION_ID = "notion-agent-labbook"
+INTEGRATION_ID = "agent-labbook"
 DEFAULT_NOTION_VERSION = "2026-03-11"
 PROJECT_STATE_DIRNAME = ".labbook"
 SESSION_FILENAME = "session.json"

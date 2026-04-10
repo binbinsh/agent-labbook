@@ -40,15 +40,15 @@ from .state import (
 )
 
 
-CLIENT_USER_AGENT = f"NotionAgentLabbook/{__version__} (+https://github.com/binbinsh/notion-agent-labbook)"
-SETUP_GUIDE_RESOURCE_URI = "labbook://notion-agent-labbook/setup-guide"
-STATUS_RESOURCE_URI = "labbook://notion-agent-labbook/project/status"
-BINDINGS_RESOURCE_URI = "labbook://notion-agent-labbook/project/bindings"
+CLIENT_USER_AGENT = f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
+SETUP_GUIDE_RESOURCE_URI = "labbook://agent-labbook/setup-guide"
+STATUS_RESOURCE_URI = "labbook://agent-labbook/project/status"
+BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
 STATUS_RESOURCE_TEMPLATE = (
-    "labbook://notion-agent-labbook/project/status{?project_root}"
+    "labbook://agent-labbook/project/status{?project_root}"
 )
 BINDINGS_RESOURCE_TEMPLATE = (
-    "labbook://notion-agent-labbook/project/bindings{?project_root}"
+    "labbook://agent-labbook/project/bindings{?project_root}"
 )
 DEFAULT_SEARCH_PAGE_SIZE = 25
 MIN_SEARCH_PAGE_SIZE = 1
@@ -534,7 +534,7 @@ def _store_token_in_onepassword(
     create_arguments.extend(
         [
             "--tags",
-            "notion-agent-labbook,notion,internal-integration",
+            "agent-labbook,notion,internal-integration",
             "-",
         ]
     )

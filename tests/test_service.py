@@ -80,7 +80,7 @@ class ServiceTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmpdir:
                 payload = status(tmpdir)
 
-        self.assertEqual(payload["integration"], "notion-agent-labbook")
+        self.assertEqual(payload["integration"], "agent-labbook")
         self.assertFalse(payload["authenticated"])
         self.assertEqual(payload["recommended_action"], "notion_prepare_internal_integration")
         self.assertEqual(payload["secret_plan"]["mode"], "keychain")

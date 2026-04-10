@@ -36,7 +36,7 @@ def _mcp_server_config(*, server_name: str) -> dict[str, Any]:
         "mcpServers": {
             server_name: {
                 "command": "uvx",
-                "args": ["notion-agent-labbook", "mcp"],
+                "args": ["agent-labbook", "mcp"],
             }
         }
     }
@@ -66,7 +66,7 @@ def _doctor_command(args: argparse.Namespace) -> int:
         "secret_plan": status_payload.get("secret_plan"),
         "notion_status": status_payload,
         "mcp": {
-            "install_surface": "uvx notion-agent-labbook mcp",
+            "install_surface": "uvx agent-labbook mcp",
             "sdk": "modelcontextprotocol/python-sdk",
             "sdk_version": _installed_mcp_sdk_version(),
             "transport": "stdio",
@@ -91,7 +91,7 @@ def _run_mcp_command() -> int:
         if exc.name == "mcp":
             raise RuntimeError(
                 "The Python 'mcp' package is not installed. "
-                "Use 'uvx notion-agent-labbook mcp'."
+                "Use 'uvx agent-labbook mcp'."
             ) from exc
         raise
 
@@ -101,7 +101,7 @@ def _run_mcp_command() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="notion-agent-labbook",
+        prog="agent-labbook",
         description="Notion Agent Labbook CLI and MCP launcher.",
     )
     parser.set_defaults(func=None)

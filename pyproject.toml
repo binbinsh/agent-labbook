@@ -4,19 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-labbook"
-version = "0.14.7"
-description = "Notion auth and project binding for Codex, Claude Code, and other MCP clients."
+version = "0.17.1"
+description = "Notion Internal Integration binding for Codex, Claude Code, and other MCP clients."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
   { name = "Binbin Shen", email = "binbinsh@gmail.com" }
 ]
-keywords = ["codex", "claude-code", "mcp", "notion", "oauth"]
+keywords = ["codex", "claude-code", "mcp", "notion", "internal-integration"]
 dependencies = [
   "keyring>=25.6.0,<26",
   "mcp>=1.26.0,<2",
-  "notion-access-broker>=0.1.1,<0.2",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -25,7 +24,10 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development",
+  "Topic :: Software Development :: Libraries",
 ]
 
 [project.urls]

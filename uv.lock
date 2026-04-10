@@ -3,23 +3,6 @@ revision = 3
 requires-python = ">=3.10"
 
 [[package]]
-name = "agent-labbook"
-version = "0.14.5"
-source = { editable = "." }
-dependencies = [
-    { name = "keyring" },
-    { name = "mcp" },
-    { name = "notion-access-broker" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "keyring", specifier = ">=25.6.0,<26" },
-    { name = "mcp", specifier = ">=1.26.0,<2" },
-    { name = "notion-access-broker", specifier = ">=0.1.1,<0.2" },
-]
-
-[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -436,15 +419,18 @@ wheels = [
 ]
 
 [[package]]
-name = "notion-access-broker"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
+name = "agent-labbook"
+version = "0.17.1"
+source = { editable = "." }
 dependencies = [
     { name = "keyring" },
+    { name = "mcp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4e/be/07994c85b017600dc7f960ce9e6850c52212dd213f5da8cbb06b40db85f3/notion_access_broker-0.1.1.tar.gz", hash = "sha256:3760baa750c30c3800d4302c2b83e245565dfc429c39546ab6841e0a8a18ca2c", size = 15946, upload-time = "2026-04-05T07:23:54.5Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/1e/fb5ebff1518146372ff761ba082f58538e9c1c5aafe2b6ad613e089da546/notion_access_broker-0.1.1-py3-none-any.whl", hash = "sha256:024e39e4f6059f779a4434cadc51f90495cbf4dbc8e7cc8c81bc6c276ac65216", size = 11272, upload-time = "2026-04-05T07:23:53.1Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "keyring", specifier = ">=25.6.0,<26" },
+    { name = "mcp", specifier = ">=1.26.0,<2" },
 ]
 
 [[package]]

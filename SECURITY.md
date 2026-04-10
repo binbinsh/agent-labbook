@@ -6,12 +6,12 @@ Security fixes are applied to the latest released minor line.
 
 | Version | Supported |
 | --- | --- |
-| `0.14.x` | Yes |
-| `< 0.14.0` | No |
+| `0.17.x` | Yes |
+| `< 0.17.0` | No |
 
 ## Reporting a Vulnerability
 
-If you discover a security issue in Agent Labbook, please report it privately by email:
+If you discover a security issue in Notion Agent Labbook, please report it privately by email:
 
 - `binbinsh@gmail.com`
 
@@ -29,44 +29,34 @@ Please do not open a public issue for unpatched security vulnerabilities.
 Security reports are especially useful for issues involving:
 
 - project-local state under `.labbook/`
-- OAuth handoff and callback handling
+- keyring or 1Password storage and retrieval of the Notion Internal Integration secret
 - MCP server tool behavior or local state access
 - Notion API credential handling
-- reuse of shared credentials through `1Password` or `keyring`
 
 ## Security Model
 
-Agent Labbook is a local MCP server plus an integration-specific app backend. Its current security model is:
+Notion Agent Labbook is now a local MCP server with a direct Notion API integration. Its current security model is:
 
-- `.labbook/session.json` should not contain Notion access tokens or refresh tokens. It should store only a `credential_provider`, `credential_ref`, and non-secret metadata.
-- Long-lived Notion tokens should live in the configured shared credential provider, currently `1Password` or the system `keyring`.
-- Browser OAuth flows are split into explicit steps. `notion_status` is read-only, and `notion_finalize_pending_auth` is the step that persists a pending browser handoff.
-- Headless handoff bundles are sensitive bearer artifacts until they are redeemed. Treat them like short-lived secrets and do not paste them into public logs, issue trackers, or screenshots.
-- Local browser auth trusts the local machine and its localhost callback path. If the local workstation is already compromised, Agent Labbook cannot fully defend that trust boundary.
-
-## Self-Hosting Expectations
-
-If you self-host the backend pieces used by Agent Labbook:
-
-- keep `NOTION_ACCESS_BROKER_SHARED_SECRET` private and rotate it if you suspect leakage
-- keep all Notion `client_id` and `client_secret` values in server-side secrets, never in browser code or project-local files
-- restrict browser continuation URLs and do not broaden them beyond the intended integration surfaces
-- keep `.labbook/` out of version control
+- `.labbook/session.json` should not contain the Notion integration secret. It stores only metadata such as token source and bot information.
+- Long-lived Notion secrets should live in the configured local storage backend, currently system keychain or 1Password, or in the process environment through `NOTION_AGENT_LABBOOK_TOKEN`.
+- `.labbook/bindings.json` stores only project binding metadata.
+- `notion_status` and `notion-agent-labbook doctor` are the preferred non-secret inspection paths.
+- The MCP server can return the Notion secret through `notion_get_api_context`, so clients should call that tool only when they are ready to use the official Notion API and should treat the returned secret as sensitive.
 
 ## Out of Scope
 
 The following are generally not treated as product vulnerabilities by themselves:
 
-- a workstation compromise that already gives an attacker access to the local browser, `localhost`, `1Password`, or the system keyring
-- self-hosted deployments that expose secrets through logs, public repos, or misconfigured reverse proxies
+- a workstation compromise that already gives an attacker access to the local keychain, 1Password session, or shell environment
 - intentionally forcing insecure local workflows such as committing `.labbook/` into source control
-- disclosure of a headless handoff bundle by the operator after it was shown in the browser
+- storing the integration secret in plaintext files outside the project's documented setup
 
 ## Hardening Notes
 
-- Prefer `1Password` or a properly configured system `keyring`; do not modify the code to fall back to plaintext token files.
-- If you believe a Notion token was exposed, revoke the Notion integration grant and re-run OAuth.
-- If you believe the shared broker secret was exposed, rotate `NOTION_ACCESS_BROKER_SHARED_SECRET` and treat existing signed state or handoff artifacts as invalid.
+- Prefer the local system keychain or 1Password over plaintext project files.
+- Prefer `notion_status` or `doctor` over `notion_get_api_context` when you only need to verify whether the project is configured.
+- If you believe a Notion secret was exposed, rotate the Internal Integration secret in Notion and update the local configuration.
+- Keep `.labbook/` out of version control.
 
 ## Response
 

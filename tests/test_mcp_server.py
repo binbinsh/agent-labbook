@@ -71,7 +71,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             result.structuredContent["resource_uri"],
-            "labbook://notion-agent-labbook/setup-guide",
+            "labbook://agent-labbook/setup-guide",
         )
 
     async def test_status_tool_returns_structured_output(self) -> None:
@@ -82,7 +82,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                     result = await session.call_tool("notion_status", {"project_root": tmpdir})
 
         self.assertFalse(result.isError)
-        self.assertEqual(result.structuredContent["integration"], "notion-agent-labbook")
+        self.assertEqual(result.structuredContent["integration"], "agent-labbook")
         self.assertEqual(
             result.structuredContent["available_env_var"],
             "NOTION_AGENT_LABBOOK_TOKEN",
@@ -122,15 +122,15 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                     await session.initialize()
                     resources = await session.list_resources()
                     status_result = await session.read_resource(
-                        f"labbook://notion-agent-labbook/project/status?project_root={project_root_query}"
+                        f"labbook://agent-labbook/project/status?project_root={project_root_query}"
                     )
-                    guide_result = await session.read_resource("labbook://notion-agent-labbook/setup-guide")
+                    guide_result = await session.read_resource("labbook://agent-labbook/setup-guide")
 
         resource_uris = {str(resource.uri) for resource in resources.resources}
-        self.assertIn("labbook://notion-agent-labbook/project/status", resource_uris)
-        self.assertIn("labbook://notion-agent-labbook/setup-guide", resource_uris)
+        self.assertIn("labbook://agent-labbook/project/status", resource_uris)
+        self.assertIn("labbook://agent-labbook/setup-guide", resource_uris)
         self.assertTrue(status_result.contents)
-        self.assertIn('"integration": "notion-agent-labbook"', status_result.contents[0].text)
+        self.assertIn('"integration": "agent-labbook"', status_result.contents[0].text)
         self.assertTrue(guide_result.contents)
         self.assertIn("Internal Integration Setup", guide_result.contents[0].text)
 
