@@ -48,7 +48,7 @@ jobs:
 
       - name: Install package and test dependencies
         if: steps.version_check.outputs.should_publish == 'true'
-        run: python -m pip install -e ".[dev]" 2>/dev/null || python -m pip install -e .
+        run: python -m pip install -e ".[dev]"
 
       - name: Run tests
         if: steps.version_check.outputs.should_publish == 'true'

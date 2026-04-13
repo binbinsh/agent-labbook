@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+- GitHub Actions now installs the explicit `dev` extra so `pytest` is available in CI and PyPI publish validation jobs.
+
 ## 0.17.2 -- 2026-04-13
 
 ### Added

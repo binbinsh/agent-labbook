@@ -30,6 +30,11 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
 [project.urls]
 Homepage = "https://github.com/binbinsh/agent-labbook"
 Repository = "https://github.com/binbinsh/agent-labbook"

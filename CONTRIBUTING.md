@@ -7,7 +7,7 @@ Thank you for considering a contribution to Notion Agent Labbook.
 ```bash
 git clone https://github.com/binbinsh/agent-labbook.git
 cd agent-labbook
-uv sync
+uv sync --extra dev
 ```
 
 ## Running Tests
