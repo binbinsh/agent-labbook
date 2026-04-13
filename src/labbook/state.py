@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
+from typing import Any
 from uuid import UUID
+
+logger = logging.getLogger("labbook.state")
 
 
 INTEGRATION_ID = "agent-labbook"
@@ -47,29 +51,23 @@ def resolve_project_root(project_root: str | Path | None = None) -> Path:
     return root
 
 
-def project_state_dir(project_root: str | Path | None = None) -> Path:
-    return resolve_project_root(project_root) / PROJECT_STATE_DIRNAME
-
-
 def session_path(project_root: str | Path | None = None) -> Path:
-    return project_state_dir(project_root) / SESSION_FILENAME
+    return resolve_project_root(project_root) / PROJECT_STATE_DIRNAME / SESSION_FILENAME
 
 
 def bindings_path(project_root: str | Path | None = None) -> Path:
-    return project_state_dir(project_root) / BINDINGS_FILENAME
-
-
-def _state_schema_spec(path: Path) -> dict[str, object] | None:
-    return _STATE_SCHEMA_SPECS.get(path.name)
+    return (
+        resolve_project_root(project_root) / PROJECT_STATE_DIRNAME / BINDINGS_FILENAME
+    )
 
 
 def _normalize_state_payload(
     path: Path,
-    payload: dict,
+    payload: dict[str, Any],
     *,
     for_save: bool,
-) -> dict:
-    spec = _state_schema_spec(path)
+) -> dict[str, Any]:
+    spec = _STATE_SCHEMA_SPECS.get(path.name)
     if spec is None:
         return dict(payload)
 
@@ -85,7 +83,9 @@ def _normalize_state_payload(
         try:
             version = int(version_raw)
         except (TypeError, ValueError) as exc:
-            raise LabbookError(f"{label} has an invalid version field: {version_raw!r}.") from exc
+            raise LabbookError(
+                f"{label} has an invalid version field: {version_raw!r}."
+            ) from exc
 
     if for_save:
         if version not in {0, current_version}:
@@ -104,7 +104,10 @@ def _normalize_state_payload(
 
     normalized["version"] = current_version
     if inject_integration:
-        integration = str(normalized.get("integration") or INTEGRATION_ID).strip() or INTEGRATION_ID
+        integration = (
+            str(normalized.get("integration") or INTEGRATION_ID).strip()
+            or INTEGRATION_ID
+        )
         if integration != INTEGRATION_ID:
             raise LabbookError(
                 f"{label} belongs to integration {integration!r}, but this project expects {INTEGRATION_ID!r}."
@@ -113,7 +116,7 @@ def _normalize_state_payload(
     return normalized
 
 
-def _load_json(path: Path) -> dict | None:
+def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
@@ -122,42 +125,53 @@ def _load_json(path: Path) -> dict | None:
         raise LabbookError(f"Invalid JSON in {path}") from exc
     if not isinstance(payload, dict):
         raise LabbookError(f"Expected an object in {path}")
+    logger.debug("Loaded state from %s", path)
     return _normalize_state_payload(path, payload, for_save=False)
 
 
-def _save_json(path: Path, payload: dict) -> Path:
+def _save_json(path: Path, payload: dict[str, Any]) -> Path:
     normalized_payload = _normalize_state_payload(path, payload, for_save=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     if os.name != "nt":
         try:
             os.chmod(path.parent, 0o700)
         except OSError:
-            pass
+            logger.debug("Could not set permissions on %s", path.parent)
     path.write_text(
-        json.dumps(normalized_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        json.dumps(normalized_payload, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
         encoding="utf-8",
     )
     if os.name != "nt":
         try:
             os.chmod(path, 0o600)
         except OSError:
-            pass
+            logger.debug("Could not set permissions on %s", path)
+    logger.debug("Saved state to %s", path)
     return path
 
 
-def load_project_session(project_root: str | Path | None = None) -> dict | None:
+def load_project_session(
+    project_root: str | Path | None = None,
+) -> dict[str, Any] | None:
     return _load_json(session_path(project_root))
 
 
-def save_project_session(project_root: str | Path | None, payload: dict) -> Path:
+def save_project_session(
+    project_root: str | Path | None, payload: dict[str, Any]
+) -> Path:
     return _save_json(session_path(project_root), payload)
 
 
-def load_project_bindings(project_root: str | Path | None = None) -> dict | None:
+def load_project_bindings(
+    project_root: str | Path | None = None,
+) -> dict[str, Any] | None:
     return _load_json(bindings_path(project_root))
 
 
-def save_project_bindings(project_root: str | Path | None, payload: dict) -> Path:
+def save_project_bindings(
+    project_root: str | Path | None, payload: dict[str, Any]
+) -> Path:
     return _save_json(bindings_path(project_root), payload)
 
 

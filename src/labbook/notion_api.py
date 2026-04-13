@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any
 from urllib import error, parse, request
 
 from .state import DEFAULT_NOTION_VERSION, LabbookError, normalize_notion_id
 
+logger = logging.getLogger("labbook.notion_api")
+
 
 NOTION_API_BASE = "https://api.notion.com/v1"
+_RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
+_MAX_RETRIES = 3
+_INITIAL_BACKOFF_SECONDS = 1.0
+_BACKOFF_MULTIPLIER = 2.0
 
 
 class NotionApiError(LabbookError):
@@ -26,6 +34,17 @@ def _decode_payload(raw: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise NotionApiError("Notion API returned an unexpected payload.")
     return decoded
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header value into seconds, or return None."""
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+        return max(0.0, seconds)
+    except (TypeError, ValueError):
+        return None
 
 
 class NotionClient:
@@ -62,26 +81,75 @@ class NotionClient:
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
-        req = request.Request(
-            url, data=data, headers=self._headers(), method=method.upper()
-        )
-        try:
-            with request.urlopen(req, timeout=self.timeout) as response:
-                payload = response.read().decode("utf-8")
-        except error.HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
-            try:
-                parsed_error = json.loads(raw)
-            except json.JSONDecodeError:
-                parsed_error = {"message": raw}
-            message = parsed_error.get("message") or str(exc)
-            raise NotionApiError(
-                f"Notion API {exc.code}: {message}", status_code=exc.code
-            ) from exc
-        except error.URLError as exc:
-            raise NotionApiError(f"Could not reach Notion API: {exc.reason}") from exc
+        last_exc: Exception | None = None
+        backoff = _INITIAL_BACKOFF_SECONDS
 
-        return _decode_payload(payload)
+        for attempt in range(_MAX_RETRIES + 1):
+            req = request.Request(
+                url, data=data, headers=self._headers(), method=method.upper()
+            )
+            try:
+                logger.debug(
+                    "Notion API %s %s (attempt %d)", method.upper(), url, attempt + 1
+                )
+                with request.urlopen(req, timeout=self.timeout) as response:
+                    payload = response.read().decode("utf-8")
+                return _decode_payload(payload)
+            except error.HTTPError as exc:
+                logger.warning(
+                    "Notion API %s %s returned HTTP %d", method.upper(), url, exc.code
+                )
+                raw = exc.read().decode("utf-8", errors="replace")
+
+                if exc.code in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES:
+                    retry_after = _parse_retry_after(exc.headers.get("Retry-After"))
+                    wait = retry_after if retry_after is not None else backoff
+                    logger.info(
+                        "Retrying %s %s in %.1fs (HTTP %d, attempt %d/%d)",
+                        method.upper(),
+                        url,
+                        wait,
+                        exc.code,
+                        attempt + 1,
+                        _MAX_RETRIES + 1,
+                    )
+                    time.sleep(wait)
+                    backoff *= _BACKOFF_MULTIPLIER
+                    last_exc = exc
+                    continue
+
+                try:
+                    parsed_error = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed_error = {"message": raw}
+                message = parsed_error.get("message") or str(exc)
+                raise NotionApiError(
+                    f"Notion API {exc.code}: {message}", status_code=exc.code
+                ) from exc
+            except error.URLError as exc:
+                if attempt < _MAX_RETRIES:
+                    logger.info(
+                        "Retrying %s %s in %.1fs (URLError: %s, attempt %d/%d)",
+                        method.upper(),
+                        url,
+                        backoff,
+                        exc.reason,
+                        attempt + 1,
+                        _MAX_RETRIES + 1,
+                    )
+                    time.sleep(backoff)
+                    backoff *= _BACKOFF_MULTIPLIER
+                    last_exc = exc
+                    continue
+                logger.error("Notion API unreachable: %s", exc.reason)
+                raise NotionApiError(
+                    f"Could not reach Notion API: {exc.reason}"
+                ) from exc
+
+        # Should not be reached, but handle defensively
+        raise NotionApiError(
+            f"Notion API request failed after {_MAX_RETRIES + 1} attempts."
+        ) from last_exc
 
     def get_me(self) -> dict[str, Any]:
         return self._request("GET", "/users/me")

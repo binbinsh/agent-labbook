@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
+from collections import deque
 from typing import Any
 
 from .notion_api import NotionClient
 from .state import LabbookError, normalize_notion_id
 
+logger = logging.getLogger("labbook.binding_discovery")
 
-MAX_DISCOVERY_BLOCK_SCAN_LIMIT = 20000
+
+MAX_DISCOVERY_BLOCK_SCAN_LIMIT = 20_000
+_MAX_BLOCK_CHILDREN_PER_CONTAINER = 50_000
 
 
 def _rich_text_to_plain_text(items: Any) -> str | None:
@@ -18,7 +23,7 @@ def _rich_text_to_plain_text(items: Any) -> str | None:
     return text or None
 
 
-def _resource_title(resource: dict[str, Any]) -> str | None:
+def resource_title(resource: dict[str, Any]) -> str | None:
     object_type = str(resource.get("object") or "").strip().lower()
     properties = resource.get("properties")
     if object_type == "page":
@@ -39,7 +44,21 @@ def _resource_title(resource: dict[str, Any]) -> str | None:
     return title or None
 
 
-def _resource_type(resource: dict[str, Any]) -> str:
+def resource_type_of(resource: dict[str, Any]) -> str:
+    """Return the canonical resource type for a Notion object.
+
+    Notion's API transitioned from ``"database"`` to ``"data_source"`` as the
+    primary queryable entity (Notion-Version 2026-03-11).  The older search and
+    block-children endpoints still emit ``"object": "database"`` and
+    ``"child_database"`` block types, while the newer data-source endpoints use
+    ``"object": "data_source"``.
+
+    This function normalises both terms to ``"data_source"`` so the rest of the
+    codebase only needs to handle two canonical types: ``"page"`` and
+    ``"data_source"``.  Note that the *container* concept (a Notion database
+    that holds one or more data-sources) is intentionally preserved via the
+    separate ``parent_database_id`` metadata field.
+    """
     raw = (
         str(resource.get("object") or resource.get("resource_type") or "")
         .strip()
@@ -52,14 +71,14 @@ def _resource_type(resource: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _normalize_notion_resource(resource: dict[str, Any]) -> dict[str, Any] | None:
-    resource_type = _resource_type(resource)
+def normalize_notion_resource(resource: dict[str, Any]) -> dict[str, Any] | None:
+    resource_type = resource_type_of(resource)
     if resource_type not in {"page", "data_source"}:
         return None
     resource_id = normalize_notion_id(
         str(resource.get("id") or resource.get("resource_id") or "")
     )
-    title = _resource_title(resource) or resource_id
+    title = resource_title(resource) or resource_id
     resource_url = (
         str(resource.get("url") or resource.get("resource_url") or "").strip() or None
     )
@@ -150,7 +169,7 @@ def _normalize_discovery_resource(
     discovered_root_id: str | None = None,
     discovered_depth: int | None = None,
 ) -> dict[str, Any] | None:
-    normalized = _normalize_notion_resource(
+    normalized = normalize_notion_resource(
         {
             **resource,
             "id": resource_id or resource.get("id"),
@@ -217,7 +236,17 @@ def merge_discovery_resources(
     )
 
 
-def _list_all_block_children(client: NotionClient, block_id: str) -> list[dict[str, Any]]:
+def _list_all_block_children(
+    client: NotionClient,
+    block_id: str,
+    *,
+    max_items: int = _MAX_BLOCK_CHILDREN_PER_CONTAINER,
+) -> list[dict[str, Any]]:
+    """Paginate through all direct children of *block_id*.
+
+    An optional *max_items* cap prevents runaway memory usage for
+    programmatically-generated pages with an extreme number of blocks.
+    """
     results: list[dict[str, Any]] = []
     next_cursor: str | None = None
 
@@ -230,6 +259,15 @@ def _list_all_block_children(client: NotionClient, block_id: str) -> list[dict[s
         children = payload.get("results")
         if isinstance(children, list):
             results.extend(item for item in children if isinstance(item, dict))
+
+        if len(results) >= max_items:
+            logger.warning(
+                "Reached per-container child limit (%d) for block %s; "
+                "truncating results",
+                max_items,
+                block_id[:8],
+            )
+            break
 
         if not payload.get("has_more") or not payload.get("next_cursor"):
             break
@@ -246,11 +284,15 @@ def _list_initial_block_children(
     *,
     page_size: int = 100,
 ) -> tuple[list[dict[str, Any]], bool]:
-    payload = client.list_block_children(block_id, page_size=page_size, start_cursor=None)
+    payload = client.list_block_children(
+        block_id, page_size=page_size, start_cursor=None
+    )
     children = payload.get("results")
     if not isinstance(children, list):
         return [], False
-    return [item for item in children if isinstance(item, dict)], bool(payload.get("has_more"))
+    return [item for item in children if isinstance(item, dict)], bool(
+        payload.get("has_more")
+    )
 
 
 def _query_data_source_entries(
@@ -318,7 +360,7 @@ def _retrieve_page_resource(
         normalized = _normalize_discovery_resource(
             payload,
             resource_type="page",
-            title=_resource_title(payload) or fallback_title,
+            title=resource_title(payload) or fallback_title,
             discovered_parent_id=meta.get("discovered_parent_id"),
             discovered_root_id=meta.get("discovered_root_id"),
             discovered_depth=meta.get("discovered_depth"),
@@ -418,7 +460,7 @@ def _retrieve_data_source_resources_for_database(
             normalized = _normalize_discovery_resource(
                 payload,
                 resource_type="data_source",
-                title=_resource_title(payload) or str(item.get("name") or "").strip(),
+                title=resource_title(payload) or str(item.get("name") or "").strip(),
                 discovered_parent_id=meta.get("discovered_parent_id"),
                 discovered_root_id=meta.get("discovered_root_id"),
                 discovered_depth=meta.get("discovered_depth"),
@@ -464,13 +506,13 @@ def _discover_page_immediate_children(
     remaining_limit: int,
 ) -> tuple[list[dict[str, Any]], bool]:
     resources: list[dict[str, Any]] = []
-    container_queue: list[str] = [page_id]
+    container_queue: deque[str] = deque([page_id])
     scanned_containers: set[str] = set()
     scanned_block_count = 0
     partial = False
 
     while container_queue and len(resources) < remaining_limit:
-        container_id = str(container_queue.pop(0) or "").strip()
+        container_id = str(container_queue.popleft() or "").strip()
         if not container_id or container_id in scanned_containers:
             continue
         scanned_containers.add(container_id)

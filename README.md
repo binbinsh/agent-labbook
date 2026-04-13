@@ -1,8 +1,13 @@
 # Notion Agent Labbook
 
-Notion Agent Labbook is a local MCP server that connects a project to Notion through a Notion Internal Integration secret. It stores project metadata in `.labbook/`, can open the Notion integrations dashboard to help the user fetch the secret, lets the user choose between system keychain and 1Password when both are available, lets agents search accessible pages and data sources, and returns the official API context for direct Notion API calls.
+[![CI](https://github.com/binbinsh/agent-labbook/actions/workflows/ci.yml/badge.svg)](https://github.com/binbinsh/agent-labbook/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/agent-labbook)](https://pypi.org/project/agent-labbook/)
+[![Python](https://img.shields.io/pypi/pyversions/agent-labbook)](https://pypi.org/project/agent-labbook/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-This version does not use OAuth, a shared credential broker, or a hosted Worker.
+A local [MCP](https://modelcontextprotocol.io/) server that connects AI coding agents (Codex, Claude Code, OpenCode) to Notion through a Notion Internal Integration secret.
+
+No OAuth, no hosted broker, no cloud worker. The secret lives in your system keychain or 1Password, and the server calls the Notion API directly.
 
 ## Main Features
 
@@ -50,6 +55,37 @@ uvx agent-labbook print-mcp-config
 
 Or use the checked-in [`.mcp.json`](./.mcp.json) for local development from a cloned copy of this repo.
 
+## Architecture
+
+```
+┌──────────────┐    MCP (stdio)    ┌──────────────────┐    HTTPS    ┌───────────┐
+│  AI Agent    │◄─────────────────►│  agent-labbook   │◄──────────►│ Notion API│
+│  (Codex,     │                   │  MCP server      │            └───────────┘
+│  Claude Code)│                   └──────┬───────────┘
+└──────────────┘                          │
+                                          ▼
+                                   ┌──────────────┐
+                                   │ Secret Store │
+                                   │ (keychain /  │
+                                   │  1Password / │
+                                   │  env var)    │
+                                   └──────────────┘
+```
+
+**Modules:**
+
+| Module | Responsibility |
+|---|---|
+| `mcp_server.py` | MCP tool/resource/prompt definitions, server lifecycle |
+| `auth_flow.py` | Secret detection, storage orchestration, API context assembly |
+| `notion_api.py` | HTTP client for Notion API with retry and backoff |
+| `binding_ops.py` | Binding CRUD: search, discover, bind, unbind, alias management |
+| `binding_discovery.py` | Breadth-first child discovery, resource normalization |
+| `binding_browser_page.py` | HTML template renderer for the local binding chooser UI |
+| `binding_ui.py` | Local HTTP server for browser-based binding selection |
+| `state.py` | `.labbook/` project state persistence (session, bindings) |
+| `cli.py` | CLI entry points (`mcp`, `doctor`, `print-mcp-config`) |
+
 ## Recommended Flow
 
 1. Read `labbook://agent-labbook/project/status` or run `notion_status`.
@@ -64,23 +100,17 @@ Or use the checked-in [`.mcp.json`](./.mcp.json) for local development from a cl
 
 ## Binding Options
 
-- Direct URLs
-  Use `notion_bind_resource_urls` when the user already has exact page or data source links.
-- Local browser chooser
-  Use `notion_open_binding_browser` on desktop machines to search, expand child pages, and bind multiple roots visually.
-- Headless MCP flow
-  On SSH or other headless environments, use `notion_bind_resource_urls` when the user can paste exact links. If they cannot, use `notion_search_resources`, `notion_discover_children`, and then `notion_bind_resources`.
+- **Direct URLs** -- Use `notion_bind_resource_urls` when the user already has exact page or data source links.
+- **Local browser chooser** -- Use `notion_open_binding_browser` on desktop machines to search, expand child pages, and bind multiple roots visually.
+- **Headless MCP flow** -- On SSH or other headless environments, use `notion_bind_resource_urls` when the user can paste exact links. If they cannot, use `notion_search_resources`, `notion_discover_children`, and then `notion_bind_resources`.
 
 ## Save The Secret
 
 Use `notion_configure_internal_integration` for persistent storage:
 
-- `storage=keychain`
-  Default recommendation for local development when system keychain is available.
-- `storage=1password`
-  Use when the `op` CLI is installed and signed in. You can optionally provide `op_vault` and `op_item_title`.
-- `NOTION_AGENT_LABBOOK_TOKEN`
-  Use for CI, temporary runs, or environments where no local secret backend is available.
+- `storage=keychain` -- Default recommendation for local development when system keychain is available.
+- `storage=1password` -- Use when the `op` CLI is installed and signed in. You can optionally provide `op_vault` and `op_item_title`.
+- `NOTION_AGENT_LABBOOK_TOKEN` -- Use for CI, temporary runs, or environments where no local secret backend is available.
 
 If more than one local backend is available and you omit `storage`, the tool will ask the caller to make an explicit choice instead of guessing.
 
@@ -90,16 +120,11 @@ Use `notion_status` or `agent-labbook doctor` to inspect the current setup witho
 
 Important fields:
 
-- `authenticated`
-  Whether the project currently has a usable Internal Integration secret.
-- `storage`
-  Which persistent backend this project is configured to use.
-- `secret_plan`
-  The recommended secret strategy for this machine right now.
-- `storage_options`
-  The detected local storage backends and their availability.
-- `storage_choice_required`
-  Whether the caller should ask the user to choose between keychain and 1Password.
+- `authenticated` -- Whether the project currently has a usable Internal Integration secret.
+- `storage` -- Which persistent backend this project is configured to use.
+- `secret_plan` -- The recommended secret strategy for this machine right now.
+- `storage_options` -- The detected local storage backends and their availability.
+- `storage_choice_required` -- Whether the caller should ask the user to choose between keychain and 1Password.
 
 To verify that the secret also has the correct Notion permissions, prefer `notion_search_resources` instead of `notion_get_api_context`.
 
@@ -126,6 +151,10 @@ If your content already exists as markdown, prefer Notion's markdown content API
 - `PATCH /v1/pages/{page_id}/markdown`
 
 Reference: [Working with Markdown Content](https://developers.notion.com/guides/data-apis/working-with-markdown-content)
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, testing, and code style guidelines.
 
 ## Notes
 

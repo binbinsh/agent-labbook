@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .binding_discovery import (
-    _normalize_notion_resource,
-    _resource_type,
-    _resource_title,
+    normalize_notion_resource,
     discover_children_for_resource,
 )
 from .notion_api import NOTION_API_BASE, NotionClient
@@ -57,8 +58,6 @@ def _endpoint_for_resource(resource_type: str | None, resource_id: str) -> str |
 
 
 def _slugify_alias(text: str, *, fallback: str) -> str:
-    import re
-
     candidate = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower()).strip("-")
     return candidate or fallback
 
@@ -87,8 +86,6 @@ def _normalize_binding_entry(
     source: str = "manual_bind",
     bound_at: str | None = None,
 ) -> dict[str, Any]:
-    from datetime import datetime, timezone
-
     clean_id = normalize_notion_id(resource_id)
     clean_type = str(resource_type or "").strip().lower()
     if clean_type == "database":
@@ -121,6 +118,9 @@ def _existing_bindings(project_root: Path) -> list[dict[str, Any]]:
     return [item for item in resources if isinstance(item, dict)]
 
 
+_MAX_ALIAS_SUFFIX = 10_000
+
+
 def _alias_for_resource(
     *,
     resource_id: str,
@@ -137,13 +137,18 @@ def _alias_for_resource(
         return proposed_alias
 
     suffix = 2
-    while True:
+    while suffix <= _MAX_ALIAS_SUFFIX:
         candidate = f"{proposed_alias}-{suffix}"
         if candidate not in used_aliases:
             used_aliases.add(candidate)
             alias_owner[candidate] = resource_id
             return candidate
         suffix += 1
+
+    raise RuntimeError(
+        f"Could not find a unique alias for {proposed_alias!r} "
+        f"after {_MAX_ALIAS_SUFFIX} attempts"
+    )
 
 
 def _sorted_bindings(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -210,7 +215,7 @@ def build_search_resources_payload(
     for item in payload.get("results", []):
         if not isinstance(item, dict):
             continue
-        normalized = _normalize_notion_resource(item)
+        normalized = normalize_notion_resource(item)
         if normalized is not None:
             results.append(normalized)
     results = _rank_search_results(results, query=query)
@@ -303,7 +308,7 @@ def build_bind_resources_payload(
             normalized_input["resource_id"] or "",
             normalized_input["resource_type"],
         )
-        normalized_resource = _normalize_notion_resource(resource)
+        normalized_resource = normalize_notion_resource(resource)
         if normalized_resource is None:
             raise LabbookError(
                 f"Resource {normalized_input['resource_id']} is not a page or data source."
@@ -380,7 +385,9 @@ def build_bind_resource_urls_payload(
     )
 
 
-def build_list_bindings_payload(project_root: str | Path | None = None) -> dict[str, Any]:
+def build_list_bindings_payload(
+    project_root: str | Path | None = None,
+) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     payload = load_project_bindings(root) or _bindings_payload(root, [])
     resources = payload.get("resources")
@@ -395,14 +402,31 @@ def build_list_bindings_payload(project_root: str | Path | None = None) -> dict[
 
 
 def project_bindings_resource_text(project_root: str | Path | None = None) -> str:
-    import json
-
     return json.dumps(
         build_list_bindings_payload(project_root),
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
     )
+
+
+def _resolve_client(
+    client: NotionClient | None,
+    project_root: str | Path | None,
+) -> tuple[NotionClient, str]:
+    """Return a ``(client, project_root_str)`` pair.
+
+    When *client* is ``None`` a new one is created from the project's stored
+    credentials.  When *client* is provided, *project_root* is required.
+    """
+    if client is None:
+        from .auth_flow import notion_client_for_project
+
+        client, context = notion_client_for_project(project_root)
+        return client, str(context["project_root"])
+    if project_root is None:
+        raise LabbookError("project_root is required when client is provided.")
+    return client, str(project_root)
 
 
 def search_resources(
@@ -412,16 +436,10 @@ def search_resources(
     query: str | None = None,
     page_size: int | str | None = None,
 ) -> dict[str, Any]:
-    if client is None:
-        from .auth_flow import _notion_client
-
-        client, context = _notion_client(project_root)
-        project_root = str(context["project_root"])
-    elif project_root is None:
-        raise LabbookError("project_root is required when client is provided.")
+    client, project_root_str = _resolve_client(client, project_root)
     return build_search_resources_payload(
         client,
-        project_root=str(project_root),
+        project_root=project_root_str,
         query=query,
         page_size=page_size,
     )
@@ -436,16 +454,10 @@ def discover_children(
     limit: int | str | None = None,
     mode: str | None = None,
 ) -> dict[str, Any]:
-    if client is None:
-        from .auth_flow import _notion_client
-
-        client, context = _notion_client(project_root)
-        project_root = str(context["project_root"])
-    elif project_root is None:
-        raise LabbookError("project_root is required when client is provided.")
+    client, project_root_str = _resolve_client(client, project_root)
     return build_discover_children_payload(
         client,
-        project_root=str(project_root),
+        project_root=project_root_str,
         resource_id_or_url=resource_id_or_url,
         resource_type=resource_type,
         limit=limit,
@@ -461,16 +473,10 @@ def bind_resource_urls(
     selection_scope: str | None = "subtree",
     default_alias: str | None = None,
 ) -> dict[str, Any]:
-    if client is None:
-        from .auth_flow import _notion_client
-
-        client, context = _notion_client(project_root)
-        project_root = str(context["project_root"])
-    elif project_root is None:
-        raise LabbookError("project_root is required when client is provided.")
+    client, project_root_str = _resolve_client(client, project_root)
     return build_bind_resource_urls_payload(
         client,
-        project_root=str(project_root),
+        project_root=project_root_str,
         resource_urls=resource_urls,
         selection_scope=selection_scope,
         default_alias=default_alias,
@@ -484,16 +490,10 @@ def bind_resources(
     resource_refs: list[dict[str, Any]],
     default_alias: str | None = None,
 ) -> dict[str, Any]:
-    if client is None:
-        from .auth_flow import _notion_client
-
-        client, context = _notion_client(project_root)
-        project_root = str(context["project_root"])
-    elif project_root is None:
-        raise LabbookError("project_root is required when client is provided.")
+    client, project_root_str = _resolve_client(client, project_root)
     return build_bind_resources_payload(
         client,
-        project_root=str(project_root),
+        project_root=project_root_str,
         resource_refs=resource_refs,
         default_alias=default_alias,
     )

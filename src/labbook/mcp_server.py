@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Callable
 from urllib import parse
+
+logger = logging.getLogger("labbook.mcp_server")
 
 import mcp.types as types
 from mcp.server.lowlevel import NotificationOptions, Server
@@ -39,11 +42,8 @@ from .binding_ui import start_binding_browser
 from .state import LabbookError, TOKEN_ENV_VAR
 
 
-StructuredToolResult = dict[str, Any]
-ToolSuccessResult = (
-    StructuredToolResult | tuple[list[types.TextContent], StructuredToolResult]
-)
-ToolHandler = Callable[[dict[str, Any]], ToolSuccessResult]
+ToolResult = dict[str, Any] | tuple[list[types.TextContent], dict[str, Any]]
+ToolHandler = Callable[[dict[str, Any]], ToolResult]
 
 SERVER_NAME = "agent-labbook"
 SERVER_INSTRUCTIONS = (
@@ -530,7 +530,7 @@ def _api_context_output_schema() -> dict[str, Any]:
     )
 
 
-def _setup_guide_tool_payload() -> ToolSuccessResult:
+def _setup_guide_tool_payload() -> ToolResult:
     guide = setup_guide()
     return (
         [types.TextContent(type="text", text=guide)],
@@ -1006,13 +1006,17 @@ async def handle_call_tool(
 ) -> types.CallToolResult:
     handler = _handlers().get(name)
     if handler is None:
+        logger.warning("Unknown tool requested: %s", name)
         return _tool_result({"error": f"Unknown tool: {name}"}, is_error=True)
 
     try:
-        result = handler(arguments or {})
+        logger.debug("Calling tool %s", name)
+        result = await asyncio.to_thread(handler, arguments or {})
     except LabbookError as exc:
+        logger.warning("Tool %s failed: %s", name, exc)
         return _tool_result({"error": str(exc)}, is_error=True)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("Tool %s internal error", name)
         return _tool_result({"error": f"Internal error: {exc}"}, is_error=True)
 
     if isinstance(result, tuple):
@@ -1046,10 +1050,14 @@ async def handle_read_resource(uri: Any) -> list[ReadResourceContents]:
         text = setup_guide()
         mime_type = "text/markdown"
     elif base_uri == STATUS_RESOURCE_URI:
-        text = project_status_resource(project_root=project_root)
+        text = await asyncio.to_thread(
+            project_status_resource, project_root=project_root
+        )
         mime_type = "application/json"
     elif base_uri == BINDINGS_RESOURCE_URI:
-        text = project_bindings_resource_text(project_root=project_root)
+        text = await asyncio.to_thread(
+            project_bindings_resource_text, project_root=project_root
+        )
         mime_type = "application/json"
     else:
         raise LabbookError(f"Unknown resource: {raw_uri}")

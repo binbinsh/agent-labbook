@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -8,29 +9,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib import parse
 
-from .auth_flow import _open_browser_url, notion_client_for_project, status
+logger = logging.getLogger("labbook.binding_ui")
+
+from .auth_flow import open_browser_url, notion_client_for_project, status
 from .binding_browser_page import render_binding_browser_page
 from .binding_ops import (
     bind_resource_urls,
     bind_resources,
     build_discover_children_payload,
     build_search_resources_payload,
-    discover_children,
     list_bindings,
-    search_resources,
 )
 from .state import LabbookError, resolve_project_root
 
 
 DEFAULT_BINDING_BROWSER_TIMEOUT_SECONDS = 1800
 DEFAULT_BINDING_BROWSER_PAGE_SIZE = 25
-
-_ACTIVE_BROWSER_SESSIONS: dict[str, "BindingBrowserSession"] = {}
-_ACTIVE_BROWSER_SESSIONS_LOCK = threading.Lock()
-
-
-def _session_id() -> str:
-    return f"chooser-{time.time_ns()}"
 
 
 @dataclass
@@ -52,7 +46,9 @@ class BindingBrowserSession:
     _timer: threading.Timer | None = None
     _cache_lock: threading.Lock = field(default_factory=threading.Lock)
     _search_cache: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
-    _children_cache: dict[tuple[str, str, int], dict[str, Any]] = field(default_factory=dict)
+    _children_cache: dict[tuple[str, str, int], dict[str, Any]] = field(
+        default_factory=dict
+    )
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -74,8 +70,7 @@ class BindingBrowserSession:
         if self._stop_event.is_set():
             return
         self._stop_event.set()
-        with _ACTIVE_BROWSER_SESSIONS_LOCK:
-            _ACTIVE_BROWSER_SESSIONS.pop(self.session_id, None)
+        logger.info("Binding browser session %s stopping", self.session_id)
         try:
             self._server.shutdown()
         except Exception:
@@ -91,7 +86,9 @@ class BindingBrowserSession:
         self._stop_event.wait()
 
 
-def _json_error(handler: BaseHTTPRequestHandler, message: str, status_code: int) -> None:
+def _json_error(
+    handler: BaseHTTPRequestHandler, message: str, status_code: int
+) -> None:
     payload = json.dumps({"error": message}, ensure_ascii=False).encode("utf-8")
     handler.send_response(status_code)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
@@ -134,7 +131,9 @@ def _read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return decoded
 
 
-def _serve_root(handler: BaseHTTPRequestHandler, session: BindingBrowserSession) -> None:
+def _serve_root(
+    handler: BaseHTTPRequestHandler, session: BindingBrowserSession
+) -> None:
     _html_response(
         handler,
         render_binding_browser_page(
@@ -212,7 +211,9 @@ def _serve_children(
     )
 
 
-def _serve_bind(handler: BaseHTTPRequestHandler, session: BindingBrowserSession) -> None:
+def _serve_bind(
+    handler: BaseHTTPRequestHandler, session: BindingBrowserSession
+) -> None:
     payload = _read_json_body(handler)
     resource_refs = payload.get("resource_refs")
     if not isinstance(resource_refs, list):
@@ -227,7 +228,9 @@ def _serve_bind(handler: BaseHTTPRequestHandler, session: BindingBrowserSession)
     )
 
 
-def _serve_bind_urls(handler: BaseHTTPRequestHandler, session: BindingBrowserSession) -> None:
+def _serve_bind_urls(
+    handler: BaseHTTPRequestHandler, session: BindingBrowserSession
+) -> None:
     payload = _read_json_body(handler)
     resource_urls = payload.get("resource_urls")
     if not isinstance(resource_urls, list):
@@ -250,6 +253,17 @@ def _binding_browser_handler(session: BindingBrowserSession):
         def log_message(self, _format: str, *_args: Any) -> None:
             return
 
+        def _validate_origin(self) -> bool:
+            """Reject cross-origin mutating requests (CSRF protection)."""
+            origin = self.headers.get("Origin") or ""
+            if not origin:
+                return True
+            allowed = session.chooser_url.rstrip("/")
+            if origin.rstrip("/") == allowed:
+                return True
+            _json_error(self, "Cross-origin request rejected.", 403)
+            return False
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = parse.urlparse(self.path)
             query = parse.parse_qs(parsed.query)
@@ -267,7 +281,9 @@ def _binding_browser_handler(session: BindingBrowserSession):
                     _serve_children(self, session, query)
                     return
                 if parsed.path == "/api/bindings":
-                    _json_response(self, list_bindings(project_root=session.project_root))
+                    _json_response(
+                        self, list_bindings(project_root=session.project_root)
+                    )
                     return
                 _json_error(self, "Not found.", 404)
             except LabbookError as exc:
@@ -276,6 +292,8 @@ def _binding_browser_handler(session: BindingBrowserSession):
                 _json_error(self, f"Unexpected error: {exc}", 500)
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._validate_origin():
+                return
             parsed = parse.urlparse(self.path)
             try:
                 if parsed.path == "/api/bind":
@@ -314,7 +332,7 @@ def start_binding_browser(
 
     server = ThreadingHTTPServer((host, 0), BaseHTTPRequestHandler)
     session = BindingBrowserSession(
-        session_id=_session_id(),
+        session_id=f"chooser-{time.time_ns()}",
         project_root=str(root),
         chooser_url="",
         browser_opened=False,
@@ -332,14 +350,17 @@ def start_binding_browser(
     port = int(server.server_address[1])
     session.chooser_url = f"http://{host}:{port}/"
 
-    with _ACTIVE_BROWSER_SESSIONS_LOCK:
-        _ACTIVE_BROWSER_SESSIONS[session.session_id] = session
-
     session._thread.start()
     session._timer = threading.Timer(session.timeout_seconds, session.stop)
     session._timer.daemon = True
     session._timer.start()
     session.browser_opened = (
-        _open_browser_url(session.chooser_url) if open_browser else False
+        open_browser_url(session.chooser_url) if open_browser else False
+    )
+    logger.info(
+        "Binding browser started at %s (session=%s, browser_opened=%s)",
+        session.chooser_url,
+        session.session_id,
+        session.browser_opened,
     )
     return session

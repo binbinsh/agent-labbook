@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import platform
 import sys
 from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any
+
+logger = logging.getLogger("labbook.cli")
 
 from . import __version__
 from .auth_flow import status
@@ -21,7 +24,9 @@ from .state import (
 
 
 def _json_dump(payload: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
 
 
 def _installed_mcp_sdk_version() -> str | None:

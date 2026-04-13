@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,12 +9,8 @@ from unittest import mock
 from urllib import request as urlrequest
 
 
-SRC = Path(__file__).resolve().parents[1] / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-
-from labbook.binding_ui import start_binding_browser  # noqa: E402
-from labbook.auth_flow import (  # noqa: E402
+from labbook.binding_ui import start_binding_browser
+from labbook.auth_flow import (
     DEFAULT_NOTION_INTEGRATIONS_URL,
     NOTION_INTEGRATION_GUIDE_URL,
     clear_project_auth,
@@ -24,7 +19,7 @@ from labbook.auth_flow import (  # noqa: E402
     prepare_internal_integration,
     status,
 )
-from labbook.binding_ops import (  # noqa: E402
+from labbook.binding_ops import (
     DEFAULT_DISCOVERY_LIMIT,
     DEFAULT_SEARCH_PAGE_SIZE,
     bind_resource_urls,
@@ -32,7 +27,7 @@ from labbook.binding_ops import (  # noqa: E402
     discover_children,
     search_resources,
 )
-from labbook.state import (  # noqa: E402
+from labbook.state import (
     KEYRING_SERVICE_NAME,
     TOKEN_ENV_VAR,
     LabbookError,
@@ -58,7 +53,11 @@ BACKENDS_BOTH = [
         "available": True,
         "selected_by_default": False,
         "reason": None,
-        "details": {"cli_path": "/opt/homebrew/bin/op", "signed_in": True, "vaults": []},
+        "details": {
+            "cli_path": "/opt/homebrew/bin/op",
+            "signed_in": True,
+            "vaults": [],
+        },
     },
 ]
 
@@ -84,13 +83,17 @@ BACKENDS_KEYCHAIN_ONLY = [
 
 class ServiceTests(unittest.TestCase):
     def test_status_recommends_prepare_when_no_token_exists(self) -> None:
-        with mock.patch("labbook.auth_flow._available_storage_backends", return_value=BACKENDS_BOTH):
+        with mock.patch(
+            "labbook.auth_flow._available_storage_backends", return_value=BACKENDS_BOTH
+        ):
             with tempfile.TemporaryDirectory() as tmpdir:
                 payload = status(tmpdir)
 
         self.assertEqual(payload["integration"], "agent-labbook")
         self.assertFalse(payload["authenticated"])
-        self.assertEqual(payload["recommended_action"], "notion_prepare_internal_integration")
+        self.assertEqual(
+            payload["recommended_action"], "notion_prepare_internal_integration"
+        )
         self.assertEqual(payload["secret_plan"]["mode"], "keychain")
         self.assertIn("default recommendation", payload["secret_plan"]["reason"])
         self.assertEqual(payload["available_env_var"], TOKEN_ENV_VAR)
@@ -99,14 +102,24 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("binding_options", payload)
         self.assertEqual(payload["binding_recommendation"]["mode"], "wait_for_auth")
 
-    def test_prepare_internal_integration_opens_browser_and_reports_backends(self) -> None:
-        with mock.patch("labbook.auth_flow._available_storage_backends", return_value=BACKENDS_BOTH):
-            with mock.patch("labbook.auth_flow._open_browser_url", return_value=True) as open_mock:
+    def test_prepare_internal_integration_opens_browser_and_reports_backends(
+        self,
+    ) -> None:
+        with mock.patch(
+            "labbook.auth_flow._available_storage_backends", return_value=BACKENDS_BOTH
+        ):
+            with mock.patch(
+                "labbook.auth_flow.open_browser_url", return_value=True
+            ) as open_mock:
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    payload = prepare_internal_integration(project_root=tmpdir, open_browser=True)
+                    payload = prepare_internal_integration(
+                        project_root=tmpdir, open_browser=True
+                    )
 
         open_mock.assert_called_once_with(DEFAULT_NOTION_INTEGRATIONS_URL)
-        self.assertEqual(payload["notion_integrations_url"], DEFAULT_NOTION_INTEGRATIONS_URL)
+        self.assertEqual(
+            payload["notion_integrations_url"], DEFAULT_NOTION_INTEGRATIONS_URL
+        )
         self.assertEqual(payload["notion_docs_url"], NOTION_INTEGRATION_GUIDE_URL)
         self.assertTrue(payload["browser_opened"])
         self.assertEqual(payload["storage_default"], "keychain")
@@ -123,8 +136,13 @@ class ServiceTests(unittest.TestCase):
                     "keyring_account": "project-root:/tmp/example",
                 },
             )
-            with mock.patch("labbook.auth_flow._available_storage_backends", return_value=BACKENDS_KEYCHAIN_ONLY):
-                with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
+            with mock.patch(
+                "labbook.auth_flow._available_storage_backends",
+                return_value=BACKENDS_KEYCHAIN_ONLY,
+            ):
+                with mock.patch.dict(
+                    os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+                ):
                     payload = status(tmpdir)
 
         self.assertTrue(payload["authenticated"])
@@ -133,22 +151,36 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["secret_plan"]["mode"], "keychain")
         self.assertEqual(payload["workspace_name"], "Workspace One")
         self.assertEqual(payload["recommended_action"], "notion_search_resources")
-        self.assertIn(payload["binding_recommendation"]["mode"], {"url", "local_browser"})
+        self.assertIn(
+            payload["binding_recommendation"]["mode"], {"url", "local_browser"}
+        )
 
-    def test_configure_internal_integration_requires_explicit_choice_when_multiple_backends_exist(self) -> None:
+    def test_configure_internal_integration_requires_explicit_choice_when_multiple_backends_exist(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch("labbook.auth_flow._available_storage_backends", return_value=BACKENDS_BOTH):
-                with mock.patch("labbook.auth_flow.NotionClient.get_me", return_value={}):
+            with mock.patch(
+                "labbook.auth_flow._available_storage_backends",
+                return_value=BACKENDS_BOTH,
+            ):
+                with mock.patch(
+                    "labbook.auth_flow.NotionClient.get_me", return_value={}
+                ):
                     with self.assertRaises(LabbookError):
                         configure_internal_integration(
                             secret="secret_test_token",
                             project_root=tmpdir,
                         )
 
-    def test_configure_internal_integration_stores_secret_in_keyring_and_session(self) -> None:
+    def test_configure_internal_integration_stores_secret_in_keyring_and_session(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             keyring_mock = mock.Mock()
-            with mock.patch("labbook.auth_flow._available_storage_backends", return_value=BACKENDS_KEYCHAIN_ONLY):
+            with mock.patch(
+                "labbook.auth_flow._available_storage_backends",
+                return_value=BACKENDS_KEYCHAIN_ONLY,
+            ):
                 with mock.patch("labbook.auth_flow.NotionClient.get_me") as get_me_mock:
                     with mock.patch("labbook.auth_flow.keyring", new=keyring_mock):
                         get_me_mock.return_value = {
@@ -186,9 +218,18 @@ class ServiceTests(unittest.TestCase):
                 "op_vault_id": "vault-123",
                 "op_ref": "op://vault-123/item-123/password",
             }
-            with mock.patch("labbook.auth_flow._available_storage_backends", return_value=BACKENDS_BOTH):
-                with mock.patch("labbook.auth_flow._store_token_in_onepassword", return_value=onepassword_metadata) as store_mock:
-                    with mock.patch("labbook.auth_flow.NotionClient.get_me", return_value={"id": "bot-user-id", "bot": {}}):
+            with mock.patch(
+                "labbook.auth_flow._available_storage_backends",
+                return_value=BACKENDS_BOTH,
+            ):
+                with mock.patch(
+                    "labbook.auth_flow._store_token_in_onepassword",
+                    return_value=onepassword_metadata,
+                ) as store_mock:
+                    with mock.patch(
+                        "labbook.auth_flow.NotionClient.get_me",
+                        return_value={"id": "bot-user-id", "bot": {}},
+                    ):
                         payload = configure_internal_integration(
                             secret="secret_test_token",
                             project_root=tmpdir,
@@ -206,8 +247,12 @@ class ServiceTests(unittest.TestCase):
 
     def test_search_resources_normalizes_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
-                with mock.patch("labbook.binding_ops.NotionClient.search") as search_mock:
+            with mock.patch.dict(
+                os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+            ):
+                with mock.patch(
+                    "labbook.binding_ops.NotionClient.search"
+                ) as search_mock:
                     search_mock.return_value = {
                         "results": [
                             {
@@ -226,7 +271,9 @@ class ServiceTests(unittest.TestCase):
                         ]
                     }
 
-                    payload = search_resources(project_root=tmpdir, query="spec", page_size=10)
+                    payload = search_resources(
+                        project_root=tmpdir, query="spec", page_size=10
+                    )
 
         self.assertEqual(payload["page_size"], 10)
         self.assertEqual(payload["result_count"], 2)
@@ -235,8 +282,12 @@ class ServiceTests(unittest.TestCase):
 
     def test_bind_resources_preserves_subtree_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
-                with mock.patch("labbook.binding_ops.NotionClient.retrieve_resource") as retrieve_mock:
+            with mock.patch.dict(
+                os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+            ):
+                with mock.patch(
+                    "labbook.binding_ops.NotionClient.retrieve_resource"
+                ) as retrieve_mock:
                     retrieve_mock.return_value = {
                         "object": "page",
                         "id": "01234567-89ab-cdef-0123-456789abcdef",
@@ -263,8 +314,12 @@ class ServiceTests(unittest.TestCase):
 
     def test_bind_resource_urls_defaults_to_subtree_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
-                with mock.patch("labbook.binding_ops.NotionClient.retrieve_resource") as retrieve_mock:
+            with mock.patch.dict(
+                os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+            ):
+                with mock.patch(
+                    "labbook.binding_ops.NotionClient.retrieve_resource"
+                ) as retrieve_mock:
                     retrieve_mock.return_value = {
                         "object": "page",
                         "id": "01234567-89ab-cdef-0123-456789abcdef",
@@ -274,7 +329,9 @@ class ServiceTests(unittest.TestCase):
 
                     payload = bind_resource_urls(
                         project_root=tmpdir,
-                        resource_urls=["https://www.notion.so/example-0123456789abcdef0123456789abcdef"],
+                        resource_urls=[
+                            "https://www.notion.so/example-0123456789abcdef0123456789abcdef"
+                        ],
                     )
 
         self.assertEqual(payload["resource_count"], 1)
@@ -282,10 +339,18 @@ class ServiceTests(unittest.TestCase):
 
     def test_discover_children_finds_child_pages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
-                with mock.patch("labbook.binding_ops.NotionClient.retrieve_resource") as retrieve_root:
-                    with mock.patch("labbook.binding_discovery.NotionClient.list_block_children") as list_children:
-                        with mock.patch("labbook.binding_discovery.NotionClient.retrieve_page") as retrieve_page:
+            with mock.patch.dict(
+                os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+            ):
+                with mock.patch(
+                    "labbook.binding_ops.NotionClient.retrieve_resource"
+                ) as retrieve_root:
+                    with mock.patch(
+                        "labbook.binding_discovery.NotionClient.list_block_children"
+                    ) as list_children:
+                        with mock.patch(
+                            "labbook.binding_discovery.NotionClient.retrieve_page"
+                        ) as retrieve_page:
                             retrieve_root.return_value = {
                                 "object": "page",
                                 "id": "01234567-89ab-cdef-0123-456789abcdef",
@@ -380,14 +445,18 @@ class ServiceTests(unittest.TestCase):
                     "op_ref": "op://vault-123/item-123/password",
                 },
             )
-            with mock.patch("labbook.auth_flow._op_command", return_value=("secret_op_token", None)):
+            with mock.patch(
+                "labbook.auth_flow._op_command", return_value=("secret_op_token", None)
+            ):
                 payload = get_api_context(tmpdir)
 
         self.assertEqual(payload["token_source"], "1password")
         self.assertEqual(payload["storage"], "1password")
         self.assertEqual(payload["access_token"], "secret_op_token")
 
-    def test_status_recommends_current_configured_backend_when_it_is_working(self) -> None:
+    def test_status_recommends_current_configured_backend_when_it_is_working(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             save_project_session(
                 tmpdir,
@@ -398,13 +467,21 @@ class ServiceTests(unittest.TestCase):
                     "op_ref": "op://vault-123/item-123/password",
                 },
             )
-            with mock.patch("labbook.auth_flow._available_storage_backends", return_value=BACKENDS_BOTH):
-                with mock.patch("labbook.auth_flow._op_command", return_value=("secret_op_token", None)):
+            with mock.patch(
+                "labbook.auth_flow._available_storage_backends",
+                return_value=BACKENDS_BOTH,
+            ):
+                with mock.patch(
+                    "labbook.auth_flow._op_command",
+                    return_value=("secret_op_token", None),
+                ):
                     payload = status(tmpdir)
 
         self.assertEqual(payload["token_source"], "1password")
         self.assertEqual(payload["secret_plan"]["mode"], "1password")
-        self.assertIn("already using 1Password successfully", payload["secret_plan"]["reason"])
+        self.assertIn(
+            "already using 1Password successfully", payload["secret_plan"]["reason"]
+        )
 
     def test_clear_project_auth_deletes_keyring_secret_and_bindings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -449,7 +526,9 @@ class ServiceTests(unittest.TestCase):
                     "op_vault_id": "vault-123",
                 },
             )
-            with mock.patch("labbook.auth_flow._op_command", return_value=("", None)) as op_mock:
+            with mock.patch(
+                "labbook.auth_flow._op_command", return_value=("", None)
+            ) as op_mock:
                 payload = clear_project_auth(project_root=tmpdir)
 
         op_mock.assert_called_once()
@@ -458,8 +537,13 @@ class ServiceTests(unittest.TestCase):
 
     def test_search_page_size_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch.dict(os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False):
-                with mock.patch("labbook.binding_ops.NotionClient.search", return_value={"results": []}) as search_mock:
+            with mock.patch.dict(
+                os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+            ):
+                with mock.patch(
+                    "labbook.binding_ops.NotionClient.search",
+                    return_value={"results": []},
+                ) as search_mock:
                     payload = search_resources(project_root=tmpdir)
 
         self.assertEqual(payload["page_size"], DEFAULT_SEARCH_PAGE_SIZE)
@@ -479,22 +563,22 @@ class ServiceTests(unittest.TestCase):
                     return_value=(mock.Mock(), {"project_root": tmpdir}),
                 ):
                     with mock.patch(
-                    "labbook.binding_ui.build_search_resources_payload",
-                    return_value={
-                        "project_root": tmpdir,
-                        "query": None,
-                        "page_size": 7,
-                        "result_count": 1,
-                        "results": [
-                            {
-                                "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
-                                "resource_type": "page",
-                                "resource_url": "https://www.notion.so/example",
-                                "title": "Project Home",
-                            }
-                        ],
-                    },
-                ):
+                        "labbook.binding_ui.build_search_resources_payload",
+                        return_value={
+                            "project_root": tmpdir,
+                            "query": None,
+                            "page_size": 7,
+                            "result_count": 1,
+                            "results": [
+                                {
+                                    "resource_id": "01234567-89ab-cdef-0123-456789abcdef",
+                                    "resource_type": "page",
+                                    "resource_url": "https://www.notion.so/example",
+                                    "title": "Project Home",
+                                }
+                            ],
+                        },
+                    ):
                         with mock.patch(
                             "labbook.binding_ui.list_bindings",
                             return_value={
@@ -530,7 +614,9 @@ class ServiceTests(unittest.TestCase):
                                 )
                                 try:
                                     root_html = (
-                                        urlrequest.urlopen(session.chooser_url, timeout=5)
+                                        urlrequest.urlopen(
+                                            session.chooser_url, timeout=5
+                                        )
                                         .read()
                                         .decode("utf-8")
                                     )
@@ -557,7 +643,9 @@ class ServiceTests(unittest.TestCase):
                                             urlrequest.Request(
                                                 f"{session.chooser_url}api/bind",
                                                 data=request_payload,
-                                                headers={"Content-Type": "application/json"},
+                                                headers={
+                                                    "Content-Type": "application/json"
+                                                },
                                                 method="POST",
                                             ),
                                             timeout=5,
@@ -572,7 +660,6 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(search_payload["result_count"], 1)
         self.assertEqual(bind_response["resource_count"], 1)
         bind_mock.assert_called_once()
-
 
 
 if __name__ == "__main__":

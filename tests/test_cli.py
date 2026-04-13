@@ -2,17 +2,10 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from pathlib import Path
 from unittest import mock
-
-
-SRC = Path(__file__).resolve().parents[1] / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
 
 from labbook.cli import main
 
@@ -61,7 +54,6 @@ class CliTests(unittest.TestCase):
                 "reason": "System keychain is the default recommendation for persistent local development on this machine.",
             },
         )
-
 
 
 if __name__ == "__main__":

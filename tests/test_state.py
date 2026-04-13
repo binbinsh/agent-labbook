@@ -1,17 +1,11 @@
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-
-SRC = Path(__file__).resolve().parents[1] / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-
-from labbook.state import (  # noqa: E402
+from labbook.state import (
     INTEGRATION_ID,
     LabbookError,
     load_project_bindings,
@@ -50,7 +44,10 @@ class StateVersioningTests(unittest.TestCase):
             root = Path(tmpdir)
             path = session_path(root)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"version": 999, "integration": INTEGRATION_ID}), encoding="utf-8")
+            path.write_text(
+                json.dumps({"version": 999, "integration": INTEGRATION_ID}),
+                encoding="utf-8",
+            )
 
             with self.assertRaises(LabbookError) as exc_info:
                 load_project_session(root)
@@ -62,7 +59,9 @@ class StateVersioningTests(unittest.TestCase):
             root = Path(tmpdir)
             path = session_path(root)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"version": 3, "integration": "different"}), encoding="utf-8")
+            path.write_text(
+                json.dumps({"version": 3, "integration": "different"}), encoding="utf-8"
+            )
 
             with self.assertRaises(LabbookError) as exc_info:
                 load_project_session(root)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 import json
 import os
@@ -9,14 +10,10 @@ from pathlib import Path
 from typing import Any
 import webbrowser
 
-try:
-    import keyring
-    from keyring.errors import KeyringError
-except ModuleNotFoundError:  # pragma: no cover - exercised in local import environments
-    keyring = None
+logger = logging.getLogger("labbook.auth_flow")
 
-    class KeyringError(RuntimeError):
-        pass
+import keyring
+from keyring.errors import KeyringError
 
 
 from . import __version__
@@ -37,9 +34,6 @@ from .state import (
 )
 
 
-CLIENT_USER_AGENT = (
-    f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)"
-)
 SETUP_GUIDE_RESOURCE_URI = "labbook://agent-labbook/setup-guide"
 STATUS_RESOURCE_URI = "labbook://agent-labbook/project/status"
 BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
@@ -54,11 +48,7 @@ OP_TIMEOUT_SECONDS = 10
 SUPPORTED_STORAGE_BACKENDS = ("keychain", "1password")
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def _build_setup_guide() -> str:
+def setup_guide() -> str:
     return "\n".join(
         [
             "# Notion Agent Labbook Internal Integration Setup",
@@ -103,10 +93,6 @@ def _build_setup_guide() -> str:
     )
 
 
-def setup_guide() -> str:
-    return _build_setup_guide()
-
-
 def _session_payload(
     *,
     project_root: Path,
@@ -126,7 +112,6 @@ def _session_payload(
     return {
         "project_root": str(project_root),
         "storage": storage,
-        "token_source": storage,
         "workspace_name": workspace_name,
         "workspace_id": workspace_id,
         "bot_id": bot_id,
@@ -138,25 +123,19 @@ def _session_payload(
         "op_vault": op_vault,
         "op_vault_id": op_vault_id,
         "op_ref": op_ref,
-        "configured_at": _utc_now(),
+        "configured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "notion_version": DEFAULT_NOTION_VERSION,
     }
 
 
-def _keyring_account(project_root: Path) -> str:
-    return f"project-root:{project_root}"
-
-
 def _keyring_backend_name() -> str:
-    if keyring is None:
-        return "unavailable"
     try:
         return keyring.get_keyring().__class__.__name__
     except Exception:  # noqa: BLE001
         return "unknown"
 
 
-def _open_browser_url(url: str) -> bool:
+def open_browser_url(url: str) -> bool:
     try:
         return bool(webbrowser.open(url, new=2))
     except Exception:  # noqa: BLE001
@@ -164,16 +143,6 @@ def _open_browser_url(url: str) -> bool:
 
 
 def _keychain_backend_status() -> dict[str, Any]:
-    if keyring is None:
-        return {
-            "backend": "keychain",
-            "display_name": "System Keychain",
-            "available": False,
-            "selected_by_default": False,
-            "reason": "The Python 'keyring' package is not installed.",
-            "details": {"keyring_backend": "unavailable"},
-        }
-
     try:
         backend = keyring.get_keyring()
         backend_name = backend.__class__.__name__
@@ -388,13 +357,8 @@ def _resolve_storage_backend(
 
 
 def _store_token_in_keyring(*, project_root: Path, token: str) -> tuple[str, str]:
-    if keyring is None:
-        raise LabbookError(
-            "The Python 'keyring' package is not installed. "
-            f"Set {TOKEN_ENV_VAR} as an environment variable if you cannot install keyring."
-        )
     service_name = KEYRING_SERVICE_NAME
-    account = _keyring_account(project_root)
+    account = f"project-root:{project_root}"
     try:
         keyring.set_password(service_name, account, token)
     except KeyringError as exc:
@@ -511,7 +475,7 @@ def _store_token_in_onepassword(
 
 
 def _delete_token_from_keyring(session_payload: dict[str, Any] | None) -> bool:
-    if keyring is None or not isinstance(session_payload, dict):
+    if not isinstance(session_payload, dict):
         return False
     service_name = str(session_payload.get("keyring_service") or "").strip()
     account = str(session_payload.get("keyring_account") or "").strip()
@@ -543,8 +507,6 @@ def _delete_token_from_onepassword(session_payload: dict[str, Any] | None) -> bo
 def _keyring_token(
     session_payload: dict[str, Any] | None,
 ) -> tuple[str | None, str | None]:
-    if keyring is None:
-        return None, "The Python 'keyring' package is not installed."
     if not isinstance(session_payload, dict):
         return None, None
     service_name = str(session_payload.get("keyring_service") or "").strip()
@@ -556,7 +518,10 @@ def _keyring_token(
     except KeyringError as exc:
         return None, str(exc)
     if not token:
-        return None, "The stored Notion integration secret could not be found in keyring."
+        return (
+            None,
+            "The stored Notion integration secret could not be found in keyring.",
+        )
     return token, None
 
 
@@ -580,18 +545,17 @@ def _onepassword_token(
         return None, error
     clean_token = str(token or "").strip()
     if not clean_token:
-        return None, "The stored Notion integration secret could not be read from 1Password."
+        return (
+            None,
+            "The stored Notion integration secret could not be read from 1Password.",
+        )
     return clean_token, None
 
 
 def _configured_storage(session_payload: dict[str, Any] | None) -> str | None:
     if not isinstance(session_payload, dict):
         return None
-    clean_value = (
-        str(session_payload.get("storage") or session_payload.get("token_source") or "")
-        .strip()
-        .lower()
-    )
+    clean_value = str(session_payload.get("storage") or "").strip().lower()
     if clean_value in {"keychain", "1password"}:
         return clean_value
     return None
@@ -651,7 +615,7 @@ def _require_token_context(project_root: str | Path | None = None) -> dict[str, 
     )
 
 
-def _notion_client(
+def notion_client_for_project(
     project_root: str | Path | None = None,
 ) -> tuple[NotionClient, dict[str, Any]]:
     context = _require_token_context(project_root)
@@ -667,7 +631,7 @@ def prepare_internal_integration(
     storage_options = _available_storage_backends()
     storage_default = _recommended_storage_backend(storage_options)
     browser_opened = (
-        _open_browser_url(DEFAULT_NOTION_INTEGRATIONS_URL) if open_browser else False
+        open_browser_url(DEFAULT_NOTION_INTEGRATIONS_URL) if open_browser else False
     )
     setup_steps = [
         "Create or open a Notion Internal Integration in the dashboard.",
@@ -766,7 +730,9 @@ def _authentication_hint(token_context: dict[str, Any]) -> str:
     if token_context["token_source"] == "env":
         return f"Using {TOKEN_ENV_VAR} from the environment for this process."
     if token_context["token_source"] == "keychain":
-        return "Using the Internal Integration secret stored in the local system keychain."
+        return (
+            "Using the Internal Integration secret stored in the local system keychain."
+        )
     if token_context["token_source"] == "1password":
         return "Using the Internal Integration secret stored in 1Password."
     return (
@@ -820,9 +786,7 @@ def _binding_recommendation(
     likely_headless: bool,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not authenticated:
-        reason = (
-            "Finish configuring the Internal Integration secret first. Binding choices matter only after Notion auth succeeds."
-        )
+        reason = "Finish configuring the Internal Integration secret first. Binding choices matter only after Notion auth succeeds."
         recommendation = {"mode": "wait_for_auth", "reason": reason}
         options = [
             _binding_option(
@@ -1039,7 +1003,9 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
 
 
 def project_status_resource(project_root: str | Path | None = None) -> str:
-    return json.dumps(status(project_root), ensure_ascii=False, indent=2, sort_keys=True)
+    return json.dumps(
+        status(project_root), ensure_ascii=False, indent=2, sort_keys=True
+    )
 
 
 def clear_project_auth(
@@ -1076,6 +1042,11 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
     bindings_payload = build_list_bindings_payload(token_context["project_root"])
     session_payload = token_context["session"] or {}
     token = str(token_context["token"])
+    logger.info(
+        "API context requested for project %s (token_source=%s)",
+        token_context["project_root"],
+        token_context["token_source"],
+    )
     return {
         "project_root": str(token_context["project_root"]),
         "authentication_mode": "internal_integration",
@@ -1089,7 +1060,7 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
             "Notion-Version": DEFAULT_NOTION_VERSION,
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": CLIENT_USER_AGENT,
+            "User-Agent": f"AgentLabbook/{__version__} (+https://github.com/binbinsh/agent-labbook)",
         },
         "workspace_name": session_payload.get("workspace_name"),
         "workspace_id": session_payload.get("workspace_id"),
@@ -1099,9 +1070,3 @@ def get_api_context(project_root: str | Path | None = None) -> dict[str, Any]:
             "selection_scope='subtree' means the resource is treated as a root and nested content is implicitly included."
         ),
     }
-
-
-def notion_client_for_project(
-    project_root: str | Path | None = None,
-) -> tuple[NotionClient, dict[str, Any]]:
-    return _notion_client(project_root)

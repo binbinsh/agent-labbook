@@ -11,8 +11,6 @@ from urllib import parse
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
@@ -55,7 +53,9 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(status_tool.annotations.readOnlyHint)
         self.assertIsNotNone(status_tool.outputSchema)
 
-        guide_tool = next(tool for tool in tools.tools if tool.name == "notion_setup_guide")
+        guide_tool = next(
+            tool for tool in tools.tools if tool.name == "notion_setup_guide"
+        )
         self.assertIsNotNone(guide_tool.outputSchema)
 
     async def test_setup_guide_tool(self) -> None:
@@ -82,7 +82,9 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(self.server_params) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
-                    result = await session.call_tool("notion_status", {"project_root": tmpdir})
+                    result = await session.call_tool(
+                        "notion_status", {"project_root": tmpdir}
+                    )
 
         self.assertFalse(result.isError)
         self.assertEqual(result.structuredContent["integration"], "agent-labbook")
@@ -129,7 +131,9 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                     status_result = await session.read_resource(
                         f"labbook://agent-labbook/project/status?project_root={project_root_query}"
                     )
-                    guide_result = await session.read_resource("labbook://agent-labbook/setup-guide")
+                    guide_result = await session.read_resource(
+                        "labbook://agent-labbook/setup-guide"
+                    )
 
         resource_uris = {str(resource.uri) for resource in resources.resources}
         self.assertIn("labbook://agent-labbook/project/status", resource_uris)
@@ -145,19 +149,25 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                 await session.initialize()
                 prompts = await session.list_prompts()
                 prompt = await session.get_prompt("notion_connect_project")
-                use_bound_prompt = await session.get_prompt("notion_use_bound_resources")
+                use_bound_prompt = await session.get_prompt(
+                    "notion_use_bound_resources"
+                )
 
         prompt_names = {item.name for item in prompts.prompts}
         self.assertIn("notion_connect_project", prompt_names)
         self.assertIn("notion_use_bound_resources", prompt_names)
         self.assertTrue(prompt.messages)
         self.assertIsInstance(prompt.messages[0].content, types.TextContent)
-        self.assertIn("notion_prepare_internal_integration", prompt.messages[0].content.text)
+        self.assertIn(
+            "notion_prepare_internal_integration", prompt.messages[0].content.text
+        )
         self.assertIn("storage", prompt.messages[0].content.text)
         self.assertIn("notion_bind_resource_urls", prompt.messages[0].content.text)
         self.assertIn("notion_open_binding_browser", prompt.messages[0].content.text)
         self.assertIn("Never echo the secret back", prompt.messages[0].content.text)
-        self.assertIn("POST /v1/pages with markdown", use_bound_prompt.messages[0].content.text)
+        self.assertIn(
+            "POST /v1/pages with markdown", use_bound_prompt.messages[0].content.text
+        )
 
 
 if __name__ == "__main__":
