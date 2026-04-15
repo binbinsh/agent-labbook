@@ -1,20 +1,25 @@
+"""Authentication and project-session management for Notion Agent Labbook.
+
+Public API (imported elsewhere):
+    setup_guide, status, project_status_resource,
+    prepare_internal_integration, configure_internal_integration,
+    clear_project_auth, get_api_context,
+    notion_client_for_project, open_browser_url,
+    SETUP_GUIDE_RESOURCE_URI, STATUS_RESOURCE_URI, BINDINGS_RESOURCE_URI,
+    STATUS_RESOURCE_TEMPLATE, BINDINGS_RESOURCE_TEMPLATE.
+
+Storage backends are delegated to :mod:`storage_keychain` and :mod:`storage_op`.
+"""
+
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timezone
 import json
+import logging
 import os
-import shutil
-import subprocess
+import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import webbrowser
-
-logger = logging.getLogger("labbook.auth_flow")
-
-import keyring
-from keyring.errors import KeyringError
-
 
 from . import __version__
 from .binding_ops import build_list_bindings_payload
@@ -32,20 +37,48 @@ from .state import (
     save_project_session,
     session_path,
 )
+from .storage_keychain import (
+    backend_name as _keyring_backend_name,
+    backend_status as _keychain_backend_status,
+    delete_token as _delete_token_from_keyring,
+    retrieve_token as _keyring_token,
+    store_token as _store_token_in_keyring,
+)
+from .storage_op import (
+    backend_status as _onepassword_backend_status,
+    delete_token as _delete_token_from_onepassword,
+    retrieve_token as _onepassword_token,
+    store_token as _store_token_in_onepassword,
+)
 
+logger = logging.getLogger("labbook.auth_flow")
+
+
+# ---------------------------------------------------------------------------
+# Resource URIs
+# ---------------------------------------------------------------------------
 
 SETUP_GUIDE_RESOURCE_URI = "labbook://agent-labbook/setup-guide"
 STATUS_RESOURCE_URI = "labbook://agent-labbook/project/status"
 BINDINGS_RESOURCE_URI = "labbook://agent-labbook/project/bindings"
 STATUS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/status{?project_root}"
 BINDINGS_RESOURCE_TEMPLATE = "labbook://agent-labbook/project/bindings{?project_root}"
+
+# ---------------------------------------------------------------------------
+# External URLs / defaults
+# ---------------------------------------------------------------------------
+
 DEFAULT_NOTION_INTEGRATIONS_URL = "https://www.notion.so/my-integrations"
 NOTION_INTEGRATION_GUIDE_URL = (
     "https://developers.notion.com/guides/get-started/create-a-notion-integration"
 )
-DEFAULT_1PASSWORD_ITEM_TITLE = "Notion Agent Labbook Internal Integration Secret"
-OP_TIMEOUT_SECONDS = 10
 SUPPORTED_STORAGE_BACKENDS = ("keychain", "1password")
+DEFAULT_PERSISTENT_STORAGE = "keychain"
+
+
+# ---------------------------------------------------------------------------
+# Setup guide
+# ---------------------------------------------------------------------------
 
 
 def setup_guide() -> str:
@@ -57,20 +90,19 @@ def setup_guide() -> str:
             "",
             "## Recommended Flow",
             "",
-            "1. Run `notion_prepare_internal_integration` to open the Notion integrations dashboard and inspect available secret storage backends.",
-            "2. Create or open an Internal Integration in the Notion dashboard.",
-            "3. Copy the Internal Integration Secret from the `Configuration` tab.",
-            "4. Choose a storage backend: system keychain or 1Password.",
-            "5. Store the secret with `notion_configure_internal_integration`, or provide it via the `NOTION_AGENT_LABBOOK_TOKEN` environment variable.",
-            "6. Share the target Notion pages or data sources with the integration bot inside Notion.",
-            "7. If you already know the exact Notion links, use `notion_bind_resource_urls`.",
-            "8. On desktop machines, use `notion_open_binding_browser` for a local chooser.",
-            "9. In headless environments, use `notion_search_resources`, `notion_discover_children`, and `notion_bind_resources`.",
-            "10. Call `notion_get_api_context` only when you are ready to use the official Notion API.",
+            "1. Create a Notion Internal Integration and share the target pages or data sources with it.",
+            "2. Run `uvx agent-labbook configure-secret --storage keychain` to save the secret locally without echo.",
+            "3. Bind the resources you want to use with exact URLs, the local browser chooser, or MCP search and discovery.",
+            "4. Call `notion_get_api_context` only when you are ready to use the official Notion API.",
+            "",
+            "Default workstation path: keychain.",
+            "Use `--storage 1password` only when you explicitly want 1Password.",
+            f"Use `{TOKEN_ENV_VAR}` only for CI or temporary overrides.",
             "",
             "## Security Notes",
             "",
-            "- `NOTION_AGENT_LABBOOK_TOKEN` takes precedence over any locally stored secret for the current process.",
+            "- `NOTION_AGENT_LABBOOK_TOKEN` takes precedence over any locally stored secret for the current process and is intended for CI or temporary overrides.",
+            "- `agent-labbook configure-secret` uses a local hidden prompt so the secret does not need to be pasted into chat or shell history.",
             "- When you choose `keychain`, the secret is stored in the local system credential store through Python `keyring`.",
             "- When you choose `1password`, the secret is stored as a 1Password Password item and retrieved later with `op read`.",
             "- Treat the integration secret like a password. Do not paste it into chat transcripts, logs, or committed files.",
@@ -91,6 +123,11 @@ def setup_guide() -> str:
             "Reference: https://developers.notion.com/guides/data-apis/working-with-markdown-content",
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Session helpers
+# ---------------------------------------------------------------------------
 
 
 def _session_payload(
@@ -128,13 +165,6 @@ def _session_payload(
     }
 
 
-def _keyring_backend_name() -> str:
-    try:
-        return keyring.get_keyring().__class__.__name__
-    except Exception:  # noqa: BLE001
-        return "unknown"
-
-
 def open_browser_url(url: str) -> bool:
     try:
         return bool(webbrowser.open(url, new=2))
@@ -142,170 +172,15 @@ def open_browser_url(url: str) -> bool:
         return False
 
 
-def _keychain_backend_status() -> dict[str, Any]:
-    try:
-        backend = keyring.get_keyring()
-        backend_name = backend.__class__.__name__
-        backend_module = backend.__class__.__module__
-        priority = getattr(backend, "priority", None)
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "backend": "keychain",
-            "display_name": "System Keychain",
-            "available": False,
-            "selected_by_default": False,
-            "reason": f"Could not initialize keyring: {exc}",
-            "details": {"keyring_backend": "unknown"},
-        }
-
-    available = not str(backend_module).startswith("keyring.backends.fail")
-    if isinstance(priority, (int, float)):
-        available = available and priority > 0
-
-    return {
-        "backend": "keychain",
-        "display_name": "System Keychain",
-        "available": available,
-        "selected_by_default": False,
-        "reason": None
-        if available
-        else "The configured Python keyring backend is unavailable.",
-        "details": {
-            "keyring_backend": backend_name,
-            "keyring_module": backend_module,
-        },
-    }
-
-
-def _op_command(
-    arguments: list[str],
-    *,
-    input_text: str | None = None,
-    expect_json: bool = False,
-) -> tuple[Any | None, str | None]:
-    op_path = shutil.which("op")
-    if not op_path:
-        return None, "The 1Password CLI (`op`) is not installed."
-
-    command = [op_path, *arguments]
-    if expect_json:
-        if command and command[-1] == "-":
-            command = command[:-1] + ["--format", "json", "-"]
-        else:
-            command.extend(["--format", "json"])
-
-    try:
-        result = subprocess.run(
-            command,
-            input=input_text,
-            text=True,
-            capture_output=True,
-            timeout=OP_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return None, f"Could not run 1Password CLI: {exc}"
-
-    if result.returncode != 0:
-        message = (
-            result.stderr or result.stdout or "1Password CLI command failed."
-        ).strip()
-        return None, message
-
-    output = (result.stdout or "").strip()
-    if not expect_json:
-        return output, None
-
-    try:
-        return json.loads(output or "null"), None
-    except json.JSONDecodeError as exc:
-        return None, f"1Password CLI returned invalid JSON: {exc}"
-
-
-def _op_item_reference_from_details(payload: dict[str, Any]) -> str | None:
-    fields = payload.get("fields")
-    if not isinstance(fields, list):
-        return None
-    for field in fields:
-        if not isinstance(field, dict):
-            continue
-        if (
-            field.get("id") == "password"
-            or str(field.get("label") or "").strip().lower() == "password"
-        ):
-            reference = str(field.get("reference") or "").strip()
-            if reference:
-                return reference
-    return None
-
-
-def _onepassword_backend_status() -> dict[str, Any]:
-    op_path = shutil.which("op")
-    if not op_path:
-        return {
-            "backend": "1password",
-            "display_name": "1Password",
-            "available": False,
-            "selected_by_default": False,
-            "reason": "The 1Password CLI (`op`) is not installed.",
-            "details": {"cli_path": None, "signed_in": False, "vaults": []},
-        }
-
-    accounts_payload, accounts_error = _op_command(
-        ["account", "list"], expect_json=True
-    )
-    if accounts_error:
-        return {
-            "backend": "1password",
-            "display_name": "1Password",
-            "available": False,
-            "selected_by_default": False,
-            "reason": accounts_error,
-            "details": {"cli_path": op_path, "signed_in": False, "vaults": []},
-        }
-
-    accounts = accounts_payload if isinstance(accounts_payload, list) else []
-    if not accounts:
-        return {
-            "backend": "1password",
-            "display_name": "1Password",
-            "available": False,
-            "selected_by_default": False,
-            "reason": "No 1Password account is signed in on this machine.",
-            "details": {"cli_path": op_path, "signed_in": False, "vaults": []},
-        }
-
-    vaults_payload, vaults_error = _op_command(["vault", "list"], expect_json=True)
-    vaults: list[dict[str, str]] = []
-    if isinstance(vaults_payload, list):
-        for item in vaults_payload:
-            if not isinstance(item, dict):
-                continue
-            vault_id = str(item.get("id") or "").strip()
-            vault_name = str(item.get("name") or "").strip()
-            if vault_id or vault_name:
-                vaults.append({"id": vault_id, "name": vault_name})
-
-    return {
-        "backend": "1password",
-        "display_name": "1Password",
-        "available": True,
-        "selected_by_default": False,
-        "reason": None,
-        "details": {
-            "cli_path": op_path,
-            "signed_in": True,
-            "accounts_count": len(accounts),
-            "vaults": vaults,
-            "vaults_error": vaults_error,
-        },
-    }
+# ---------------------------------------------------------------------------
+# Storage resolution
+# ---------------------------------------------------------------------------
 
 
 def _recommended_storage_backend(backends: list[dict[str, Any]]) -> str | None:
     available = [item["backend"] for item in backends if item.get("available")]
-    if "keychain" in available:
-        return "keychain"
+    if DEFAULT_PERSISTENT_STORAGE in available:
+        return DEFAULT_PERSISTENT_STORAGE
     if "1password" in available:
         return "1password"
     return None
@@ -319,27 +194,41 @@ def _available_storage_backends() -> list[dict[str, Any]]:
     return backends
 
 
+def _storage_choice_required(backends: list[dict[str, Any]]) -> bool:
+    available = [item["backend"] for item in backends if item.get("available")]
+    if not available:
+        return False
+    return _recommended_storage_backend(backends) is None and len(available) > 1
+
+
+def _recommended_local_command(storage_default: str | None) -> str | None:
+    if storage_default == "keychain":
+        return "uvx agent-labbook configure-secret --storage keychain"
+    if storage_default == "1password":
+        return "uvx agent-labbook configure-secret --storage 1password"
+    return None
+
+
 def _resolve_storage_backend(
     requested_backend: str | None = None,
     *,
     available_backends: list[dict[str, Any]] | None = None,
+    current_backend: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     backends = available_backends or _available_storage_backends()
     available = {item["backend"]: item for item in backends if item.get("available")}
     clean_requested = str(requested_backend or "auto").strip().lower() or "auto"
+    clean_current = str(current_backend or "").strip().lower() or None
 
     if clean_requested not in {"auto", *SUPPORTED_STORAGE_BACKENDS}:
         raise LabbookError("storage must be one of: auto, keychain, 1password.")
 
     if clean_requested == "auto":
-        if len(available) == 1:
-            return next(iter(available.keys())), backends
-        if len(available) > 1:
-            options = ", ".join(sorted(available))
-            raise LabbookError(
-                f"Multiple secret storage backends are available ({options}). "
-                "Ask the user to choose one explicitly and pass storage."
-            )
+        if clean_current in available:
+            return clean_current, backends
+        recommended = _recommended_storage_backend(backends)
+        if recommended:
+            return recommended, backends
         raise LabbookError(
             f"No supported secret storage backends are available. Set {TOKEN_ENV_VAR} instead."
         )
@@ -356,202 +245,6 @@ def _resolve_storage_backend(
     return clean_requested, backends
 
 
-def _store_token_in_keyring(*, project_root: Path, token: str) -> tuple[str, str]:
-    service_name = KEYRING_SERVICE_NAME
-    account = f"project-root:{project_root}"
-    try:
-        keyring.set_password(service_name, account, token)
-    except KeyringError as exc:
-        raise LabbookError(
-            "Could not store the Notion integration secret in the local keyring. "
-            f"Set {TOKEN_ENV_VAR} as an environment variable if you cannot use keyring on this machine."
-        ) from exc
-    return service_name, account
-
-
-def _store_token_in_onepassword(
-    *,
-    project_root: Path,
-    token: str,
-    vault: str | None = None,
-    item_title: str | None = None,
-) -> dict[str, str | None]:
-    title = str(
-        item_title or f"{DEFAULT_1PASSWORD_ITEM_TITLE} ({project_root.name})"
-    ).strip()
-    if not title:
-        title = DEFAULT_1PASSWORD_ITEM_TITLE
-
-    template = {
-        "title": title,
-        "category": "PASSWORD",
-        "fields": [
-            {
-                "id": "password",
-                "type": "CONCEALED",
-                "purpose": "PASSWORD",
-                "label": "password",
-                "value": token,
-            },
-            {
-                "id": "notesPlain",
-                "type": "STRING",
-                "purpose": "NOTES",
-                "label": "notesPlain",
-                "value": (
-                    f"Stored by {KEYRING_SERVICE_NAME} for project {project_root}. "
-                    "Contains the Notion Internal Integration Secret."
-                ),
-            },
-        ],
-    }
-
-    create_arguments = ["item", "create"]
-    if vault:
-        create_arguments.extend(["--vault", vault])
-    create_arguments.extend(
-        ["--tags", "agent-labbook,notion,internal-integration", "-"]
-    )
-    created_payload, create_error = _op_command(
-        create_arguments,
-        input_text=json.dumps(template, ensure_ascii=False),
-        expect_json=True,
-    )
-    if create_error or not isinstance(created_payload, dict):
-        raise LabbookError(
-            f"Could not store the Notion integration secret in 1Password. {create_error or 'Unknown error.'}"
-        )
-
-    item_id = str(created_payload.get("id") or "").strip()
-    if not item_id:
-        raise LabbookError("1Password did not return the created item ID.")
-
-    created_vault = created_payload.get("vault")
-    created_vault_id = (
-        str(created_vault.get("id") or "").strip()
-        if isinstance(created_vault, dict)
-        else ""
-    )
-    created_vault_name = (
-        str(created_vault.get("name") or "").strip()
-        if isinstance(created_vault, dict)
-        else ""
-    )
-    item_details_arguments = ["item", "get", item_id]
-    item_scope = created_vault_id or created_vault_name or str(vault or "").strip()
-    if item_scope:
-        item_details_arguments.extend(["--vault", item_scope])
-    item_details_payload, item_details_error = _op_command(
-        item_details_arguments, expect_json=True
-    )
-    if item_details_error or not isinstance(item_details_payload, dict):
-        raise LabbookError(
-            f"1Password created the item but its details could not be read back. {item_details_error or 'Unknown error.'}"
-        )
-
-    reference = _op_item_reference_from_details(item_details_payload)
-    details_vault = item_details_payload.get("vault")
-    vault_id = created_vault_id or (
-        str(details_vault.get("id") or "").strip()
-        if isinstance(details_vault, dict)
-        else ""
-    )
-    vault_name = created_vault_name or (
-        str(details_vault.get("name") or "").strip()
-        if isinstance(details_vault, dict)
-        else ""
-    )
-    if not reference and (vault_id or vault_name):
-        reference = f"op://{vault_id or vault_name}/{item_id}/password"
-
-    return {
-        "op_item_id": item_id or None,
-        "op_item_title": str(item_details_payload.get("title") or title).strip()
-        or title,
-        "op_vault": vault_name or str(vault or "").strip() or None,
-        "op_vault_id": vault_id or None,
-        "op_ref": reference or None,
-    }
-
-
-def _delete_token_from_keyring(session_payload: dict[str, Any] | None) -> bool:
-    if not isinstance(session_payload, dict):
-        return False
-    service_name = str(session_payload.get("keyring_service") or "").strip()
-    account = str(session_payload.get("keyring_account") or "").strip()
-    if not service_name or not account:
-        return False
-    try:
-        keyring.delete_password(service_name, account)
-    except KeyringError:
-        return False
-    return True
-
-
-def _delete_token_from_onepassword(session_payload: dict[str, Any] | None) -> bool:
-    if not isinstance(session_payload, dict):
-        return False
-    item_id = str(session_payload.get("op_item_id") or "").strip()
-    if not item_id:
-        return False
-    arguments = ["item", "delete", item_id]
-    vault = str(
-        session_payload.get("op_vault_id") or session_payload.get("op_vault") or ""
-    ).strip()
-    if vault:
-        arguments.extend(["--vault", vault])
-    _, error = _op_command(arguments, expect_json=False)
-    return error is None
-
-
-def _keyring_token(
-    session_payload: dict[str, Any] | None,
-) -> tuple[str | None, str | None]:
-    if not isinstance(session_payload, dict):
-        return None, None
-    service_name = str(session_payload.get("keyring_service") or "").strip()
-    account = str(session_payload.get("keyring_account") or "").strip()
-    if not service_name or not account:
-        return None, None
-    try:
-        token = keyring.get_password(service_name, account)
-    except KeyringError as exc:
-        return None, str(exc)
-    if not token:
-        return (
-            None,
-            "The stored Notion integration secret could not be found in keyring.",
-        )
-    return token, None
-
-
-def _onepassword_token(
-    session_payload: dict[str, Any] | None,
-) -> tuple[str | None, str | None]:
-    if not isinstance(session_payload, dict):
-        return None, None
-    reference = str(session_payload.get("op_ref") or "").strip()
-    if not reference:
-        item_id = str(session_payload.get("op_item_id") or "").strip()
-        vault = str(
-            session_payload.get("op_vault_id") or session_payload.get("op_vault") or ""
-        ).strip()
-        if item_id and vault:
-            reference = f"op://{vault}/{item_id}/password"
-    if not reference:
-        return None, "The stored 1Password reference is missing."
-    token, error = _op_command(["read", reference], expect_json=False)
-    if error:
-        return None, error
-    clean_token = str(token or "").strip()
-    if not clean_token:
-        return (
-            None,
-            "The stored Notion integration secret could not be read from 1Password.",
-        )
-    return clean_token, None
-
-
 def _configured_storage(session_payload: dict[str, Any] | None) -> str | None:
     if not isinstance(session_payload, dict):
         return None
@@ -559,6 +252,11 @@ def _configured_storage(session_payload: dict[str, Any] | None) -> str | None:
     if clean_value in {"keychain", "1password"}:
         return clean_value
     return None
+
+
+# ---------------------------------------------------------------------------
+# Token resolution
+# ---------------------------------------------------------------------------
 
 
 def _token_context(project_root: str | Path | None = None) -> dict[str, Any]:
@@ -610,7 +308,9 @@ def _require_token_context(project_root: str | Path | None = None) -> dict[str, 
         return context
     raise LabbookError(
         "This project does not have a usable Notion Internal Integration secret. "
-        "Run notion_prepare_internal_integration and notion_configure_internal_integration, "
+        "Run notion_prepare_internal_integration and then prefer agent-labbook configure-secret "
+        "(which defaults to keychain when available), "
+        "or use notion_configure_internal_integration when you can safely provide the secret directly, "
         f"or set {TOKEN_ENV_VAR}."
     )
 
@@ -622,6 +322,11 @@ def notion_client_for_project(
     return NotionClient(token=str(context["token"])), context
 
 
+# ---------------------------------------------------------------------------
+# prepare / configure
+# ---------------------------------------------------------------------------
+
+
 def prepare_internal_integration(
     *,
     project_root: str | Path | None = None,
@@ -630,14 +335,19 @@ def prepare_internal_integration(
     root = resolve_project_root(project_root)
     storage_options = _available_storage_backends()
     storage_default = _recommended_storage_backend(storage_options)
+    recommended_local_command = _recommended_local_command(storage_default)
     browser_opened = (
         open_browser_url(DEFAULT_NOTION_INTEGRATIONS_URL) if open_browser else False
     )
     setup_steps = [
-        "Create or open a Notion Internal Integration in the dashboard.",
-        "Copy the Internal Integration Secret from the Configuration tab.",
-        "Choose a storage backend and save the secret with notion_configure_internal_integration.",
-        "Share the required pages or data sources with the integration bot in Notion.",
+        "Create a Notion Internal Integration and share the target pages or data sources with it.",
+        (
+            f"Run `{recommended_local_command}` for a local hidden prompt."
+            if recommended_local_command
+            else "If no local secret backend is available, use NOTION_AGENT_LABBOOK_TOKEN as a process-scoped override."
+        ),
+        "Bind the resources you want to use.",
+        "Call notion_get_api_context only when you are ready to use the official Notion API.",
     ]
     return {
         "project_root": str(root),
@@ -647,13 +357,11 @@ def prepare_internal_integration(
         "open_browser_attempted": bool(open_browser),
         "storage_options": storage_options,
         "storage_default": storage_default,
-        "storage_choice_required": sum(
-            1 for item in storage_options if item.get("available")
-        )
-        > 1,
+        "storage_choice_required": _storage_choice_required(storage_options),
         "secret_label": "Internal Integration Secret",
         "setup_steps": setup_steps,
         "recommended_next_action": "notion_configure_internal_integration",
+        "recommended_local_command": recommended_local_command,
     }
 
 
@@ -670,7 +378,11 @@ def configure_internal_integration(
     if not clean_secret:
         raise LabbookError("secret is required.")
 
-    resolved_backend, storage_options = _resolve_storage_backend(storage)
+    session_payload = load_project_session(root)
+    resolved_backend, storage_options = _resolve_storage_backend(
+        storage,
+        current_backend=_configured_storage(session_payload),
+    )
     client = NotionClient(token=clean_secret)
     me = client.get_me()
     bot = me.get("bot") if isinstance(me.get("bot"), dict) else {}
@@ -726,6 +438,11 @@ def configure_internal_integration(
     }
 
 
+# ---------------------------------------------------------------------------
+# Hints
+# ---------------------------------------------------------------------------
+
+
 def _authentication_hint(token_context: dict[str, Any]) -> str:
     if token_context["token_source"] == "env":
         return f"Using {TOKEN_ENV_VAR} from the environment for this process."
@@ -737,23 +454,25 @@ def _authentication_hint(token_context: dict[str, Any]) -> str:
         return "Using the Internal Integration secret stored in 1Password."
     return (
         "Run notion_prepare_internal_integration to open the Notion integrations dashboard and inspect "
-        "available storage backends, then run notion_configure_internal_integration, "
+        "available storage backends, then prefer agent-labbook configure-secret "
+        "(which defaults to keychain when available), "
+        "or run notion_configure_internal_integration when you can safely provide the secret directly, "
         f"or set {TOKEN_ENV_VAR}."
     )
 
 
 def _storage_hint(storage_options: list[dict[str, Any]]) -> str:
-    available_names = [
-        item["backend"] for item in storage_options if item.get("available")
-    ]
-    if not available_names:
+    storage_default = _recommended_storage_backend(storage_options)
+    if storage_default == "keychain":
+        return (
+            "System keychain is the default persistent backend on this machine. "
+            "Use storage='1password' only when you explicitly want 1Password."
+        )
+    if storage_default == "1password":
+        return "1Password is the only supported persistent backend currently available on this machine."
+    if not any(item.get("available") for item in storage_options):
         return f"No supported local storage backend is available. Use {TOKEN_ENV_VAR}."
-    if len(available_names) == 1:
-        return f"{available_names[0]} is the only available local storage backend on this machine."
-    return (
-        "More than one local storage backend is available. Ask the user whether they want "
-        "system keychain or 1Password, then pass storage explicitly."
-    )
+    return "No preferred local storage backend could be determined."
 
 
 def _binding_option(
@@ -920,6 +639,11 @@ def _secret_plan(
     )
 
 
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+
 def status(project_root: str | Path | None = None) -> dict[str, Any]:
     token_context = _token_context(project_root)
     root = Path(token_context["project_root"])
@@ -931,6 +655,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
 
     storage_options = _available_storage_backends()
     storage_default = _recommended_storage_backend(storage_options)
+    recommended_local_command = _recommended_local_command(storage_default)
     secret_plan_mode, secret_plan_reason = _secret_plan(
         token_context=token_context,
         storage_default=storage_default,
@@ -966,10 +691,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
             "mode": secret_plan_mode,
             "reason": secret_plan_reason,
         },
-        "storage_choice_required": sum(
-            1 for item in storage_options if item.get("available")
-        )
-        > 1,
+        "storage_choice_required": _storage_choice_required(storage_options),
         "workspace_name": session_payload.get("workspace_name"),
         "workspace_id": session_payload.get("workspace_id"),
         "bot_id": session_payload.get("bot_id"),
@@ -996,6 +718,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "binding_question": _binding_question(likely_headless=likely_headless),
         "setup_resource_uri": SETUP_GUIDE_RESOURCE_URI,
         "available_env_var": TOKEN_ENV_VAR,
+        "recommended_local_command": recommended_local_command,
         "notion_integrations_url": DEFAULT_NOTION_INTEGRATIONS_URL,
         "notion_docs_url": NOTION_INTEGRATION_GUIDE_URL,
         "notion_version": DEFAULT_NOTION_VERSION,
@@ -1006,6 +729,11 @@ def project_status_resource(project_root: str | Path | None = None) -> str:
     return json.dumps(
         status(project_root), ensure_ascii=False, indent=2, sort_keys=True
     )
+
+
+# ---------------------------------------------------------------------------
+# clear / api context
+# ---------------------------------------------------------------------------
 
 
 def clear_project_auth(

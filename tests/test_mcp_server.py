@@ -96,6 +96,8 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("secret_plan", result.structuredContent)
         self.assertIn("storage_options", result.structuredContent)
         self.assertIn("storage_choice_required", result.structuredContent)
+        self.assertIn("recommended_local_command", result.structuredContent)
+        self.assertFalse(result.structuredContent["storage_choice_required"])
         self.assertIn("binding_recommendation", result.structuredContent)
         self.assertIn("binding_options", result.structuredContent)
         self.assertTrue(result.content)
@@ -120,6 +122,11 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             "https://www.notion.so/my-integrations",
         )
         self.assertIn("storage_options", result.structuredContent)
+        self.assertIn("recommended_local_command", result.structuredContent)
+        self.assertEqual(
+            result.structuredContent["recommended_next_action"],
+            "notion_configure_internal_integration",
+        )
 
     async def test_resources_expose_status_and_setup_guide(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -161,7 +168,8 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "notion_prepare_internal_integration", prompt.messages[0].content.text
         )
-        self.assertIn("storage", prompt.messages[0].content.text)
+        self.assertIn("keychain", prompt.messages[0].content.text)
+        self.assertIn("configure-secret", prompt.messages[0].content.text)
         self.assertIn("notion_bind_resource_urls", prompt.messages[0].content.text)
         self.assertIn("notion_open_binding_browser", prompt.messages[0].content.text)
         self.assertIn("Never echo the secret back", prompt.messages[0].content.text)

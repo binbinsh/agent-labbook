@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .binding_discovery import (
-    normalize_notion_resource,
     discover_children_for_resource,
+    normalize_notion_resource,
 )
 from .notion_api import NOTION_API_BASE, NotionClient
 from .state import (
@@ -19,16 +19,69 @@ from .state import (
     save_project_bindings,
 )
 
+__all__ = [
+    "bind_resource_urls",
+    "bind_resources",
+    "build_bind_resource_urls_payload",
+    "build_bind_resources_payload",
+    "build_discover_children_payload",
+    "build_list_bindings_payload",
+    "build_search_resources_payload",
+    "discover_children",
+    "list_bindings",
+    "project_bindings_resource_text",
+    "search_resources",
+]
+
+# ---------------------------------------------------------------------------
+# Pagination / limit constants
+# ---------------------------------------------------------------------------
 
 DEFAULT_SEARCH_PAGE_SIZE = 25
 MIN_SEARCH_PAGE_SIZE = 1
 MAX_SEARCH_PAGE_SIZE = 100
+
 DEFAULT_DISCOVERY_LIMIT = 50
 MIN_DISCOVERY_LIMIT = 1
 MAX_DISCOVERY_LIMIT = 200
 
+_MAX_ALIAS_SUFFIX = 10_000
+
+_VALID_RESOURCE_TYPES = {"page", "data_source"}
+_VALID_SELECTION_SCOPES = {"resource", "subtree"}
+
+
+# ---------------------------------------------------------------------------
+# Small normalization helpers
+# ---------------------------------------------------------------------------
+
+
+def _coerce_resource_type(raw: str | None) -> str | None:
+    """Normalize a resource type string, coercing ``database`` to ``data_source``.
+
+    Returns ``None`` when the input is empty.  Raises :class:`LabbookError`
+    when the value is non-empty but not a recognized type.
+    """
+    clean = str(raw or "").strip().lower()
+    if not clean:
+        return None
+    if clean == "database":
+        clean = "data_source"
+    if clean not in _VALID_RESOURCE_TYPES:
+        raise LabbookError("resource_type must be 'page' or 'data_source'.")
+    return clean
+
+
+def _normalize_selection_scope(value: Any) -> str:
+    """Return ``'resource'`` or ``'subtree'``; raise on anything else."""
+    clean = str(value or "resource").strip().lower()
+    if clean not in _VALID_SELECTION_SCOPES:
+        raise LabbookError("selection_scope must be 'resource' or 'subtree'.")
+    return clean
+
 
 def normalize_search_page_size(page_size: int | str | None = None) -> int:
+    """Clamp *page_size* into ``[MIN, MAX]``, defaulting to ``DEFAULT``."""
     if page_size in (None, ""):
         return DEFAULT_SEARCH_PAGE_SIZE
     try:
@@ -39,40 +92,35 @@ def normalize_search_page_size(page_size: int | str | None = None) -> int:
 
 
 def normalize_discovery_limit(limit: int | str | None = None) -> int:
+    """Clamp *limit* into ``[MIN, MAX]``, defaulting to ``DEFAULT``."""
     if limit in (None, ""):
         return DEFAULT_DISCOVERY_LIMIT
     try:
-        parsed_limit = int(limit)
+        parsed = int(limit)
     except (TypeError, ValueError) as exc:
         raise LabbookError("limit must be an integer number of results.") from exc
-    return min(max(parsed_limit, MIN_DISCOVERY_LIMIT), MAX_DISCOVERY_LIMIT)
-
-
-def _endpoint_for_resource(resource_type: str | None, resource_id: str) -> str | None:
-    clean_id = normalize_notion_id(resource_id)
-    if resource_type == "page":
-        return f"{NOTION_API_BASE}/pages/{clean_id}"
-    if resource_type == "data_source":
-        return f"{NOTION_API_BASE}/data_sources/{clean_id}"
-    return None
+    return min(max(parsed, MIN_DISCOVERY_LIMIT), MAX_DISCOVERY_LIMIT)
 
 
 def _slugify_alias(text: str, *, fallback: str) -> str:
+    """Convert *text* to a URL-safe slug, falling back when empty."""
     candidate = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower()).strip("-")
     return candidate or fallback
 
 
-def _normalize_selection_scope(value: Any) -> str:
-    clean_value = str(value or "resource").strip().lower()
-    if clean_value not in {"resource", "subtree"}:
-        raise LabbookError("selection_scope must be 'resource' or 'subtree'.")
-    return clean_value
+def _endpoint_for_resource(resource_type: str | None, resource_id: str) -> str | None:
+    """Return the Notion API endpoint for a known resource type, or ``None``."""
+    clean_id = normalize_notion_id(resource_id)
+    endpoints = {
+        "page": f"{NOTION_API_BASE}/pages/{clean_id}",
+        "data_source": f"{NOTION_API_BASE}/data_sources/{clean_id}",
+    }
+    return endpoints.get(resource_type or "")
 
 
-def _default_resource_alias(resources: list[dict[str, Any]]) -> str | None:
-    if len(resources) != 1:
-        return None
-    return str(resources[0].get("alias") or "").strip() or None
+# ---------------------------------------------------------------------------
+# Binding entry helpers
+# ---------------------------------------------------------------------------
 
 
 def _normalize_binding_entry(
@@ -86,11 +134,10 @@ def _normalize_binding_entry(
     source: str = "manual_bind",
     bound_at: str | None = None,
 ) -> dict[str, Any]:
+    """Build a canonical binding dict from raw field values."""
     clean_id = normalize_notion_id(resource_id)
-    clean_type = str(resource_type or "").strip().lower()
-    if clean_type == "database":
-        clean_type = "data_source"
-    if clean_type not in {"page", "data_source"}:
+    clean_type = _coerce_resource_type(resource_type)
+    if clean_type is None:
         raise LabbookError("resource_type must be 'page' or 'data_source'.")
     clean_title = str(title or clean_id).strip() or clean_id
     clean_alias = _slugify_alias(alias or clean_title, fallback=clean_type)
@@ -110,15 +157,32 @@ def _normalize_binding_entry(
     }
 
 
-def _existing_bindings(project_root: Path) -> list[dict[str, Any]]:
-    bindings_payload = load_project_bindings(project_root) or {}
-    resources = bindings_payload.get("resources")
-    if not isinstance(resources, list):
-        return []
-    return [item for item in resources if isinstance(item, dict)]
+def _normalize_resource_input(item: dict[str, Any]) -> dict[str, str | None]:
+    """Normalize a single ``resource_refs`` item from user input."""
+    resource_ref = str(
+        item.get("resource_id_or_url")
+        or item.get("resource_id")
+        or item.get("resource_url")
+        or ""
+    ).strip()
+    if not resource_ref:
+        raise LabbookError(
+            "Each resource_refs item must include "
+            "resource_id_or_url, resource_id, or resource_url."
+        )
+    return {
+        "resource_id": normalize_notion_id(resource_ref),
+        "resource_type": _coerce_resource_type(item.get("resource_type")),
+        "resource_url": str(item.get("resource_url") or "").strip() or None,
+        "alias": str(item.get("alias") or "").strip() or None,
+        "title": str(item.get("title") or "").strip() or None,
+        "selection_scope": _normalize_selection_scope(item.get("selection_scope")),
+    }
 
 
-_MAX_ALIAS_SUFFIX = 10_000
+# ---------------------------------------------------------------------------
+# Alias deduplication
+# ---------------------------------------------------------------------------
 
 
 def _alias_for_resource(
@@ -128,6 +192,7 @@ def _alias_for_resource(
     used_aliases: set[str],
     alias_owner: dict[str, str],
 ) -> str:
+    """Return a unique alias, appending a numeric suffix on collision."""
     if (
         proposed_alias not in used_aliases
         or alias_owner.get(proposed_alias) == resource_id
@@ -136,14 +201,12 @@ def _alias_for_resource(
         alias_owner[proposed_alias] = resource_id
         return proposed_alias
 
-    suffix = 2
-    while suffix <= _MAX_ALIAS_SUFFIX:
+    for suffix in range(2, _MAX_ALIAS_SUFFIX + 1):
         candidate = f"{proposed_alias}-{suffix}"
         if candidate not in used_aliases:
             used_aliases.add(candidate)
             alias_owner[candidate] = resource_id
             return candidate
-        suffix += 1
 
     raise RuntimeError(
         f"Could not find a unique alias for {proposed_alias!r} "
@@ -151,7 +214,29 @@ def _alias_for_resource(
     )
 
 
+# ---------------------------------------------------------------------------
+# Binding list helpers
+# ---------------------------------------------------------------------------
+
+
+def _existing_bindings(project_root: Path) -> list[dict[str, Any]]:
+    """Load the current binding list for a project (may be empty)."""
+    payload = load_project_bindings(project_root) or {}
+    resources = payload.get("resources")
+    if not isinstance(resources, list):
+        return []
+    return [item for item in resources if isinstance(item, dict)]
+
+
+def _default_resource_alias(resources: list[dict[str, Any]]) -> str | None:
+    """When exactly one binding exists, return its alias."""
+    if len(resources) != 1:
+        return None
+    return str(resources[0].get("alias") or "").strip() or None
+
+
 def _sorted_bindings(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sort bindings by title, type, then id for stable ordering."""
     return sorted(
         resources,
         key=lambda item: (
@@ -165,6 +250,7 @@ def _sorted_bindings(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _bindings_payload(
     project_root: Path, resources: list[dict[str, Any]]
 ) -> dict[str, Any]:
+    """Build the canonical bindings payload for persistence."""
     return {
         "project_root": str(project_root),
         "default_resource_alias": _default_resource_alias(resources),
@@ -172,65 +258,15 @@ def _bindings_payload(
     }
 
 
-def _normalize_resource_input(item: dict[str, Any]) -> dict[str, str | None]:
-    resource_ref = str(
-        item.get("resource_id_or_url")
-        or item.get("resource_id")
-        or item.get("resource_url")
-        or ""
-    ).strip()
-    if not resource_ref:
-        raise LabbookError(
-            "Each resource_refs item must include resource_id_or_url, resource_id, or resource_url."
-        )
-    resource_id = normalize_notion_id(resource_ref)
-    resource_type = str(item.get("resource_type") or "").strip().lower() or None
-    if resource_type == "database":
-        resource_type = "data_source"
-    if resource_type not in {None, "page", "data_source"}:
-        raise LabbookError("resource_type must be 'page' or 'data_source'.")
-    alias = str(item.get("alias") or "").strip() or None
-    title = str(item.get("title") or "").strip() or None
-    selection_scope = _normalize_selection_scope(item.get("selection_scope"))
-    return {
-        "resource_id": resource_id,
-        "resource_type": resource_type,
-        "resource_url": str(item.get("resource_url") or "").strip() or None,
-        "alias": alias,
-        "title": title,
-        "selection_scope": selection_scope,
-    }
-
-
-def build_search_resources_payload(
-    client: NotionClient,
-    *,
-    project_root: str,
-    query: str | None = None,
-    page_size: int | str | None = None,
-) -> dict[str, Any]:
-    page_limit = normalize_search_page_size(page_size)
-    payload = client.search(query=query, page_size=page_limit)
-    results: list[dict[str, Any]] = []
-    for item in payload.get("results", []):
-        if not isinstance(item, dict):
-            continue
-        normalized = normalize_notion_resource(item)
-        if normalized is not None:
-            results.append(normalized)
-    results = _rank_search_results(results, query=query)
-    return {
-        "project_root": str(project_root),
-        "query": str(query or "").strip() or None,
-        "page_size": page_limit,
-        "result_count": len(results),
-        "results": results,
-    }
+# ---------------------------------------------------------------------------
+# Search ranking
+# ---------------------------------------------------------------------------
 
 
 def _rank_search_results(
     results: list[dict[str, Any]], *, query: str | None = None
 ) -> list[dict[str, Any]]:
+    """Rank search results: exact > prefix > contains; workspace roots first."""
     clean_query = str(query or "").strip().lower()
     if not clean_query:
         return results
@@ -261,6 +297,38 @@ def _rank_search_results(
     return sorted(results, key=_match_rank)
 
 
+# ---------------------------------------------------------------------------
+# Payload builders (used by both the UI layer and the MCP tools)
+# ---------------------------------------------------------------------------
+
+
+def build_search_resources_payload(
+    client: NotionClient,
+    *,
+    project_root: str,
+    query: str | None = None,
+    page_size: int | str | None = None,
+) -> dict[str, Any]:
+    """Search the Notion workspace and return a ranked result payload."""
+    page_limit = normalize_search_page_size(page_size)
+    raw = client.search(query=query, page_size=page_limit)
+    results: list[dict[str, Any]] = []
+    for item in raw.get("results", []):
+        if not isinstance(item, dict):
+            continue
+        normalized = normalize_notion_resource(item)
+        if normalized is not None:
+            results.append(normalized)
+    results = _rank_search_results(results, query=query)
+    return {
+        "project_root": str(project_root),
+        "query": str(query or "").strip() or None,
+        "page_size": page_limit,
+        "result_count": len(results),
+        "results": results,
+    }
+
+
 def build_discover_children_payload(
     client: NotionClient,
     *,
@@ -270,6 +338,7 @@ def build_discover_children_payload(
     limit: int | str | None = None,
     mode: str | None = None,
 ) -> dict[str, Any]:
+    """Discover children of a Notion resource and return as payload."""
     page_limit = normalize_discovery_limit(limit)
     root_resource = client.retrieve_resource(resource_id_or_url, resource_type)
     payload = discover_children_for_resource(
@@ -289,12 +358,13 @@ def build_bind_resources_payload(
     resource_refs: list[dict[str, Any]],
     default_alias: str | None = None,
 ) -> dict[str, Any]:
+    """Resolve, validate, and persist a set of resource bindings."""
     if not resource_refs:
         raise LabbookError("resource_refs must contain at least one resource.")
 
     root = resolve_project_root(project_root)
     existing_resources = _existing_bindings(root)
-    by_resource_id = {
+    by_resource_id: dict[str, dict[str, Any]] = {
         str(item.get("resource_id")): dict(item)
         for item in existing_resources
         if isinstance(item.get("resource_id"), str)
@@ -311,7 +381,8 @@ def build_bind_resources_payload(
         normalized_resource = normalize_notion_resource(resource)
         if normalized_resource is None:
             raise LabbookError(
-                f"Resource {normalized_input['resource_id']} is not a page or data source."
+                f"Resource {normalized_input['resource_id']} "
+                "is not a page or data source."
             )
 
         fallback_alias = (
@@ -335,6 +406,8 @@ def build_bind_resources_payload(
         )
 
     final_resources = _sorted_bindings(list(by_resource_id.values()))
+
+    # Deduplicate aliases across the full set.
     used_aliases: set[str] = set()
     alias_owner: dict[str, str] = {}
     for resource in final_resources:
@@ -365,6 +438,7 @@ def build_bind_resource_urls_payload(
     selection_scope: str | None = "subtree",
     default_alias: str | None = None,
 ) -> dict[str, Any]:
+    """Bind resources by Notion URL, delegating to :func:`build_bind_resources_payload`."""
     normalized_urls = [
         str(item).strip() for item in resource_urls if str(item or "").strip()
     ]
@@ -376,10 +450,10 @@ def build_bind_resource_urls_payload(
         project_root=project_root,
         resource_refs=[
             {
-                "resource_id_or_url": resource_url,
+                "resource_id_or_url": url,
                 "selection_scope": _normalize_selection_scope(selection_scope),
             }
-            for resource_url in normalized_urls
+            for url in normalized_urls
         ],
         default_alias=default_alias,
     )
@@ -388,6 +462,7 @@ def build_bind_resource_urls_payload(
 def build_list_bindings_payload(
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
+    """Return the current bindings for a project (no Notion API call)."""
     root = resolve_project_root(project_root)
     payload = load_project_bindings(root) or _bindings_payload(root, [])
     resources = payload.get("resources")
@@ -402,12 +477,18 @@ def build_list_bindings_payload(
 
 
 def project_bindings_resource_text(project_root: str | Path | None = None) -> str:
+    """Return the bindings payload as pretty-printed JSON text."""
     return json.dumps(
         build_list_bindings_payload(project_root),
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# High-level convenience functions (resolve client internally when needed)
+# ---------------------------------------------------------------------------
 
 
 def _resolve_client(
@@ -436,10 +517,11 @@ def search_resources(
     query: str | None = None,
     page_size: int | str | None = None,
 ) -> dict[str, Any]:
-    client, project_root_str = _resolve_client(client, project_root)
+    """Search the workspace, resolving a client if not provided."""
+    resolved_client, root_str = _resolve_client(client, project_root)
     return build_search_resources_payload(
-        client,
-        project_root=project_root_str,
+        resolved_client,
+        project_root=root_str,
         query=query,
         page_size=page_size,
     )
@@ -454,10 +536,11 @@ def discover_children(
     limit: int | str | None = None,
     mode: str | None = None,
 ) -> dict[str, Any]:
-    client, project_root_str = _resolve_client(client, project_root)
+    """Discover children, resolving a client if not provided."""
+    resolved_client, root_str = _resolve_client(client, project_root)
     return build_discover_children_payload(
-        client,
-        project_root=project_root_str,
+        resolved_client,
+        project_root=root_str,
         resource_id_or_url=resource_id_or_url,
         resource_type=resource_type,
         limit=limit,
@@ -473,10 +556,11 @@ def bind_resource_urls(
     selection_scope: str | None = "subtree",
     default_alias: str | None = None,
 ) -> dict[str, Any]:
-    client, project_root_str = _resolve_client(client, project_root)
+    """Bind resources by URL, resolving a client if not provided."""
+    resolved_client, root_str = _resolve_client(client, project_root)
     return build_bind_resource_urls_payload(
-        client,
-        project_root=project_root_str,
+        resolved_client,
+        project_root=root_str,
         resource_urls=resource_urls,
         selection_scope=selection_scope,
         default_alias=default_alias,
@@ -490,14 +574,16 @@ def bind_resources(
     resource_refs: list[dict[str, Any]],
     default_alias: str | None = None,
 ) -> dict[str, Any]:
-    client, project_root_str = _resolve_client(client, project_root)
+    """Bind resources by ref, resolving a client if not provided."""
+    resolved_client, root_str = _resolve_client(client, project_root)
     return build_bind_resources_payload(
-        client,
-        project_root=project_root_str,
+        resolved_client,
+        project_root=root_str,
         resource_refs=resource_refs,
         default_alias=default_alias,
     )
 
 
 def list_bindings(project_root: str | Path | None = None) -> dict[str, Any]:
+    """List current bindings (no Notion API call)."""
     return build_list_bindings_payload(project_root)

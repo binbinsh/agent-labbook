@@ -13,21 +13,46 @@
         --line: #e6ddd2;
         --accent: #c4532d;
         --accent-hover: #a8432a;
+        --ok: #17643d;
+        --error: #9d2f2f;
+        --focus-ring: rgba(196, 83, 45, 0.45);
+        --radius-sm: 14px;
+        --radius-lg: 22px;
+        --radius-pill: 999px;
+        --shadow-card: 0 20px 60px rgba(26, 20, 16, 0.05);
+        --transition: 0.15s ease;
       }
-      * { box-sizing: border-box; }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
       body {
         margin: 0;
         font-family: Inter, system-ui, sans-serif;
         color: var(--ink);
-        background:
-          radial-gradient(circle at top left, rgba(196,83,45,0.10), transparent 30%),
+        background: radial-gradient(
+            circle at top left,
+            rgba(196, 83, 45, 0.1),
+            transparent 30%
+          ),
           linear-gradient(180deg, #fffaf5, var(--bg));
+        min-height: 100vh;
       }
+
+      /* Focus ring */
+      :focus-visible {
+        outline: 2px solid var(--focus-ring);
+        outline-offset: 2px;
+      }
+
       .shell {
         max-width: 1240px;
         margin: 0 auto;
         padding: 32px 20px 48px;
       }
+
+      /* Hero ------------------------------------------------------------ */
       .hero {
         display: flex;
         justify-content: space-between;
@@ -38,7 +63,8 @@
       h1 {
         margin: 0;
         font-size: clamp(2rem, 4vw, 3rem);
-        font-family: "DM Serif Display", "Noto Serif SC", "Noto Serif TC", serif;
+        font-family: "DM Serif Display", "Noto Serif SC", "Noto Serif TC",
+          serif;
         line-height: 1;
       }
       .subtle {
@@ -48,12 +74,15 @@
       }
       .workspace {
         border: 1px solid var(--line);
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         padding: 10px 14px;
-        background: rgba(255,255,255,0.8);
+        background: rgba(255, 255, 255, 0.8);
         color: var(--muted);
         font-size: 0.95rem;
+        white-space: nowrap;
       }
+
+      /* Recommendation card ---------------------------------------------- */
       .recommendation {
         margin-bottom: 18px;
         border: 1px solid #e5c7b8;
@@ -71,11 +100,15 @@
       }
       .option {
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: var(--radius-sm);
         background: #fff;
         padding: 10px 12px;
         min-width: 180px;
         flex: 1 1 220px;
+        transition: box-shadow var(--transition);
+      }
+      .option:hover {
+        box-shadow: 0 2px 8px rgba(26, 20, 16, 0.08);
       }
       .option-title {
         font-weight: 600;
@@ -85,6 +118,8 @@
         margin-left: 6px;
         color: var(--accent);
       }
+
+      /* Layout ----------------------------------------------------------- */
       .layout {
         display: grid;
         grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr);
@@ -93,24 +128,34 @@
       .card {
         background: var(--paper);
         border: 1px solid var(--line);
-        border-radius: 22px;
+        border-radius: var(--radius-lg);
         padding: 18px;
-        box-shadow: 0 20px 60px rgba(26,20,16,0.05);
+        box-shadow: var(--shadow-card);
       }
+
+      /* Controls --------------------------------------------------------- */
       .controls {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto auto;
         gap: 12px;
         margin-bottom: 16px;
       }
-      input[type="search"], textarea, select {
+      input[type="search"],
+      textarea,
+      select {
         width: 100%;
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: var(--radius-sm);
         padding: 12px 14px;
         font: inherit;
         color: var(--ink);
         background: #fff;
+        transition: border-color var(--transition);
+      }
+      input[type="search"]:focus,
+      textarea:focus,
+      select:focus {
+        border-color: var(--accent);
       }
       textarea {
         min-height: 120px;
@@ -118,24 +163,40 @@
       }
       button {
         border: 0;
-        border-radius: 14px;
+        border-radius: var(--radius-sm);
         background: var(--accent);
         color: #fff;
         font: inherit;
         font-weight: 600;
         padding: 12px 16px;
         cursor: pointer;
+        transition: background var(--transition), transform 0.1s ease;
+      }
+      button:active:not(:disabled) {
+        transform: scale(0.97);
       }
       button.secondary {
         background: #efe5da;
         color: var(--ink);
       }
-      button:hover { background: var(--accent-hover); }
-      button.secondary:hover { background: #e6d7c7; }
+      button:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+      button.secondary:hover:not(:disabled) {
+        background: #e6d7c7;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* Section titles --------------------------------------------------- */
       .section-title {
         margin: 0 0 12px;
         font-size: 1.1rem;
       }
+
+      /* Result list ------------------------------------------------------ */
       .list {
         display: flex;
         flex-direction: column;
@@ -146,6 +207,10 @@
         border-radius: 16px;
         background: #fff;
         padding: 12px;
+        transition: box-shadow var(--transition);
+      }
+      .item:hover {
+        box-shadow: 0 2px 12px rgba(26, 20, 16, 0.06);
       }
       .item-head {
         display: grid;
@@ -177,7 +242,7 @@
         flex-wrap: wrap;
       }
       .crumb span {
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         background: #f3eee8;
         padding: 4px 8px;
       }
@@ -186,6 +251,8 @@
         padding-left: 22px;
         border-left: 1px dashed var(--line);
       }
+
+      /* Toolbar / pill --------------------------------------------------- */
       .toolbar {
         display: flex;
         gap: 10px;
@@ -198,11 +265,13 @@
         align-items: center;
         gap: 8px;
         padding: 7px 10px;
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         background: #f2ebe3;
         color: var(--muted);
         font-size: 0.9rem;
       }
+
+      /* Selected / bindings ---------------------------------------------- */
       .selected-list {
         display: flex;
         flex-direction: column;
@@ -213,11 +282,16 @@
         display: grid;
         gap: 8px;
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: var(--radius-sm);
         padding: 12px;
         background: #fff;
+        transition: box-shadow var(--transition);
       }
-      .hint, .empty {
+      .selected-item:hover {
+        box-shadow: 0 2px 8px rgba(26, 20, 16, 0.06);
+      }
+      .hint,
+      .empty {
         color: var(--muted);
         font-size: 0.95rem;
       }
@@ -225,27 +299,65 @@
         min-height: 24px;
         color: var(--muted);
         margin-top: 8px;
+        transition: color var(--transition);
       }
-      .ok { color: #17643d; }
-      .error { color: #9d2f2f; }
-      a { color: var(--accent); }
+      .ok {
+        color: var(--ok);
+      }
+      .error {
+        color: var(--error);
+      }
+      a {
+        color: var(--accent);
+      }
+
+      /* Animations ------------------------------------------------------- */
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .item,
+      .selected-item {
+        animation: fade-in 0.15s ease both;
+      }
+
+      /* Responsive ------------------------------------------------------- */
       @media (max-width: 960px) {
-        .layout { grid-template-columns: 1fr; }
-        .hero { flex-direction: column; align-items: start; }
-        .controls { grid-template-columns: 1fr; }
-        .item-head { grid-template-columns: auto 1fr; }
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .hero {
+          flex-direction: column;
+          align-items: start;
+        }
+        .controls {
+          grid-template-columns: 1fr;
+        }
+        .item-head {
+          grid-template-columns: auto 1fr;
+        }
       }
     </style>
   </head>
   <body>
-    <div id="app" class="shell"></div>
+    <div id="app" class="shell" role="main" aria-label="Binding chooser"></div>
     <script>
       const config = /*__LABBOOK_CONFIG_JSON__*/null;
 
+      /* ----------------------------------------------------------------
+       * i18n
+       * -------------------------------------------------------------- */
       const translations = {
         en: {
           title: "Choose Notion Roots",
-          subtitle: "Search, expand, and bind the exact pages or data sources this project should use. You can also paste one or more Notion URLs directly.",
+          subtitle:
+            "Search, expand, and bind the exact pages or data sources this project should use. You can also paste one or more Notion URLs directly.",
           searchPlaceholder: "Search accessible pages or data sources",
           refresh: "Refresh",
           reloadBindings: "Reload bindings",
@@ -256,7 +368,8 @@
           noSelection: "Nothing selected yet.",
           noBindings: "No resources are currently bound.",
           pastedUrls: "Paste Notion URLs",
-          pastedUrlsHint: "One page or data source URL per line. These are added directly as binding roots.",
+          pastedUrlsHint:
+            "One page or data source URL per line. These are added directly as binding roots.",
           bindSelected: "Bind selected resources",
           page: "Page",
           data_source: "Data source",
@@ -265,19 +378,23 @@
           selectionScope: "Selection scope",
           resource: "resource",
           subtree: "subtree",
-          loading: "Loading…",
+          loading: "Loading\u2026",
           bindingSuccess: "Bindings saved.",
           workspace: "Workspace",
           chooser: "Local chooser",
-          partialChildren: "Showing fast results. Deeper nested content may still exist.",
+          partialChildren:
+            "Showing fast results. Deeper nested content may still exist.",
           scanDeeper: "Scan deeper",
-          scanningDeeper: "Scanning deeper…",
-          addedMore: (count) => `Added ${count} more item${count === 1 ? "" : "s"}.`,
+          scanningDeeper: "Scanning deeper\u2026",
+          addedMore: (count) =>
+            `Added ${count} more item${count === 1 ? "" : "s"}.`,
           noAdditional: "No additional nested items were found.",
           recommendationTitle: "Recommended binding path",
-          recommendationFallback: "Choose the fastest binding path for this environment and user preference.",
+          recommendationFallback:
+            "Choose the fastest binding path for this environment and user preference.",
           recommendationQuestion: "Best next question",
-          recommendationQuestionFallback: "Can you paste one or more exact Notion links, or do you want me to open the local chooser?",
+          recommendationQuestionFallback:
+            "Can you paste one or more exact Notion links, or do you want me to open the local chooser?",
           filters: "Filters",
           filter_all: "All",
           filter_pages: "Pages",
@@ -295,105 +412,127 @@
           },
         },
         "zh-hans": {
-          title: "选择 Notion 根节点",
-          subtitle: "搜索、展开并绑定项目真正需要使用的页面或数据库。你也可以直接粘贴一个或多个 Notion 链接。",
-          searchPlaceholder: "搜索可访问的页面或数据库",
-          refresh: "刷新",
-          reloadBindings: "重新加载绑定",
-          available: "可选内容",
-          selected: "待绑定选择",
-          bound: "当前绑定",
-          noResults: "当前搜索没有匹配结果。",
-          noSelection: "还没有选择任何内容。",
-          noBindings: "当前还没有任何绑定。",
-          pastedUrls: "粘贴 Notion 链接",
-          pastedUrlsHint: "每行一个页面或数据库链接。它们会直接作为绑定根节点加入。",
-          bindSelected: "绑定所选内容",
-          page: "页面",
-          data_source: "数据库",
-          expand: "展开",
-          collapse: "收起",
-          selectionScope: "绑定范围",
+          title: "\u9009\u62E9 Notion \u6839\u8282\u70B9",
+          subtitle:
+            "\u641C\u7D22\u3001\u5C55\u5F00\u5E76\u7ED1\u5B9A\u9879\u76EE\u771F\u6B63\u9700\u8981\u4F7F\u7528\u7684\u9875\u9762\u6216\u6570\u636E\u5E93\u3002\u4F60\u4E5F\u53EF\u4EE5\u76F4\u63A5\u7C98\u8D34\u4E00\u4E2A\u6216\u591A\u4E2A Notion \u94FE\u63A5\u3002",
+          searchPlaceholder:
+            "\u641C\u7D22\u53EF\u8BBF\u95EE\u7684\u9875\u9762\u6216\u6570\u636E\u5E93",
+          refresh: "\u5237\u65B0",
+          reloadBindings: "\u91CD\u65B0\u52A0\u8F7D\u7ED1\u5B9A",
+          available: "\u53EF\u9009\u5185\u5BB9",
+          selected: "\u5F85\u7ED1\u5B9A\u9009\u62E9",
+          bound: "\u5F53\u524D\u7ED1\u5B9A",
+          noResults:
+            "\u5F53\u524D\u641C\u7D22\u6CA1\u6709\u5339\u914D\u7ED3\u679C\u3002",
+          noSelection:
+            "\u8FD8\u6CA1\u6709\u9009\u62E9\u4EFB\u4F55\u5185\u5BB9\u3002",
+          noBindings:
+            "\u5F53\u524D\u8FD8\u6CA1\u6709\u4EFB\u4F55\u7ED1\u5B9A\u3002",
+          pastedUrls: "\u7C98\u8D34 Notion \u94FE\u63A5",
+          pastedUrlsHint:
+            "\u6BCF\u884C\u4E00\u4E2A\u9875\u9762\u6216\u6570\u636E\u5E93\u94FE\u63A5\u3002\u5B83\u4EEC\u4F1A\u76F4\u63A5\u4F5C\u4E3A\u7ED1\u5B9A\u6839\u8282\u70B9\u52A0\u5165\u3002",
+          bindSelected: "\u7ED1\u5B9A\u6240\u9009\u5185\u5BB9",
+          page: "\u9875\u9762",
+          data_source: "\u6570\u636E\u5E93",
+          expand: "\u5C55\u5F00",
+          collapse: "\u6536\u8D77",
+          selectionScope: "\u7ED1\u5B9A\u8303\u56F4",
           resource: "resource",
           subtree: "subtree",
-          loading: "加载中…",
-          bindingSuccess: "绑定已保存。",
-          workspace: "工作区",
-          chooser: "本地选择器",
-          partialChildren: "当前先显示快速结果，可能还有更深层的嵌套内容。",
-          scanDeeper: "继续深度扫描",
-          scanningDeeper: "深度扫描中…",
-          addedMore: (count) => `新增 ${count} 个结果。`,
-          noAdditional: "没有发现更多嵌套内容。",
-          recommendationTitle: "推荐绑定路径",
-          recommendationFallback: "请根据当前环境和用户偏好选择最合适的绑定方式。",
-          recommendationQuestion: "建议下一句先问",
-          recommendationQuestionFallback: "你能直接粘贴一个或多个 Notion 链接吗？如果不能，我可以打开本地选择器。",
-          filters: "筛选",
-          filter_all: "全部",
-          filter_pages: "页面",
-          filter_data_sources: "数据库",
-          filter_roots: "更像根节点",
-          filter_unbound: "只看未绑定",
-          suggestedRoots: "推荐根节点",
-          moreMatches: "更多匹配结果",
-          boundBadge: "已绑定",
+          loading: "\u52A0\u8F7D\u4E2D\u2026",
+          bindingSuccess: "\u7ED1\u5B9A\u5DF2\u4FDD\u5B58\u3002",
+          workspace: "\u5DE5\u4F5C\u533A",
+          chooser: "\u672C\u5730\u9009\u62E9\u5668",
+          partialChildren:
+            "\u5F53\u524D\u5148\u663E\u793A\u5FEB\u901F\u7ED3\u679C\uFF0C\u53EF\u80FD\u8FD8\u6709\u66F4\u6DF1\u5C42\u7684\u5D4C\u5957\u5185\u5BB9\u3002",
+          scanDeeper: "\u7EE7\u7EED\u6DF1\u5EA6\u626B\u63CF",
+          scanningDeeper: "\u6DF1\u5EA6\u626B\u63CF\u4E2D\u2026",
+          addedMore: (count) => `\u65B0\u589E ${count} \u4E2A\u7ED3\u679C\u3002`,
+          noAdditional:
+            "\u6CA1\u6709\u53D1\u73B0\u66F4\u591A\u5D4C\u5957\u5185\u5BB9\u3002",
+          recommendationTitle: "\u63A8\u8350\u7ED1\u5B9A\u8DEF\u5F84",
+          recommendationFallback:
+            "\u8BF7\u6839\u636E\u5F53\u524D\u73AF\u5883\u548C\u7528\u6237\u504F\u597D\u9009\u62E9\u6700\u5408\u9002\u7684\u7ED1\u5B9A\u65B9\u5F0F\u3002",
+          recommendationQuestion:
+            "\u5EFA\u8BAE\u4E0B\u4E00\u53E5\u5148\u95EE",
+          recommendationQuestionFallback:
+            "\u4F60\u80FD\u76F4\u63A5\u7C98\u8D34\u4E00\u4E2A\u6216\u591A\u4E2A Notion \u94FE\u63A5\u5417\uFF1F\u5982\u679C\u4E0D\u80FD\uFF0C\u6211\u53EF\u4EE5\u6253\u5F00\u672C\u5730\u9009\u62E9\u5668\u3002",
+          filters: "\u7B5B\u9009",
+          filter_all: "\u5168\u90E8",
+          filter_pages: "\u9875\u9762",
+          filter_data_sources: "\u6570\u636E\u5E93",
+          filter_roots: "\u66F4\u50CF\u6839\u8282\u70B9",
+          filter_unbound: "\u53EA\u770B\u672A\u7ED1\u5B9A",
+          suggestedRoots: "\u63A8\u8350\u6839\u8282\u70B9",
+          moreMatches: "\u66F4\u591A\u5339\u914D\u7ED3\u679C",
+          boundBadge: "\u5DF2\u7ED1\u5B9A",
           recommendationModes: {
-            wait_for_auth: "先完成认证",
-            url: "粘贴精确链接",
-            local_browser: "打开本地选择器",
-            manual_mcp: "在聊天里搜索",
+            wait_for_auth: "\u5148\u5B8C\u6210\u8BA4\u8BC1",
+            url: "\u7C98\u8D34\u7CBE\u786E\u94FE\u63A5",
+            local_browser: "\u6253\u5F00\u672C\u5730\u9009\u62E9\u5668",
+            manual_mcp: "\u5728\u804A\u5929\u91CC\u641C\u7D22",
           },
         },
         "zh-hant": {
-          title: "選擇 Notion 根節點",
-          subtitle: "搜尋、展開並綁定專案真正需要使用的頁面或資料庫。你也可以直接貼上一個或多個 Notion 連結。",
-          searchPlaceholder: "搜尋可存取的頁面或資料庫",
-          refresh: "重新整理",
-          reloadBindings: "重新載入綁定",
-          available: "可選內容",
-          selected: "待綁定選擇",
-          bound: "目前綁定",
-          noResults: "目前搜尋沒有符合結果。",
-          noSelection: "尚未選擇任何內容。",
-          noBindings: "目前尚未綁定任何資源。",
-          pastedUrls: "貼上 Notion 連結",
-          pastedUrlsHint: "每行一個頁面或資料庫連結。它們會直接作為綁定根節點加入。",
-          bindSelected: "綁定所選內容",
-          page: "頁面",
-          data_source: "資料庫",
-          expand: "展開",
-          collapse: "收合",
-          selectionScope: "綁定範圍",
+          title: "\u9078\u64C7 Notion \u6839\u7BC0\u9EDE",
+          subtitle:
+            "\u641C\u5C0B\u3001\u5C55\u958B\u4E26\u7D81\u5B9A\u5C08\u6848\u771F\u6B63\u9700\u8981\u4F7F\u7528\u7684\u9801\u9762\u6216\u8CC7\u6599\u5EAB\u3002\u4F60\u4E5F\u53EF\u4EE5\u76F4\u63A5\u8CBC\u4E0A\u4E00\u500B\u6216\u591A\u500B Notion \u9023\u7D50\u3002",
+          searchPlaceholder:
+            "\u641C\u5C0B\u53EF\u5B58\u53D6\u7684\u9801\u9762\u6216\u8CC7\u6599\u5EAB",
+          refresh: "\u91CD\u65B0\u6574\u7406",
+          reloadBindings: "\u91CD\u65B0\u8F09\u5165\u7D81\u5B9A",
+          available: "\u53EF\u9078\u5167\u5BB9",
+          selected: "\u5F85\u7D81\u5B9A\u9078\u64C7",
+          bound: "\u76EE\u524D\u7D81\u5B9A",
+          noResults:
+            "\u76EE\u524D\u641C\u5C0B\u6C92\u6709\u7B26\u5408\u7D50\u679C\u3002",
+          noSelection:
+            "\u5C1A\u672A\u9078\u64C7\u4EFB\u4F55\u5167\u5BB9\u3002",
+          noBindings:
+            "\u76EE\u524D\u5C1A\u672A\u7D81\u5B9A\u4EFB\u4F55\u8CC7\u6E90\u3002",
+          pastedUrls: "\u8CBC\u4E0A Notion \u9023\u7D50",
+          pastedUrlsHint:
+            "\u6BCF\u884C\u4E00\u500B\u9801\u9762\u6216\u8CC7\u6599\u5EAB\u9023\u7D50\u3002\u5B83\u5011\u6703\u76F4\u63A5\u4F5C\u70BA\u7D81\u5B9A\u6839\u7BC0\u9EDE\u52A0\u5165\u3002",
+          bindSelected: "\u7D81\u5B9A\u6240\u9078\u5167\u5BB9",
+          page: "\u9801\u9762",
+          data_source: "\u8CC7\u6599\u5EAB",
+          expand: "\u5C55\u958B",
+          collapse: "\u6536\u5408",
+          selectionScope: "\u7D81\u5B9A\u7BC4\u570D",
           resource: "resource",
           subtree: "subtree",
-          loading: "載入中…",
-          bindingSuccess: "綁定已儲存。",
-          workspace: "工作區",
-          chooser: "本機選擇器",
-          partialChildren: "目前先顯示快速結果，可能還有更深層的巢狀內容。",
-          scanDeeper: "繼續深度掃描",
-          scanningDeeper: "深度掃描中…",
-          addedMore: (count) => `新增 ${count} 個結果。`,
-          noAdditional: "沒有找到更多巢狀內容。",
-          recommendationTitle: "推薦綁定路徑",
-          recommendationFallback: "請依照目前環境與使用者偏好選擇最合適的綁定方式。",
-          recommendationQuestion: "建議下一句先問",
-          recommendationQuestionFallback: "你能直接貼上一個或多個 Notion 連結嗎？如果不能，我可以開啟本機選擇器。",
-          filters: "篩選",
-          filter_all: "全部",
-          filter_pages: "頁面",
-          filter_data_sources: "資料庫",
-          filter_roots: "更像根節點",
-          filter_unbound: "只看未綁定",
-          suggestedRoots: "推薦根節點",
-          moreMatches: "更多符合結果",
-          boundBadge: "已綁定",
+          loading: "\u8F09\u5165\u4E2D\u2026",
+          bindingSuccess: "\u7D81\u5B9A\u5DF2\u5132\u5B58\u3002",
+          workspace: "\u5DE5\u4F5C\u5340",
+          chooser: "\u672C\u6A5F\u9078\u64C7\u5668",
+          partialChildren:
+            "\u76EE\u524D\u5148\u986F\u793A\u5FEB\u901F\u7D50\u679C\uFF0C\u53EF\u80FD\u9084\u6709\u66F4\u6DF1\u5C64\u7684\u5DE2\u72C0\u5167\u5BB9\u3002",
+          scanDeeper: "\u7E7C\u7E8C\u6DF1\u5EA6\u6383\u63CF",
+          scanningDeeper: "\u6DF1\u5EA6\u6383\u63CF\u4E2D\u2026",
+          addedMore: (count) => `\u65B0\u589E ${count} \u500B\u7D50\u679C\u3002`,
+          noAdditional:
+            "\u6C92\u6709\u627E\u5230\u66F4\u591A\u5DE2\u72C0\u5167\u5BB9\u3002",
+          recommendationTitle: "\u63A8\u85A6\u7D81\u5B9A\u8DEF\u5F91",
+          recommendationFallback:
+            "\u8ACB\u4F9D\u7167\u76EE\u524D\u74B0\u5883\u8207\u4F7F\u7528\u8005\u504F\u597D\u9078\u64C7\u6700\u5408\u9069\u7684\u7D81\u5B9A\u65B9\u5F0F\u3002",
+          recommendationQuestion:
+            "\u5EFA\u8B70\u4E0B\u4E00\u53E5\u5148\u554F",
+          recommendationQuestionFallback:
+            "\u4F60\u80FD\u76F4\u63A5\u8CBC\u4E0A\u4E00\u500B\u6216\u591A\u500B Notion \u9023\u7D50\u55CE\uFF1F\u5982\u679C\u4E0D\u80FD\uFF0C\u6211\u53EF\u4EE5\u958B\u555F\u672C\u6A5F\u9078\u64C7\u5668\u3002",
+          filters: "\u7BE9\u9078",
+          filter_all: "\u5168\u90E8",
+          filter_pages: "\u9801\u9762",
+          filter_data_sources: "\u8CC7\u6599\u5EAB",
+          filter_roots: "\u66F4\u50CF\u6839\u7BC0\u9EDE",
+          filter_unbound: "\u53EA\u770B\u672A\u7D81\u5B9A",
+          suggestedRoots: "\u63A8\u85A6\u6839\u7BC0\u9EDE",
+          moreMatches: "\u66F4\u591A\u7B26\u5408\u7D50\u679C",
+          boundBadge: "\u5DF2\u7D81\u5B9A",
           recommendationModes: {
-            wait_for_auth: "先完成驗證",
-            url: "貼上精確連結",
-            local_browser: "開啟本機選擇器",
-            manual_mcp: "在聊天中搜尋",
+            wait_for_auth: "\u5148\u5B8C\u6210\u9A57\u8B49",
+            url: "\u8CBC\u4E0A\u7CBE\u78BA\u9023\u7D50",
+            local_browser: "\u958B\u555F\u672C\u6A5F\u9078\u64C7\u5668",
+            manual_mcp: "\u5728\u804A\u5929\u4E2D\u641C\u5C0B",
           },
         },
       };
@@ -402,14 +541,21 @@
         try {
           const saved = localStorage.getItem("sp-lang");
           if (saved && translations[saved]) return saved;
-        } catch {}
+        } catch {
+          /* localStorage may be unavailable */
+        }
         const nav = navigator.language || "";
-        if (/^zh[-_](tw|hk|mo|hant)/i.test(nav) || nav === "zh-Hant") return "zh-hant";
+        if (/^zh[-_](tw|hk|mo|hant)/i.test(nav) || nav === "zh-Hant")
+          return "zh-hant";
         if (/^zh/i.test(nav)) return "zh-hans";
         return "en";
       }
 
       const t = translations[detectLang()];
+
+      /* ----------------------------------------------------------------
+       * Reactive state
+       * -------------------------------------------------------------- */
       const state = {
         query: "",
         catalog: [],
@@ -427,10 +573,11 @@
         deepLoading: new Set(),
       };
 
-      function escapeHtml(text) {
-        const div = document.createElement("div");
-        div.textContent = String(text ?? "");
-        return div.innerHTML;
+      /* ----------------------------------------------------------------
+       * Helpers
+       * -------------------------------------------------------------- */
+      function $(id) {
+        return document.getElementById(id);
       }
 
       function api(path, options = {}) {
@@ -438,17 +585,21 @@
           headers: { "Content-Type": "application/json" },
           ...options,
         }).then(async (response) => {
-          const payload = await response.json().catch(() => ({ error: "Invalid JSON response." }));
-          if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+          const payload = await response
+            .json()
+            .catch(() => ({ error: "Invalid JSON response." }));
+          if (!response.ok)
+            throw new Error(payload.error || `HTTP ${response.status}`);
           return payload;
         });
       }
 
       function parsePastedUrls() {
-        const textarea = document.getElementById("url-input");
-        const scope = document.getElementById("url-scope").value;
+        const textarea = $("url-input");
+        if (!textarea) return [];
+        const scope = ($("url-scope") || {}).value || "subtree";
         return textarea.value
-          .split(/\\n+/)
+          .split(/\n+/)
           .map((line) => line.trim())
           .filter(Boolean)
           .map((url) => ({
@@ -461,29 +612,16 @@
           }));
       }
 
-      function toggleSelection(item) {
-        const existing = state.selected.get(item.key || item.resource_id);
-        if (existing) {
-          state.selected.delete(item.key || item.resource_id);
-        } else {
-          state.selected.set(item.key || item.resource_id, {
-            resource_id_or_url: item.resource_url || item.resource_id_or_url || item.resource_id,
-            resource_type: item.resource_type || null,
-            title: item.title,
-            selection_scope: item.selection_scope || "subtree",
-            isUrl: Boolean(item.isUrl),
-          });
-        }
-        render();
-      }
-
       function describeParent(item) {
         const parent = item.parent || null;
         if (!parent || typeof parent !== "object") return "";
         if (parent.type === "workspace") return "workspace";
-        if (parent.type === "page_id" && parent.page_id) return `page · ${parent.page_id}`;
-        if (parent.type === "data_source_id" && parent.data_source_id) return `data source · ${parent.data_source_id}`;
-        if (parent.type === "database_id" && parent.database_id) return `database · ${parent.database_id}`;
+        if (parent.type === "page_id" && parent.page_id)
+          return `page \u00b7 ${parent.page_id}`;
+        if (parent.type === "data_source_id" && parent.data_source_id)
+          return `data source \u00b7 ${parent.data_source_id}`;
+        if (parent.type === "database_id" && parent.database_id)
+          return `database \u00b7 ${parent.database_id}`;
         return parent.type || "";
       }
 
@@ -493,43 +631,62 @@
       }
 
       function isBound(item) {
-        return state.bindings.some((binding) => binding.resource_id === item.resource_id);
+        return state.bindings.some(
+          (binding) => binding.resource_id === item.resource_id
+        );
       }
 
       function mergeByResourceId(existingItems, nextItems) {
         const byId = new Map();
-        for (const item of existingItems || []) {
-          byId.set(item.resource_id, item);
-        }
-        for (const item of nextItems || []) {
-          byId.set(item.resource_id, item);
-        }
+        for (const item of existingItems || []) byId.set(item.resource_id, item);
+        for (const item of nextItems || []) byId.set(item.resource_id, item);
         return Array.from(byId.values());
       }
 
-      function scheduleSearch() {
-        if (state.searchTimer) clearTimeout(state.searchTimer);
-        state.searchTimer = setTimeout(() => {
-          loadCatalog();
-        }, 250);
+      /* ----------------------------------------------------------------
+       * Selection
+       * -------------------------------------------------------------- */
+      function toggleSelection(item) {
+        const key = item.key || item.resource_id;
+        if (state.selected.has(key)) {
+          state.selected.delete(key);
+        } else {
+          state.selected.set(key, {
+            resource_id_or_url:
+              item.resource_url || item.resource_id_or_url || item.resource_id,
+            resource_type: item.resource_type || null,
+            title: item.title,
+            selection_scope: item.selection_scope || "subtree",
+            isUrl: Boolean(item.isUrl),
+          });
+        }
+        renderDynamic();
       }
 
       function updateSelectedScope(key, scope) {
-        const selected = state.selected.get(key);
-        if (!selected) return;
-        selected.selection_scope = scope;
-        render();
+        const sel = state.selected.get(key);
+        if (!sel) return;
+        sel.selection_scope = scope;
+        renderDynamic();
+      }
+
+      /* ----------------------------------------------------------------
+       * Data loading
+       * -------------------------------------------------------------- */
+      function scheduleSearch() {
+        if (state.searchTimer) clearTimeout(state.searchTimer);
+        state.searchTimer = setTimeout(loadCatalog, 250);
       }
 
       async function loadBindings() {
         const payload = await api("/api/bindings");
         state.bindings = payload.resources || [];
-        render();
+        renderDynamic();
       }
 
       async function loadCatalog() {
         state.loading = true;
-        render();
+        renderDynamic();
         try {
           const params = new URLSearchParams();
           params.set("page_size", String(config.page_size));
@@ -543,7 +700,7 @@
           state.messageClass = "error";
         } finally {
           state.loading = false;
-          render();
+          renderDynamic();
         }
       }
 
@@ -551,15 +708,18 @@
         const key = item.resource_id;
         if (state.expanded.has(key)) {
           state.expanded.delete(key);
-          render();
+          renderDynamic();
           return;
         }
         if (!state.children.has(key)) {
           state.loading = true;
-          render();
+          renderDynamic();
           try {
             const params = new URLSearchParams();
-            params.set("resource_id_or_url", item.resource_url || item.resource_id);
+            params.set(
+              "resource_id_or_url",
+              item.resource_url || item.resource_id
+            );
             params.set("resource_type", item.resource_type);
             params.set("limit", "50");
             params.set("mode", "shallow");
@@ -577,16 +737,19 @@
           }
         }
         state.expanded.add(key);
-        render();
+        renderDynamic();
       }
 
       async function scanDeeper(item) {
         const key = item.resource_id;
         state.deepLoading.add(key);
-        render();
+        renderDynamic();
         try {
           const params = new URLSearchParams();
-          params.set("resource_id_or_url", item.resource_url || item.resource_id);
+          params.set(
+            "resource_id_or_url",
+            item.resource_url || item.resource_id
+          );
           params.set("resource_type", item.resource_type);
           params.set("limit", "50");
           params.set("mode", "deep");
@@ -604,36 +767,93 @@
           state.messageClass = "error";
         } finally {
           state.deepLoading.delete(key);
-          render();
+          renderDynamic();
         }
       }
 
+      async function bindSelected() {
+        const resourceRefs = [
+          ...Array.from(state.selected.values()).map((item) => ({
+            resource_id_or_url: item.resource_id_or_url,
+            resource_type: item.resource_type,
+            title: item.isUrl ? undefined : item.title,
+            selection_scope: item.selection_scope,
+          })),
+          ...parsePastedUrls().map((item) => ({
+            resource_id_or_url: item.resource_id_or_url,
+            selection_scope: item.selection_scope,
+          })),
+        ];
+        if (!resourceRefs.length) {
+          state.message = t.noSelection;
+          state.messageClass = "error";
+          renderDynamic();
+          return;
+        }
+
+        state.loading = true;
+        renderDynamic();
+        try {
+          await api("/api/bind", {
+            method: "POST",
+            body: JSON.stringify({ resource_refs: resourceRefs }),
+          });
+          state.message = t.bindingSuccess;
+          state.messageClass = "ok";
+          state.selected.clear();
+          const urlInput = $("url-input");
+          if (urlInput) urlInput.value = "";
+          await loadBindings();
+        } catch (error) {
+          state.message = String(error.message || error);
+          state.messageClass = "error";
+        } finally {
+          state.loading = false;
+          renderDynamic();
+        }
+      }
+
+      /* ----------------------------------------------------------------
+       * DOM builders (result nodes)
+       * -------------------------------------------------------------- */
       function renderNode(item, depth = 0) {
         const key = item.resource_id;
         const children = state.children.get(key) || [];
         const selected = state.selected.get(key);
         const wrapper = document.createElement("div");
         wrapper.className = "item";
+        wrapper.setAttribute("role", "treeitem");
+        wrapper.setAttribute(
+          "aria-expanded",
+          state.expanded.has(key) ? "true" : "false"
+        );
 
         const head = document.createElement("div");
         head.className = "item-head";
 
         const depthEl = document.createElement("div");
         depthEl.className = "depth";
-        depthEl.textContent = depth ? "└" : "";
+        depthEl.textContent = depth ? "\u2514" : "";
+        depthEl.setAttribute("aria-hidden", "true");
         head.appendChild(depthEl);
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = Boolean(selected);
+        checkbox.setAttribute(
+          "aria-label",
+          `Select ${item.title || item.resource_id}`
+        );
         checkbox.addEventListener("change", () => toggleSelection(item));
         head.appendChild(checkbox);
 
         const body = document.createElement("div");
-        const title = document.createElement("div");
-        title.className = "title";
-        title.textContent = item.title;
-        body.appendChild(title);
+
+        const titleEl = document.createElement("div");
+        titleEl.className = "title";
+        titleEl.textContent = item.title;
+        body.appendChild(titleEl);
+
         const crumb = document.createElement("div");
         crumb.className = "crumb";
         const typeChip = document.createElement("span");
@@ -650,15 +870,19 @@
           crumb.appendChild(boundChip);
         }
         body.appendChild(crumb);
+
         const meta = document.createElement("div");
         meta.className = "meta";
-        meta.textContent = `${t[item.resource_type] || item.resource_type} · ${item.resource_id}`;
+        meta.textContent = `${t[item.resource_type] || item.resource_type} \u00b7 ${item.resource_id}`;
         body.appendChild(meta);
+
         const parentText = describeParent(item);
         if (parentText || item.last_edited_time) {
           const details = document.createElement("div");
           details.className = "meta";
-          details.textContent = [parentText, item.last_edited_time].filter(Boolean).join(" · ");
+          details.textContent = [parentText, item.last_edited_time]
+            .filter(Boolean)
+            .join(" \u00b7 ");
           body.appendChild(details);
         }
         if (item.resource_url) {
@@ -672,14 +896,16 @@
         head.appendChild(body);
 
         const scope = document.createElement("select");
-        const optResource = document.createElement("option");
-        optResource.value = "resource";
-        optResource.textContent = t.resource;
-        scope.appendChild(optResource);
-        const optSubtree = document.createElement("option");
-        optSubtree.value = "subtree";
-        optSubtree.textContent = t.subtree;
-        scope.appendChild(optSubtree);
+        scope.setAttribute("aria-label", `${t.selectionScope} for ${item.title || item.resource_id}`);
+        for (const [val, label] of [
+          ["resource", t.resource],
+          ["subtree", t.subtree],
+        ]) {
+          const opt = document.createElement("option");
+          opt.value = val;
+          opt.textContent = label;
+          scope.appendChild(opt);
+        }
         scope.value = selected?.selection_scope || "subtree";
         scope.addEventListener("change", (event) => {
           if (!selected) toggleSelection(item);
@@ -687,18 +913,26 @@
         });
         head.appendChild(scope);
 
-        const expand = document.createElement("button");
-        expand.className = "secondary";
-        expand.textContent = state.expanded.has(key) ? t.collapse : t.expand;
-        expand.addEventListener("click", () => toggleExpand(item));
-        head.appendChild(expand);
+        const expandBtn = document.createElement("button");
+        expandBtn.className = "secondary";
+        expandBtn.textContent = state.expanded.has(key) ? t.collapse : t.expand;
+        expandBtn.setAttribute(
+          "aria-label",
+          `${state.expanded.has(key) ? t.collapse : t.expand} ${item.title || item.resource_id}`
+        );
+        expandBtn.addEventListener("click", () => toggleExpand(item));
+        head.appendChild(expandBtn);
 
         wrapper.appendChild(head);
 
         if (state.expanded.has(key)) {
           const childWrap = document.createElement("div");
           childWrap.className = "children";
-          const childMeta = state.childMeta.get(key) || { partial: false, mode: "shallow" };
+          childWrap.setAttribute("role", "group");
+          const childMeta = state.childMeta.get(key) || {
+            partial: false,
+            mode: "shallow",
+          };
           if (!children.length) {
             const empty = document.createElement("div");
             empty.className = "empty";
@@ -718,7 +952,9 @@
             partial.appendChild(hint);
             const deeper = document.createElement("button");
             deeper.className = "secondary";
-            deeper.textContent = state.deepLoading.has(key) ? t.scanningDeeper : t.scanDeeper;
+            deeper.textContent = state.deepLoading.has(key)
+              ? t.scanningDeeper
+              : t.scanDeeper;
             deeper.disabled = state.deepLoading.has(key);
             deeper.addEventListener("click", () => scanDeeper(item));
             partial.appendChild(deeper);
@@ -737,96 +973,88 @@
         return wrapper;
       }
 
-      async function bindSelected() {
-        const resourceRefs = [
-          ...Array.from(state.selected.values()).map((item) => ({
-            resource_id_or_url: item.resource_id_or_url,
-            resource_type: item.resource_type,
-            title: item.isUrl ? undefined : item.title,
-            selection_scope: item.selection_scope,
-          })),
-          ...parsePastedUrls().map((item) => ({
-            resource_id_or_url: item.resource_id_or_url,
-            selection_scope: item.selection_scope,
-          })),
-        ];
-        if (!resourceRefs.length) {
-          state.message = t.noSelection;
-          state.messageClass = "error";
-          render();
-          return;
-        }
+      /* ----------------------------------------------------------------
+       * Rendering: static shell + dynamic regions
+       *
+       * The shell (hero, recommendation, layout skeleton) is rendered
+       * once.  Only the dynamic content regions (results, selected,
+       * bindings, status) are re-rendered on state changes.  This
+       * preserves input focus and scroll position.
+       * -------------------------------------------------------------- */
+      let shellRendered = false;
 
-        state.loading = true;
-        render();
-        try {
-          await api("/api/bind", {
-            method: "POST",
-            body: JSON.stringify({ resource_refs: resourceRefs }),
-          });
-          state.message = t.bindingSuccess;
-          state.messageClass = "ok";
-          state.selected.clear();
-          document.getElementById("url-input").value = "";
-          await loadBindings();
-        } catch (error) {
-          state.message = String(error.message || error);
-          state.messageClass = "error";
-        } finally {
-          state.loading = false;
-          render();
-        }
-      }
+      function renderShell() {
+        if (shellRendered) return;
+        shellRendered = true;
 
-      function render() {
-        const app = document.getElementById("app");
+        const app = $("app");
         app.innerHTML = "";
 
+        /* Hero -------------------------------------------------------- */
         const hero = document.createElement("div");
         hero.className = "hero";
+
         const heroLeft = document.createElement("div");
         const heroPill = document.createElement("div");
         heroPill.className = "pill";
         heroPill.textContent = t.chooser;
         heroLeft.appendChild(heroPill);
+
         const heroTitle = document.createElement("h1");
         heroTitle.textContent = t.title;
         heroLeft.appendChild(heroTitle);
+
         const heroSubtitle = document.createElement("div");
         heroSubtitle.className = "subtle";
         heroSubtitle.textContent = t.subtitle;
         heroLeft.appendChild(heroSubtitle);
         hero.appendChild(heroLeft);
+
         const heroWorkspace = document.createElement("div");
         heroWorkspace.className = "workspace";
         heroWorkspace.textContent = `${t.workspace}: ${config.workspace_name || config.project_root}`;
         hero.appendChild(heroWorkspace);
         app.appendChild(hero);
 
+        /* Recommendation ----------------------------------------------- */
         const recommendation = document.createElement("div");
         recommendation.className = "card recommendation";
         const bindingRecommendation = config.binding_recommendation || null;
-        const bindingOptions = Array.isArray(config.binding_options) ? config.binding_options : [];
+        const bindingOptions = Array.isArray(config.binding_options)
+          ? config.binding_options
+          : [];
+
         const recTitle = document.createElement("strong");
         recTitle.textContent = t.recommendationTitle;
         recommendation.appendChild(recTitle);
+
         const recReason = document.createElement("div");
         recReason.className = "subtle";
-        recReason.textContent = bindingRecommendation?.reason || t.recommendationFallback;
+        recReason.textContent =
+          bindingRecommendation?.reason || t.recommendationFallback;
         recommendation.appendChild(recReason);
+
         const recQuestion = document.createElement("div");
         recQuestion.className = "hint";
         const recQuestionLabel = document.createElement("strong");
         recQuestionLabel.textContent = t.recommendationQuestion + ": ";
         recQuestion.appendChild(recQuestionLabel);
-        recQuestion.appendChild(document.createTextNode(config.binding_question || t.recommendationQuestionFallback));
+        recQuestion.appendChild(
+          document.createTextNode(
+            config.binding_question || t.recommendationQuestionFallback
+          )
+        );
         recommendation.appendChild(recQuestion);
+
         const optionsWrap = document.createElement("div");
         optionsWrap.className = "options";
         for (const option of bindingOptions) {
           const node = document.createElement("div");
           node.className = "option";
-          const modeLabel = t.recommendationModes?.[option.mode] || option.label || option.mode;
+          const modeLabel =
+            t.recommendationModes?.[option.mode] ||
+            option.label ||
+            option.mode;
           const optTitle = document.createElement("div");
           optTitle.className = "option-title";
           optTitle.textContent = modeLabel;
@@ -847,9 +1075,11 @@
         recommendation.appendChild(optionsWrap);
         app.appendChild(recommendation);
 
+        /* Layout grid -------------------------------------------------- */
         const layout = document.createElement("div");
         layout.className = "layout";
 
+        /* Left card ---------------------------------------------------- */
         const left = document.createElement("div");
         left.className = "card";
 
@@ -859,18 +1089,27 @@
         projectPill.className = "pill";
         projectPill.textContent = config.project_root;
         leftToolbar.appendChild(projectPill);
+
         const countPill = document.createElement("div");
         countPill.className = "pill";
-        countPill.textContent = `${state.catalog.length} result${state.catalog.length === 1 ? "" : "s"}`;
+        countPill.id = "count-pill";
+        countPill.textContent = "0 results";
         leftToolbar.appendChild(countPill);
+
         const hideBoundLabel = document.createElement("label");
         hideBoundLabel.className = "pill";
         const hideBoundCheckbox = document.createElement("input");
         hideBoundCheckbox.id = "hide-bound";
         hideBoundCheckbox.type = "checkbox";
         hideBoundCheckbox.checked = state.hideBound;
+        hideBoundCheckbox.addEventListener("change", (event) => {
+          state.hideBound = Boolean(event.target.checked);
+          renderDynamic();
+        });
         hideBoundLabel.appendChild(hideBoundCheckbox);
-        hideBoundLabel.appendChild(document.createTextNode(" " + t.filter_unbound));
+        hideBoundLabel.appendChild(
+          document.createTextNode(" " + t.filter_unbound)
+        );
         leftToolbar.appendChild(hideBoundLabel);
         left.appendChild(leftToolbar);
 
@@ -881,24 +1120,49 @@
         searchInput.type = "search";
         searchInput.placeholder = t.searchPlaceholder;
         searchInput.value = state.query;
+        searchInput.setAttribute("aria-label", t.searchPlaceholder);
+        searchInput.addEventListener("input", (event) => {
+          state.query = event.target.value;
+          scheduleSearch();
+        });
+        searchInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            loadCatalog();
+          }
+        });
         controls.appendChild(searchInput);
+
         const filterSelect = document.createElement("select");
         filterSelect.id = "filter";
-        for (const [val, label] of [["all", t.filter_all], ["pages", t.filter_pages], ["data_sources", t.filter_data_sources], ["roots", t.filter_roots]]) {
+        filterSelect.setAttribute("aria-label", t.filters);
+        for (const [val, label] of [
+          ["all", t.filter_all],
+          ["pages", t.filter_pages],
+          ["data_sources", t.filter_data_sources],
+          ["roots", t.filter_roots],
+        ]) {
           const opt = document.createElement("option");
           opt.value = val;
           opt.textContent = label;
           filterSelect.appendChild(opt);
         }
+        filterSelect.value = state.filter;
+        filterSelect.addEventListener("change", (event) => {
+          state.filter = event.target.value;
+          renderDynamic();
+        });
         controls.appendChild(filterSelect);
+
         const searchButton = document.createElement("button");
-        searchButton.id = "search-button";
         searchButton.textContent = t.refresh;
+        searchButton.addEventListener("click", () => loadCatalog());
         controls.appendChild(searchButton);
+
         const bindingsButton = document.createElement("button");
-        bindingsButton.id = "bindings-button";
         bindingsButton.className = "secondary";
         bindingsButton.textContent = t.reloadBindings;
+        bindingsButton.addEventListener("click", () => loadBindings());
         controls.appendChild(bindingsButton);
         left.appendChild(controls);
 
@@ -906,12 +1170,16 @@
         availableTitle.className = "section-title";
         availableTitle.textContent = t.available;
         left.appendChild(availableTitle);
+
         const resultsDiv = document.createElement("div");
         resultsDiv.id = "results";
         resultsDiv.className = "list";
+        resultsDiv.setAttribute("role", "tree");
+        resultsDiv.setAttribute("aria-label", t.available);
         left.appendChild(resultsDiv);
         layout.appendChild(left);
 
+        /* Right card --------------------------------------------------- */
         const right = document.createElement("div");
         right.className = "card";
 
@@ -922,6 +1190,7 @@
         const selectedDiv = document.createElement("div");
         selectedDiv.id = "selected";
         selectedDiv.className = "selected-list";
+        selectedDiv.setAttribute("aria-label", t.selected);
         right.appendChild(selectedDiv);
 
         const pastedTitle = document.createElement("h2");
@@ -932,10 +1201,13 @@
         pastedHint.className = "hint";
         pastedHint.textContent = t.pastedUrlsHint;
         right.appendChild(pastedHint);
+
         const urlTextarea = document.createElement("textarea");
         urlTextarea.id = "url-input";
         urlTextarea.spellcheck = false;
+        urlTextarea.setAttribute("aria-label", t.pastedUrls);
         right.appendChild(urlTextarea);
+
         const urlToolbar = document.createElement("div");
         urlToolbar.className = "toolbar";
         const urlScopeLabel = document.createElement("label");
@@ -943,7 +1215,10 @@
         urlScopeLabel.textContent = t.selectionScope + " ";
         const urlScopeSelect = document.createElement("select");
         urlScopeSelect.id = "url-scope";
-        for (const [val, label] of [["subtree", t.subtree], ["resource", t.resource]]) {
+        for (const [val, label] of [
+          ["subtree", t.subtree],
+          ["resource", t.resource],
+        ]) {
           const opt = document.createElement("option");
           opt.value = val;
           opt.textContent = label;
@@ -952,14 +1227,16 @@
         urlScopeLabel.appendChild(urlScopeSelect);
         urlToolbar.appendChild(urlScopeLabel);
         right.appendChild(urlToolbar);
+
         const bindButton = document.createElement("button");
         bindButton.id = "bind-button";
         bindButton.textContent = t.bindSelected;
+        bindButton.addEventListener("click", () => bindSelected());
         right.appendChild(bindButton);
+
         const statusDiv = document.createElement("div");
         statusDiv.id = "status";
-        statusDiv.className = `status ${state.messageClass}`;
-        statusDiv.textContent = state.loading ? t.loading : state.message;
+        statusDiv.className = "status";
         right.appendChild(statusDiv);
 
         const boundTitle = document.createElement("h2");
@@ -969,145 +1246,172 @@
         const bindingsDiv = document.createElement("div");
         bindingsDiv.id = "bindings";
         bindingsDiv.className = "selected-list";
+        bindingsDiv.setAttribute("aria-label", t.bound);
         right.appendChild(bindingsDiv);
 
         layout.appendChild(right);
         app.appendChild(layout);
+      }
 
-        document.getElementById("search").addEventListener("input", (event) => {
-          state.query = event.target.value;
-          scheduleSearch();
-        });
-        document.getElementById("search").addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            loadCatalog();
-          }
-        });
-        document.getElementById("filter").value = state.filter;
-        document.getElementById("filter").addEventListener("change", (event) => {
-          state.filter = event.target.value;
-          render();
-        });
-        document.getElementById("hide-bound").addEventListener("change", (event) => {
-          state.hideBound = Boolean(event.target.checked);
-          render();
-        });
-        document.getElementById("search-button").addEventListener("click", () => loadCatalog());
-        document.getElementById("bindings-button").addEventListener("click", () => loadBindings());
-        document.getElementById("bind-button").addEventListener("click", () => bindSelected());
+      /* ----------------------------------------------------------------
+       * renderDynamic — update only the mutable regions
+       * -------------------------------------------------------------- */
+      function renderDynamic() {
+        renderShell();
 
-        const results = document.getElementById("results");
-        let visibleCatalog = state.catalog;
-        if (state.hideBound) {
-          visibleCatalog = visibleCatalog.filter((item) => !isBound(item));
+        /* Count pill --------------------------------------------------- */
+        const countPill = $("count-pill");
+        if (countPill) {
+          const count = state.catalog.length;
+          countPill.textContent = `${count} result${count === 1 ? "" : "s"}`;
         }
-        if (state.filter === "pages") {
-          visibleCatalog = visibleCatalog.filter((item) => item.resource_type === "page");
-        } else if (state.filter === "data_sources") {
-          visibleCatalog = visibleCatalog.filter((item) => item.resource_type === "data_source");
-        } else if (state.filter === "roots") {
-          visibleCatalog = visibleCatalog.filter((item) => isRootLike(item));
+
+        /* Status ------------------------------------------------------- */
+        const statusDiv = $("status");
+        if (statusDiv) {
+          statusDiv.className = `status ${state.messageClass}`;
+          statusDiv.textContent = state.loading ? t.loading : state.message;
         }
-        if (!visibleCatalog.length) {
-          const empty = document.createElement("div");
-          empty.className = "empty";
-          empty.textContent = state.loading ? t.loading : t.noResults;
-          results.appendChild(empty);
-        } else {
-          const suggestedRoots = visibleCatalog.filter((item) => isRootLike(item));
-          const remainingMatches = visibleCatalog.filter((item) => !isRootLike(item));
 
-          if (suggestedRoots.length) {
-            const section = document.createElement("div");
-            section.className = "list";
-            const heading = document.createElement("div");
-            heading.className = "pill";
-            heading.textContent = `${t.suggestedRoots} · ${suggestedRoots.length}`;
-            section.appendChild(heading);
-            for (const item of suggestedRoots) {
-              section.appendChild(renderNode(item));
-            }
-            results.appendChild(section);
+        /* Results ------------------------------------------------------ */
+        const results = $("results");
+        if (results) {
+          results.innerHTML = "";
+          let visibleCatalog = state.catalog;
+          if (state.hideBound) {
+            visibleCatalog = visibleCatalog.filter((item) => !isBound(item));
           }
+          if (state.filter === "pages") {
+            visibleCatalog = visibleCatalog.filter(
+              (item) => item.resource_type === "page"
+            );
+          } else if (state.filter === "data_sources") {
+            visibleCatalog = visibleCatalog.filter(
+              (item) => item.resource_type === "data_source"
+            );
+          } else if (state.filter === "roots") {
+            visibleCatalog = visibleCatalog.filter((item) => isRootLike(item));
+          }
+          if (!visibleCatalog.length) {
+            const empty = document.createElement("div");
+            empty.className = "empty";
+            empty.textContent = state.loading ? t.loading : t.noResults;
+            results.appendChild(empty);
+          } else {
+            const suggestedRoots = visibleCatalog.filter((item) =>
+              isRootLike(item)
+            );
+            const remainingMatches = visibleCatalog.filter(
+              (item) => !isRootLike(item)
+            );
 
-          if (remainingMatches.length) {
-            const grouped = new Map();
-            for (const item of remainingMatches) {
-              const key = item.resource_type || "other";
-              if (!grouped.has(key)) grouped.set(key, []);
-              grouped.get(key).push(item);
-            }
-            for (const [type, items] of grouped.entries()) {
+            if (suggestedRoots.length) {
               const section = document.createElement("div");
               section.className = "list";
               const heading = document.createElement("div");
               heading.className = "pill";
-              heading.textContent = `${t.moreMatches} · ${t[type] || type} · ${items.length}`;
+              heading.textContent = `${t.suggestedRoots} \u00b7 ${suggestedRoots.length}`;
               section.appendChild(heading);
-              for (const item of items) {
+              for (const item of suggestedRoots) {
                 section.appendChild(renderNode(item));
               }
               results.appendChild(section);
             }
+
+            if (remainingMatches.length) {
+              const grouped = new Map();
+              for (const item of remainingMatches) {
+                const key = item.resource_type || "other";
+                if (!grouped.has(key)) grouped.set(key, []);
+                grouped.get(key).push(item);
+              }
+              for (const [type, items] of grouped.entries()) {
+                const section = document.createElement("div");
+                section.className = "list";
+                const heading = document.createElement("div");
+                heading.className = "pill";
+                heading.textContent = `${t.moreMatches} \u00b7 ${t[type] || type} \u00b7 ${items.length}`;
+                section.appendChild(heading);
+                for (const item of items) {
+                  section.appendChild(renderNode(item));
+                }
+                results.appendChild(section);
+              }
+            }
           }
         }
 
-        const selected = document.getElementById("selected");
-        if (!state.selected.size) {
-          const empty = document.createElement("div");
-          empty.className = "empty";
-          empty.textContent = t.noSelection;
-          selected.appendChild(empty);
-        } else {
-          for (const [key, item] of state.selected.entries()) {
-            const node = document.createElement("div");
-            node.className = "selected-item";
-            const titleEl = document.createElement("strong");
-            titleEl.textContent = item.title || item.resource_id_or_url;
-            node.appendChild(titleEl);
-            const metaEl = document.createElement("div");
-            metaEl.className = "meta";
-            metaEl.textContent = item.resource_type || "url";
-            node.appendChild(metaEl);
-            const scope = document.createElement("select");
-            const optR = document.createElement("option");
-            optR.value = "resource";
-            optR.textContent = t.resource;
-            scope.appendChild(optR);
-            const optS = document.createElement("option");
-            optS.value = "subtree";
-            optS.textContent = t.subtree;
-            scope.appendChild(optS);
-            scope.value = item.selection_scope;
-            scope.addEventListener("change", (event) => updateSelectedScope(key, event.target.value));
-            node.appendChild(scope);
-            selected.appendChild(node);
+        /* Selected ----------------------------------------------------- */
+        const selectedDiv = $("selected");
+        if (selectedDiv) {
+          selectedDiv.innerHTML = "";
+          if (!state.selected.size) {
+            const empty = document.createElement("div");
+            empty.className = "empty";
+            empty.textContent = t.noSelection;
+            selectedDiv.appendChild(empty);
+          } else {
+            for (const [key, item] of state.selected.entries()) {
+              const node = document.createElement("div");
+              node.className = "selected-item";
+              const titleEl = document.createElement("strong");
+              titleEl.textContent = item.title || item.resource_id_or_url;
+              node.appendChild(titleEl);
+              const metaEl = document.createElement("div");
+              metaEl.className = "meta";
+              metaEl.textContent = item.resource_type || "url";
+              node.appendChild(metaEl);
+              const scope = document.createElement("select");
+              scope.setAttribute("aria-label", `${t.selectionScope} for ${item.title || key}`);
+              for (const [val, label] of [
+                ["resource", t.resource],
+                ["subtree", t.subtree],
+              ]) {
+                const opt = document.createElement("option");
+                opt.value = val;
+                opt.textContent = label;
+                scope.appendChild(opt);
+              }
+              scope.value = item.selection_scope;
+              scope.addEventListener("change", (event) =>
+                updateSelectedScope(key, event.target.value)
+              );
+              node.appendChild(scope);
+              selectedDiv.appendChild(node);
+            }
           }
         }
 
-        const bindings = document.getElementById("bindings");
-        if (!state.bindings.length) {
-          const empty = document.createElement("div");
-          empty.className = "empty";
-          empty.textContent = t.noBindings;
-          bindings.appendChild(empty);
-        } else {
-          for (const item of state.bindings) {
-            const node = document.createElement("div");
-            node.className = "selected-item";
-            const titleEl = document.createElement("strong");
-            titleEl.textContent = item.title;
-            node.appendChild(titleEl);
-            const metaEl = document.createElement("div");
-            metaEl.className = "meta";
-            metaEl.textContent = `${item.resource_type} · ${item.selection_scope} · ${item.alias}`;
-            node.appendChild(metaEl);
-            bindings.appendChild(node);
+        /* Bindings ----------------------------------------------------- */
+        const bindingsDiv = $("bindings");
+        if (bindingsDiv) {
+          bindingsDiv.innerHTML = "";
+          if (!state.bindings.length) {
+            const empty = document.createElement("div");
+            empty.className = "empty";
+            empty.textContent = t.noBindings;
+            bindingsDiv.appendChild(empty);
+          } else {
+            for (const item of state.bindings) {
+              const node = document.createElement("div");
+              node.className = "selected-item";
+              const titleEl = document.createElement("strong");
+              titleEl.textContent = item.title;
+              node.appendChild(titleEl);
+              const metaEl = document.createElement("div");
+              metaEl.className = "meta";
+              metaEl.textContent = `${item.resource_type} \u00b7 ${item.selection_scope} \u00b7 ${item.alias}`;
+              node.appendChild(metaEl);
+              bindingsDiv.appendChild(node);
+            }
           }
         }
       }
 
+      /* ----------------------------------------------------------------
+       * Bootstrap
+       * -------------------------------------------------------------- */
+      renderShell();
       loadCatalog();
       loadBindings();
     </script>

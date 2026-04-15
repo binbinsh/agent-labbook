@@ -5,36 +5,84 @@
 [![Python](https://img.shields.io/pypi/pyversions/agent-labbook)](https://pypi.org/project/agent-labbook/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-A local [MCP](https://modelcontextprotocol.io/) server that connects AI coding agents (Codex, Claude Code, OpenCode) to Notion through a Notion Internal Integration secret.
+`agent-labbook` is a local MCP server that lets Codex, Claude Code, OpenCode, and other MCP clients use a Notion Internal Integration directly.
 
-No OAuth, no hosted broker, no cloud worker. The secret lives in your system keychain or 1Password, and the server calls the Notion API directly.
+No OAuth, no hosted broker, no cloud worker. You connect Notion once, store the Internal Integration secret locally, bind the pages or data sources you want, and then call the official Notion API.
 
-## Main Features
+## What It Does
 
-- Open the Notion integrations dashboard and guide the user to the Internal Integration Secret.
-- Detect whether system keychain and 1Password are available, and let the user choose.
-- Store the secret in the local system keychain, in 1Password, or override it with `NOTION_AGENT_LABBOOK_TOKEN`.
-- Search the pages and data sources the bot can access.
-- Bind only the pages or data sources a project should use.
-- Return access tokens, headers, and bound resource IDs for the official Notion API.
-- Work with Codex, Claude Code, and other MCP-capable clients.
+- Stores your Notion Internal Integration secret in the system keychain or 1Password
+- Lets an MCP client search, discover, and bind specific Notion pages or data sources
+- Returns API headers and bound resource IDs for direct Notion API calls
+- Provides a browser-based resource chooser for desktop environments
 
-## Install
+## 1. Create A Notion Internal Integration
 
-Requirements:
+Create a Notion Internal Integration here:
 
-- Python 3.10 or newer
-- `uv`
-- a Codex, Claude Code, or another MCP-capable client
+- Notion integrations dashboard: [notion.so/my-integrations](https://www.notion.so/my-integrations)
+- Notion guide: [Create a Notion integration](https://developers.notion.com/guides/get-started/create-a-notion-integration)
 
-Recommended:
+After creating it:
+
+1. Copy the `Internal Integration Secret` from the `Configuration` tab.
+2. Share the target Notion pages or data sources with the integration.
+
+## 2. Set The Token
+
+Recommended on a workstation:
+
+```bash
+uvx agent-labbook configure-secret --storage keychain
+```
+
+Optional 1Password flow:
+
+```bash
+uvx agent-labbook configure-secret --storage 1password --op-vault Private
+```
+
+CI or temporary override:
+
+```bash
+export NOTION_AGENT_LABBOOK_TOKEN=secret_xxx
+```
+
+Default policy:
+
+- `keychain` is the default local backend
+- `1password` is opt-in
+- `NOTION_AGENT_LABBOOK_TOKEN` is for CI or temporary overrides
+
+## 3. Install The MCP Server
+
+Codex:
 
 ```bash
 codex mcp add labbook -- uvx agent-labbook mcp
-claude mcp add --scope project labbook -- uvx agent-labbook mcp
 ```
 
-For OpenCode or other MCP clients, add the following to your `.mcp.json`:
+Or add it directly to your `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.labbook]
+command = "uvx"
+args = ["agent-labbook", "mcp"]
+```
+
+Claude Code (project scope, writes to `.mcp.json`):
+
+```bash
+claude mcp add --scope local labbook -- uvx agent-labbook mcp
+```
+
+Claude Code (user scope, writes to `~/.claude.json`):
+
+```bash
+claude mcp add --scope user labbook -- uvx agent-labbook mcp
+```
+
+OpenCode or other MCP clients:
 
 ```json
 {
@@ -47,120 +95,77 @@ For OpenCode or other MCP clients, add the following to your `.mcp.json`:
 }
 ```
 
-Or generate this config with:
+You can also generate the config with:
 
 ```bash
 uvx agent-labbook print-mcp-config
 ```
 
-Or use the checked-in [`.mcp.json`](./.mcp.json) for local development from a cloned copy of this repo.
+## 4. Use It
 
-## Architecture
+Typical flow:
 
-```
-┌──────────────┐    MCP (stdio)    ┌──────────────────┐    HTTPS    ┌───────────┐
-│  AI Agent    │◄─────────────────►│  agent-labbook   │◄──────────►│ Notion API│
-│  (Codex,     │                   │  MCP server      │            └───────────┘
-│  Claude Code)│                   └──────┬───────────┘
-└──────────────┘                          │
-                                          ▼
-                                   ┌──────────────┐
-                                   │ Secret Store │
-                                   │ (keychain /  │
-                                   │  1Password / │
-                                   │  env var)    │
-                                   └──────────────┘
-```
+1. Call `notion_status` to check the current project state.
+2. Bind resources with `notion_bind_resource_urls` for exact links, `notion_open_binding_browser` on desktop, or `notion_search_resources` plus `notion_discover_children` in headless environments.
+3. Call `notion_get_api_context` only when you are ready to use the official Notion API.
 
-**Modules:**
+## MCP Surface Reference
 
-| Module | Responsibility |
-|---|---|
-| `mcp_server.py` | MCP tool/resource/prompt definitions, server lifecycle |
-| `auth_flow.py` | Secret detection, storage orchestration, API context assembly |
-| `notion_api.py` | HTTP client for Notion API with retry and backoff |
-| `binding_ops.py` | Binding CRUD: search, discover, bind, unbind, alias management |
-| `binding_discovery.py` | Breadth-first child discovery, resource normalization |
-| `binding_browser_page.py` | HTML template renderer for the local binding chooser UI |
-| `binding_ui.py` | Local HTTP server for browser-based binding selection |
-| `state.py` | `.labbook/` project state persistence (session, bindings) |
-| `cli.py` | CLI entry points (`mcp`, `doctor`, `print-mcp-config`) |
+### Tools (12)
 
-## Recommended Flow
+| Tool | Description | Read-only | Destructive |
+|------|-------------|-----------|-------------|
+| `notion_status` | Read the current Internal Integration auth, storage backend, and bindings status for this project. | Yes | No |
+| `notion_setup_guide` | Return the setup guide for the Internal Integration workflow. | Yes | No |
+| `notion_prepare_internal_integration` | Open the Notion integrations dashboard and detect available local storage backends before collecting the Internal Integration Secret. | No | No |
+| `notion_configure_internal_integration` | Validate and store a Notion Internal Integration secret for this project. | No | No |
+| `notion_search_resources` | Search the pages and data sources that the Internal Integration bot can access. | Yes | No |
+| `notion_discover_children` | Inspect the immediate child pages or entries beneath a specific page or data source. | Yes | No |
+| `notion_bind_resource_urls` | Bind one or more Notion page or data source URLs directly. | No | No |
+| `notion_bind_resources` | Bind one or more Notion pages or data sources by reference. | No | No |
+| `notion_open_binding_browser` | Start a local browser-based chooser for selecting Notion roots. | No | No |
+| `notion_list_bindings` | List the Notion resources currently bound to this project. | Yes | No |
+| `notion_get_api_context` | Return the Internal Integration secret, official Notion API headers, and bound resource IDs for direct API calls. | Yes | No |
+| `notion_clear_project_auth` | Remove the saved project-local session and delete the stored keychain or 1Password secret. | No | Yes |
 
-1. Read `labbook://agent-labbook/project/status` or run `notion_status`.
-2. Run `notion_prepare_internal_integration` to open the Notion integrations dashboard and inspect `storage_options`, `storage_default`, and `storage_choice_required`.
-3. Create a Notion Internal Integration, copy its secret from the `Configuration` tab, and share the target pages or data sources with the bot in Notion.
-4. Save the secret with `notion_configure_internal_integration`, choosing `storage=keychain` or `storage=1password`, or set `NOTION_AGENT_LABBOOK_TOKEN`.
-5. If you already know the exact Notion links, use `notion_bind_resource_urls`.
-6. On desktop machines, use `notion_open_binding_browser` for a local chooser.
-7. In headless environments, prefer `notion_bind_resource_urls` when the user can paste exact Notion links. Otherwise combine `notion_search_resources`, `notion_discover_children`, and `notion_bind_resources`.
-8. Read `labbook://agent-labbook/project/bindings` or run `notion_list_bindings` to inspect the bound roots.
-9. Run `notion_get_api_context` and use the returned token, headers, and resource IDs with the official Notion API.
+### Resources (3)
 
-## Binding Options
+| Resource | URI | MIME Type | Description |
+|----------|-----|-----------|-------------|
+| Notion Setup Guide | `labbook://setup-guide` | `text/markdown` | Static setup guidance for using a Notion Internal Integration secret. |
+| Notion Project Status | `labbook://project/status` | `application/json` | Read-only JSON snapshot of the current project's auth, storage backend, and bindings state. |
+| Notion Project Bindings | `labbook://project/bindings` | `application/json` | Read-only JSON snapshot of the current project's bound Notion resources. |
 
-- **Direct URLs** -- Use `notion_bind_resource_urls` when the user already has exact page or data source links.
-- **Local browser chooser** -- Use `notion_open_binding_browser` on desktop machines to search, expand child pages, and bind multiple roots visually.
-- **Headless MCP flow** -- On SSH or other headless environments, use `notion_bind_resource_urls` when the user can paste exact links. If they cannot, use `notion_search_resources`, `notion_discover_children`, and then `notion_bind_resources`.
+### Resource Templates (2)
 
-## Save The Secret
+| Template | URI Pattern | MIME Type | Description |
+|----------|-------------|-----------|-------------|
+| Project Status By Root | `labbook://project/status?project_root={project_root}` | `application/json` | Read-only JSON project status for an explicit project root. |
+| Project Bindings By Root | `labbook://project/bindings?project_root={project_root}` | `application/json` | Read-only JSON bindings for an explicit project root. |
 
-Use `notion_configure_internal_integration` for persistent storage:
+### Prompts (2)
 
-- `storage=keychain` -- Default recommendation for local development when system keychain is available.
-- `storage=1password` -- Use when the `op` CLI is installed and signed in. You can optionally provide `op_vault` and `op_item_title`.
-- `NOTION_AGENT_LABBOOK_TOKEN` -- Use for CI, temporary runs, or environments where no local secret backend is available.
+| Prompt | Description |
+|--------|-------------|
+| `notion_connect_project` | Recommended workflow for connecting the current project to Notion with an Internal Integration secret. |
+| `notion_use_bound_resources` | Recommended workflow for checking bindings and calling the official Notion API with the project's configured secret. |
 
-If more than one local backend is available and you omit `storage`, the tool will ask the caller to make an explicit choice instead of guessing.
+## CLI Commands
 
-## Check The Secret
-
-Use `notion_status` or `agent-labbook doctor` to inspect the current setup without retrieving the secret itself.
-
-Important fields:
-
-- `authenticated` -- Whether the project currently has a usable Internal Integration secret.
-- `storage` -- Which persistent backend this project is configured to use.
-- `secret_plan` -- The recommended secret strategy for this machine right now.
-- `storage_options` -- The detected local storage backends and their availability.
-- `storage_choice_required` -- Whether the caller should ask the user to choose between keychain and 1Password.
-
-To verify that the secret also has the correct Notion permissions, prefer `notion_search_resources` instead of `notion_get_api_context`.
-
-## Guide Users
-
-The recommended user-facing flow for agents is:
-
-1. Call `notion_status`.
-2. If `authenticated=false`, call `notion_prepare_internal_integration`.
-3. If `storage_choice_required=true`, ask the user whether they want `keychain` or `1password`.
-4. Tell the user to copy the `Internal Integration Secret` from Notion's `Configuration` tab.
-5. Call `notion_configure_internal_integration`.
-6. Tell the user to share the target pages or data sources with the integration bot.
-7. Prefer `notion_bind_resource_urls` when the user pastes exact Notion links.
-8. On desktop machines, use `notion_open_binding_browser` for tree-style selection. In headless environments, prefer `notion_bind_resource_urls` when the user can paste exact links.
-9. Otherwise call `notion_search_resources`, optionally `notion_discover_children`, and then `notion_bind_resources`.
-
-Do not call `notion_get_api_context` just to check whether the setup worked. That tool returns the secret and should only be used when the client is ready to make real Notion API calls.
-
-If your content already exists as markdown, prefer Notion's markdown content APIs:
-
-- `POST /v1/pages` with `markdown`
-- `GET /v1/pages/{page_id}/markdown`
-- `PATCH /v1/pages/{page_id}/markdown`
-
-Reference: [Working with Markdown Content](https://developers.notion.com/guides/data-apis/working-with-markdown-content)
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, testing, and code style guidelines.
+| Command | Description |
+|---------|-------------|
+| `agent-labbook mcp` | Run the MCP stdio server. |
+| `agent-labbook configure-secret` | Prompt for the Notion Internal Integration secret and store it locally. Supports `--storage`, `--op-vault`, `--op-item-title`. |
+| `agent-labbook doctor` | Inspect local Notion Agent Labbook state and print diagnostics as JSON. |
+| `agent-labbook print-mcp-config` | Print a reusable `uvx`-based MCP server config snippet. |
 
 ## Notes
 
-- `.labbook/` should never be committed.
-- This repo handles local configuration and project binding, not general Notion API wrapping.
-- The system keychain is the default recommendation. 1Password is supported when the `op` CLI is available and signed in.
-- `notion_get_api_context` returns the secret. Treat it as a last-mile API call step, not a health check.
-- For local setup notes, see [docs/self-host.md](./docs/self-host.md).
-- For versioning details, see [docs/versioning.md](./docs/versioning.md).
+- `.labbook/` stores project-local metadata and bindings, not the secret itself.
+- `notion_get_api_context` returns the secret. Use it only for real API calls.
+- `NOTION_AGENT_LABBOOK_TOKEN` overrides stored local credentials for the current process.
+- The MCP server runs over stdio transport only. No HTTP/SSE transport is exposed.
+
+## License
+
+[MIT](./LICENSE)
