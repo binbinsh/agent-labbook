@@ -92,6 +92,12 @@ class RenderBindingBrowserPageTests(unittest.TestCase):
         self.assertIn('"a"', html1)
         self.assertIn('"b"', html2)
 
+    def test_checkbox_checked_state_does_not_depend_on_tailwind_palette(self) -> None:
+        html = render_binding_browser_page({})
+        self.assertNotIn("colors: { stone: undefined }", html)
+        self.assertIn('backgroundColor: checked ? "#1c1917" : "#ffffff"', html)
+        self.assertIn('borderColor: checked ? "#1c1917" : "#d6d3d1"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

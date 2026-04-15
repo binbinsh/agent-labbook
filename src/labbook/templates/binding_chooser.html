@@ -5,15 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Labbook Binding Chooser</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: { stone: undefined },
-          },
-        },
-      };
-    </script>
     <style>
       *, *::before, *::after { box-sizing: border-box; }
       html, body, #root { min-height: 100%; }
@@ -184,12 +175,20 @@ function Checkbox({ checked, disabled, onCheckedChange, className = "" }) {
     disabled,
     className: cn(
       "peer h-4 w-4 shrink-0 rounded-[5px] border border-stone-300 bg-white shadow-sm outline-none ring-offset-white focus-visible:ring-2 focus-visible:ring-stone-300 disabled:cursor-not-allowed disabled:opacity-50",
-      checked && "border-stone-900 bg-stone-900 text-white",
       className,
     ),
     onClick: () => onCheckedChange && onCheckedChange(!checked),
-    style: { display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 },
-  }, checked ? h(Check, { stroke: "white", strokeWidth: 3 }) : null);
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 0,
+      cursor: disabled ? "not-allowed" : "pointer",
+      borderColor: checked ? "#1c1917" : "#d6d3d1",
+      backgroundColor: checked ? "#1c1917" : "#ffffff",
+      color: checked ? "#ffffff" : "#1c1917",
+    },
+  }, checked ? h(Check, { stroke: "currentColor", strokeWidth: 3 }) : null);
 }
 
 /* ------------------------------------------------------------------ */
