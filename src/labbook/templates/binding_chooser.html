@@ -4,2020 +4,703 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Labbook Binding Chooser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: { stone: undefined },
+          },
+        },
+      };
+    </script>
     <style>
-      /* ================================================================
-       * Design tokens — warm paper palette matching the OAuth-era UI
-       * ============================================================== */
-      :root {
-        --bg: #faf7f2;
-        --paper: rgba(255, 253, 250, 0.82);
-        --paper-solid: #fffdf9;
-        --ink: #1a1410;
-        --muted: #6b5e52;
-        --muted-light: #9a8d80;
-        --line: rgba(28, 20, 16, 0.08);
-        --line-strong: rgba(28, 20, 16, 0.12);
-        --accent: #c4532d;
-        --accent-hover: #a8432a;
-        --accent-bg: rgba(196, 83, 45, 0.10);
-        --accent-border: rgba(196, 83, 45, 0.2);
-        --ok: #17643d;
-        --error: #9d2f2f;
-        --focus-ring: rgba(196, 83, 45, 0.3);
-        --radius: 16px;
-        --radius-lg: 20px;
-        --radius-pill: 999px;
-        --shadow-card: 0 1px 3px rgba(26, 20, 16, 0.06);
-        --shadow-lg: 0 8px 30px rgba(26, 20, 16, 0.08);
-        --transition: 0.15s ease;
-      }
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-      }
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body, #root { min-height: 100%; }
       body {
         margin: 0;
-        font-family: "Inter", ui-sans-serif, system-ui, -apple-system,
-          BlinkMacSystemFont, "Segoe UI", sans-serif;
-        color: var(--ink);
-        background: var(--bg);
+        background: #fafaf9;
+        color: #1c1917;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
-        min-height: 100vh;
       }
-      :focus-visible {
-        outline: 2px solid var(--focus-ring);
-        outline-offset: 2px;
-      }
-
-      /* ================================================================
-       * Nav bar — sticky top, frosted glass
-       * ============================================================== */
-      .nav {
-        position: sticky;
-        top: 0;
-        z-index: 30;
-        border-bottom: 1px solid var(--line);
-        background: rgba(250, 247, 242, 0.85);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-      }
-      .nav-inner {
-        max-width: 760px;
-        margin: 0 auto;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        height: 56px;
-        padding: 0 12px;
-      }
-      .nav-brand {
-        font-family: "DM Serif Display", serif;
-        font-size: 1.125rem;
-        color: var(--ink);
-        text-decoration: none;
-      }
-      .lang-switcher {
-        display: flex;
-        gap: 4px;
-      }
-      .lang-btn {
-        padding: 4px 10px;
-        border-radius: 8px;
-        border: none;
-        font-size: 0.75rem;
-        font-weight: 500;
-        cursor: pointer;
-        background: transparent;
-        color: var(--muted-light);
-        transition: background var(--transition), color var(--transition);
-      }
-      .lang-btn:hover {
-        background: rgba(196, 83, 45, 0.06);
-        color: var(--accent);
-      }
-      .lang-btn.active {
-        background: var(--accent-bg);
-        color: var(--accent);
-        font-weight: 600;
-      }
-
-      /* ================================================================
-       * Layout container
-       * ============================================================== */
-      .container {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 24px 12px 160px;
-      }
-      .stack {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-
-      /* ================================================================
-       * Typography
-       * ============================================================== */
-      .page-title {
-        margin: 0;
-        font-family: "DM Serif Display", "Noto Serif SC", "Noto Serif TC",
-          serif;
-        font-size: clamp(1.25rem, 3vw, 1.5rem);
-        font-weight: 400;
-        letter-spacing: -0.01em;
-        color: var(--ink);
-      }
-      .page-subtitle {
-        margin: 4px 0 0;
-        font-size: 0.875rem;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-
-      /* ================================================================
-       * Card
-       * ============================================================== */
-      .card {
-        background: var(--paper);
-        border: 1px solid var(--line);
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow-card);
-        overflow: hidden;
-      }
-      .card-header {
-        padding: 20px 20px 0;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-      .card-header-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-      .card-title {
-        margin: 0;
-        font-size: 1rem;
-        font-weight: 600;
-        color: var(--ink);
-      }
-      .card-desc {
-        margin: 0;
-        font-size: 0.875rem;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-      .card-body {
-        padding: 16px 20px 20px;
-      }
-
-      /* ================================================================
-       * Buttons
-       * ============================================================== */
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        white-space: nowrap;
-        border-radius: 12px;
-        border: none;
-        font: inherit;
-        font-size: 0.875rem;
-        font-weight: 500;
-        padding: 8px 16px;
-        cursor: pointer;
-        transition: background var(--transition), transform 0.08s ease;
-      }
-      .btn:active:not(:disabled) {
-        transform: scale(0.97);
-      }
-      .btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .btn-primary {
-        background: var(--accent);
-        color: #fff;
-      }
-      .btn-primary:hover:not(:disabled) {
-        background: var(--accent-hover);
-      }
-      .btn-secondary {
-        background: transparent;
-        border: 1px solid var(--line-strong);
-        color: var(--ink);
-      }
-      .btn-secondary:hover:not(:disabled) {
-        background: rgba(0, 0, 0, 0.03);
-      }
-      .btn-sm {
-        padding: 6px 12px;
-        font-size: 0.75rem;
-        border-radius: 8px;
-      }
-
-      /* ================================================================
-       * Inputs
-       * ============================================================== */
-      .input-wrap {
-        position: relative;
-        flex: 1;
-      }
-      .input-wrap .search-icon {
-        position: absolute;
-        left: 12px;
-        top: 50%;
-        transform: translateY(-50%);
-        width: 16px;
-        height: 16px;
-        color: var(--muted-light);
-        pointer-events: none;
-      }
-      input[type="search"],
-      input[type="text"] {
-        width: 100%;
-        height: 40px;
-        border: 1px solid var(--line-strong);
-        border-radius: 12px;
-        padding: 0 12px 0 36px;
-        font: inherit;
-        font-size: 0.875rem;
-        color: var(--ink);
-        background: #fff;
-        outline: none;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-        transition: border-color var(--transition), box-shadow var(--transition);
-      }
-      input[type="search"]:focus,
-      input[type="text"]:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px var(--focus-ring);
-      }
-      select {
-        height: 32px;
-        border: 1px solid var(--line-strong);
-        border-radius: 8px;
-        padding: 0 8px;
-        font: inherit;
-        font-size: 0.8125rem;
-        color: var(--ink);
-        background: #fff;
-        cursor: pointer;
-      }
-      textarea {
-        width: 100%;
-        min-height: 100px;
-        border: 1px solid var(--line-strong);
-        border-radius: 12px;
-        padding: 12px;
-        font: inherit;
-        font-size: 0.875rem;
-        color: var(--ink);
-        background: #fff;
-        resize: vertical;
-      }
-      textarea:focus {
-        border-color: var(--accent);
-        outline: none;
-        box-shadow: 0 0 0 3px var(--focus-ring);
-      }
-
-      /* ================================================================
-       * Notice boxes
-       * ============================================================== */
-      .notice {
-        border-radius: 12px;
-        padding: 10px 14px;
-        font-size: 0.8125rem;
-        line-height: 1.6;
-      }
-      .notice-amber {
-        background: #fffbeb;
-        border: 1px solid #fde68a;
-        color: #92400e;
-      }
-      .notice-rose {
-        background: #fff1f2;
-        border: 1px solid #fecdd3;
-        color: #9f1239;
-      }
-
-      /* ================================================================
-       * Badge
-       * ============================================================== */
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        height: 20px;
-        padding: 0 8px;
-        border-radius: var(--radius-pill);
-        font-size: 0.625rem;
-        font-weight: 500;
-        white-space: nowrap;
-      }
-      .badge-outline {
-        border: 1px solid var(--line-strong);
-        color: var(--muted-light);
-      }
-      .badge-accent {
-        border: 1px solid var(--accent-border);
-        color: var(--accent);
-      }
-      .badge-workspace {
-        height: auto;
-        padding: 4px 10px;
-        font-size: 0.8125rem;
-        border: 1px solid var(--line-strong);
-        color: var(--muted);
-        background: rgba(255, 255, 255, 0.6);
-      }
-
-      /* ================================================================
-       * Toolbar row
-       * ============================================================== */
-      .toolbar {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .toolbar-spacer {
-        flex: 1;
-      }
-      .toolbar label {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 0.8125rem;
-        color: var(--muted);
-        cursor: pointer;
-      }
-      .toolbar label input[type="checkbox"] {
-        accent-color: var(--accent);
-      }
-
-      /* ================================================================
-       * Resource tree rows — the heart of the new design
-       * ============================================================== */
-      .tree-list {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      .tree-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 36px;
-        padding: 6px 8px;
-        border-radius: 10px;
-        transition: background var(--transition);
-      }
-      .tree-row:hover {
-        background: var(--bg);
-      }
-      .tree-row.selected-explicit {
-        background: #fef3ee;
-      }
-      .tree-row.selected-descendant {
-        background: var(--bg);
-      }
-
-      .tree-toggle {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        border: none;
-        background: transparent;
-        padding: 0;
-        border-radius: 4px;
-        color: var(--muted-light);
-        cursor: pointer;
-        transition: background var(--transition), color var(--transition);
-      }
-      .tree-toggle:hover {
-        background: rgba(196, 83, 45, 0.08);
-        color: var(--muted);
-      }
-      .tree-toggle-placeholder {
-        width: 16px;
-        flex-shrink: 0;
-      }
-
-      .tree-checkbox {
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        accent-color: var(--accent);
-        cursor: pointer;
-      }
-
-      .tree-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        font-size: 13px;
-        line-height: 1;
-        color: var(--muted-light);
-      }
-
-      .tree-content {
-        flex: 1;
-        min-width: 0;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .tree-title {
-        font-size: 0.8125rem;
-        color: var(--ink);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 360px;
-      }
-
-      .tree-loader {
-        width: 14px;
-        height: 14px;
-        flex-shrink: 0;
-        border: 2px solid var(--accent-border);
-        border-top-color: var(--accent);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-      }
-
-      /* Children container */
-      .tree-children {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-
-      /* Partial / scan deeper hint inside children */
-      .tree-hint {
-        padding: 8px 8px 8px 48px;
-        font-size: 0.8125rem;
-        color: var(--muted);
-      }
-      .tree-hint .btn {
-        margin-left: 8px;
-      }
-
-      /* ================================================================
-       * Selected list (right panel items, now inline)
-       * ============================================================== */
-      .selected-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 12px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: #fff;
-        transition: box-shadow var(--transition);
-        animation: fade-in 0.15s ease both;
-      }
-      .selected-item:hover {
-        box-shadow: 0 2px 8px rgba(26, 20, 16, 0.06);
-      }
-      .selected-item-body {
-        flex: 1;
-        min-width: 0;
-      }
-      .selected-item-title {
-        font-size: 0.8125rem;
-        font-weight: 600;
-        color: var(--ink);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .selected-item-meta {
-        font-size: 0.75rem;
-        color: var(--muted);
-        margin-top: 2px;
-      }
-
-      /* ================================================================
-       * Recommendation card
-       * ============================================================== */
-      .recommendation-card {
-        background: linear-gradient(180deg, #fffaf4, #fff6ef);
-        border: 1px solid #e5c7b8;
-      }
-      .rec-options {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 12px;
-      }
-      .rec-option {
-        flex: 1 1 180px;
-        min-width: 160px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: #fff;
-        padding: 10px 12px;
-        transition: box-shadow var(--transition);
-      }
-      .rec-option:hover {
-        box-shadow: 0 2px 8px rgba(26, 20, 16, 0.06);
-      }
-      .rec-option-title {
-        font-size: 0.8125rem;
-        font-weight: 600;
-        color: var(--ink);
-      }
-      .rec-option-recommended {
-        color: var(--accent);
-        font-weight: 600;
-        font-size: 0.75rem;
-        margin-left: 6px;
-      }
-      .rec-option-reason {
-        font-size: 0.75rem;
-        color: var(--muted);
-        margin-top: 4px;
-      }
-      .rec-question {
-        margin-top: 10px;
-        font-size: 0.8125rem;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-      .rec-question strong {
-        color: var(--ink);
-      }
-
-      /* ================================================================
-       * Sticky bottom action bar
-       * ============================================================== */
-      .action-bar {
-        position: sticky;
-        bottom: 12px;
-        z-index: 20;
-        max-width: 760px;
-        margin: 0 auto;
-      }
-      .action-bar .card {
-        background: rgba(255, 253, 250, 0.95);
-        box-shadow: var(--shadow-lg);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-      }
-      .action-bar-inner {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 16px 20px;
-      }
-      .action-bar-text {
-        font-size: 0.875rem;
-        color: var(--muted);
-      }
-
-      /* ================================================================
-       * Status message
-       * ============================================================== */
-      .status-msg {
-        font-size: 0.8125rem;
-        min-height: 20px;
-        margin-top: 8px;
-        color: var(--muted);
-        transition: color var(--transition);
-      }
-      .status-msg.ok {
-        color: var(--ok);
-      }
-      .status-msg.error {
-        color: var(--error);
-      }
-
-      /* ================================================================
-       * Empty state
-       * ============================================================== */
-      .empty {
-        border: 1px dashed var(--line-strong);
-        border-radius: 12px;
-        background: var(--bg);
-        padding: 32px 16px;
-        text-align: center;
-        font-size: 0.875rem;
-        color: var(--muted);
-      }
-
-      /* ================================================================
-       * Divider
-       * ============================================================== */
-      .divider {
-        height: 1px;
-        background: var(--line);
-        border: none;
-        margin: 0;
-      }
-
-      /* ================================================================
-       * Section within a card
-       * ============================================================== */
-      .section-label {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: var(--muted-light);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin: 0 0 8px;
-      }
-
-      /* ================================================================
-       * Links
-       * ============================================================== */
-      a {
-        color: var(--accent);
-        text-decoration: none;
-      }
-      a:hover {
-        text-decoration: underline;
-      }
-
-      /* ================================================================
-       * Animation
-       * ============================================================== */
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      @keyframes fade-in {
-        from {
-          opacity: 0;
-          transform: translateY(4px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-
-      /* ================================================================
-       * SVG icons inline
-       * ============================================================== */
-      .icon {
-        width: 14px;
-        height: 14px;
-        fill: none;
-        stroke: currentColor;
-        stroke-width: 2;
-        stroke-linecap: round;
-        stroke-linejoin: round;
-      }
-
-      /* ================================================================
-       * Responsive
-       * ============================================================== */
-      @media (min-width: 640px) {
-        .nav-inner,
-        .container {
-          padding-left: 20px;
-          padding-right: 20px;
-        }
-      }
+      button, input, textarea { font: inherit; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .animate-spin { animation: spin 1s linear infinite; }
     </style>
   </head>
   <body>
-    <!-- Nav -->
-    <nav class="nav" role="navigation">
-      <div class="nav-inner">
-        <span class="nav-brand" id="nav-brand">Agent Labbook</span>
-        <div class="lang-switcher" id="lang-switcher"></div>
-      </div>
-    </nav>
-
-    <div class="container" id="app" role="main" aria-label="Binding chooser"></div>
-
+    <div id="root"></div>
     <script>
-      const config = /*__LABBOOK_CONFIG_JSON__*/null;
+      window.__LABBOOK_CONFIG__ = /*__LABBOOK_CONFIG_JSON__*/null;
+    </script>
+    <script type="module">
+import React from "https://esm.sh/react@18.3.1";
+import ReactDOM from "https://esm.sh/react-dom@18.3.1/client";
 
-      /* ----------------------------------------------------------------
-       * SVG icon helpers (inline, no external deps)
-       * -------------------------------------------------------------- */
-      const _iconTemplates = {
-        chevronRight:
-          '<svg class="icon" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>',
-        chevronDown:
-          '<svg class="icon" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>',
-        search:
-          '<svg class="icon search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
-        refresh:
-          '<svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
-        fileText:
-          '<svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>',
-        database:
-          '<svg class="icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>',
-      };
+const {
+  createElement: h,
+  useState,
+  useEffect,
+  useRef,
+  useDeferredValue,
+  startTransition,
+  Fragment,
+} = React;
 
-      const _iconParser = new DOMParser();
+const config = window.__LABBOOK_CONFIG__;
 
-      function icon(name) {
-        const doc = _iconParser.parseFromString(
-          _iconTemplates[name],
-          "image/svg+xml"
-        );
-        return document.importNode(doc.documentElement, true);
+/* ------------------------------------------------------------------ */
+/* SVG Icon components (matching lucide-react originals)               */
+/* ------------------------------------------------------------------ */
+
+const iconProps = {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: 14,
+  height: 14,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+};
+
+function ChevronRight(props) {
+  return h("svg", { ...iconProps, ...props },
+    h("polyline", { points: "9 18 15 12 9 6" }));
+}
+function ChevronDown(props) {
+  return h("svg", { ...iconProps, ...props },
+    h("polyline", { points: "6 9 12 15 18 9" }));
+}
+function FileText(props) {
+  return h("svg", { ...iconProps, ...props },
+    h("path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" }),
+    h("polyline", { points: "14 2 14 8 20 8" }),
+    h("line", { x1: 16, y1: 13, x2: 8, y2: 13 }),
+    h("line", { x1: 16, y1: 17, x2: 8, y2: 17 }));
+}
+function Database(props) {
+  return h("svg", { ...iconProps, ...props },
+    h("ellipse", { cx: 12, cy: 5, rx: 9, ry: 3 }),
+    h("path", { d: "M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" }),
+    h("path", { d: "M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" }));
+}
+function Search(props) {
+  return h("svg", { ...iconProps, ...props },
+    h("circle", { cx: 11, cy: 11, r: 8 }),
+    h("line", { x1: 21, y1: 21, x2: 16.65, y2: 16.65 }));
+}
+function RefreshCw(props) {
+  return h("svg", { ...iconProps, ...props },
+    h("polyline", { points: "23 4 23 10 17 10" }),
+    h("path", { d: "M20.49 15a9 9 0 1 1-2.12-9.36L23 10" }));
+}
+function LoaderCircle(props) {
+  return h("svg", { ...iconProps, className: "animate-spin " + (props.className || ""), ...props },
+    h("path", { d: "M21 12a9 9 0 1 1-6.219-8.56" }));
+}
+function Check(props) {
+  return h("svg", { ...iconProps, width: 12, height: 12, ...props },
+    h("polyline", { points: "20 6 9 17 4 12" }));
+}
+
+/* ------------------------------------------------------------------ */
+/* Utility components matching shadcn/ui originals                     */
+/* ------------------------------------------------------------------ */
+
+function cn(...args) {
+  return args.filter(Boolean).join(" ");
+}
+
+function Badge({ variant = "default", className = "", children, ...rest }) {
+  const base = "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-medium transition-colors";
+  const variants = {
+    default: "border-transparent bg-stone-900 text-white",
+    secondary: "border-transparent bg-stone-100 text-stone-700",
+    outline: "border-stone-200 text-stone-700",
+  };
+  return h("div", { className: cn(base, variants[variant] || variants.outline, className), ...rest }, children);
+}
+
+function Button({ variant = "default", size = "default", disabled, className = "", children, ...rest }) {
+  const base = "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300 disabled:pointer-events-none disabled:opacity-50";
+  const variants = {
+    default: "bg-stone-900 text-white hover:bg-stone-800",
+    secondary: "border border-stone-200 bg-white text-stone-900 hover:bg-stone-100",
+  };
+  const sizes = {
+    default: "h-10 px-4 py-2",
+    sm: "h-8 rounded-lg px-3 text-xs",
+    icon: "size-8 rounded-lg",
+  };
+  return h("button", {
+    disabled,
+    className: cn(base, variants[variant] || variants.default, sizes[size] || sizes.default, className),
+    ...rest,
+  }, children);
+}
+
+function Card({ className = "", children, ...rest }) {
+  return h("div", {
+    className: cn("rounded-2xl border border-stone-200 bg-white text-stone-950 shadow-sm", className),
+    ...rest,
+  }, children);
+}
+
+function CardHeader({ className = "", children, ...rest }) {
+  return h("div", { className: cn("flex flex-col space-y-1.5 p-5", className), ...rest }, children);
+}
+
+function CardTitle({ className = "", children, ...rest }) {
+  return h("h3", { className: cn("text-lg font-semibold tracking-tight", className), ...rest }, children);
+}
+
+function CardDescription({ className = "", children, ...rest }) {
+  return h("p", { className: cn("text-sm text-stone-500", className), ...rest }, children);
+}
+
+function CardContent({ className = "", children, ...rest }) {
+  return h("div", { className: cn("p-5 pt-0", className), ...rest }, children);
+}
+
+function Input({ className = "", ...rest }) {
+  return h("input", {
+    className: cn(
+      "flex h-10 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm outline-none transition placeholder:text-stone-400 focus-visible:ring-2 focus-visible:ring-stone-300",
+      className,
+    ),
+    ...rest,
+  });
+}
+
+function Checkbox({ checked, disabled, onCheckedChange, className = "" }) {
+  return h("button", {
+    type: "button",
+    role: "checkbox",
+    "aria-checked": checked,
+    disabled,
+    className: cn(
+      "peer h-4 w-4 shrink-0 rounded-[5px] border border-stone-300 bg-white shadow-sm outline-none ring-offset-white focus-visible:ring-2 focus-visible:ring-stone-300 disabled:cursor-not-allowed disabled:opacity-50",
+      checked && "border-stone-900 bg-stone-900 text-white",
+      className,
+    ),
+    onClick: () => onCheckedChange && onCheckedChange(!checked),
+    style: { display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 },
+  }, checked ? h(Check, { stroke: "white", strokeWidth: 3 }) : null);
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                              */
+/* ------------------------------------------------------------------ */
+
+function normalizeNotionIdLike(value) {
+  const raw = String(value || "").trim();
+  let candidateSource = raw;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.pathname) candidateSource = parsed.pathname;
+  } catch {}
+  const matches = candidateSource.match(
+    /[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,
+  );
+  const candidate = matches && matches.length ? matches[matches.length - 1] : raw;
+  const collapsed = String(candidate || "").replace(/-/g, "").toLowerCase();
+  if (/^[0-9a-f]{32}$/.test(collapsed)) {
+    return [collapsed.slice(0, 8), collapsed.slice(8, 12), collapsed.slice(12, 16), collapsed.slice(16, 20), collapsed.slice(20)].join("-");
+  }
+  return raw;
+}
+
+function normalizeResourceType(value) {
+  const t = String(value || "").trim().toLowerCase();
+  return t === "database" ? "data_source" : t || "unknown";
+}
+
+function canHaveChildren(type) {
+  const n = normalizeResourceType(type);
+  return n === "page" || n === "data_source";
+}
+
+function resourceTypeRank(type) {
+  if (type === "page") return 0;
+  if (type === "data_source") return 1;
+  return 2;
+}
+
+function compareResources(a, b) {
+  const tr = resourceTypeRank(a.resource_type) - resourceTypeRank(b.resource_type);
+  if (tr !== 0) return tr;
+  const tc = String(a.title || "").localeCompare(String(b.title || ""), undefined, { sensitivity: "base" });
+  if (tc !== 0) return tc;
+  return String(a.resource_id || "").localeCompare(String(b.resource_id || ""));
+}
+
+function dedupSort(items) {
+  const byId = new Map();
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const rid = normalizeNotionIdLike(item.resource_id);
+    if (!rid) continue;
+    const norm = {
+      ...item,
+      resource_id: rid,
+      resource_type: normalizeResourceType(item.resource_type),
+    };
+    byId.set(rid, { ...(byId.get(rid) || norm), ...norm });
+  }
+  return Array.from(byId.values()).sort(compareResources);
+}
+
+function formatTypeLabel(type) {
+  if (type === "data_source") return "Data source";
+  if (type === "page") return "Page";
+  return String(type || "resource").replace(/_/g, " ");
+}
+
+function matchesQuery(resource, query) {
+  if (!query) return true;
+  const hay = [resource.title, resource.resource_id, resource.resource_type, resource.resource_url];
+  return hay.some((v) => String(v || "").toLowerCase().includes(query));
+}
+
+function resolvedParentId(r) {
+  return normalizeNotionIdLike(r.discovered_parent_id || r.parent_id || r.parent_database_id);
+}
+
+function buildChildIndex(items) {
+  const byId = new Map(items.map((i) => [i.resource_id, i]));
+  const index = new Map();
+  for (const item of items) {
+    const pid = resolvedParentId(item);
+    if (!pid || !byId.has(pid)) continue;
+    const arr = index.get(pid) || [];
+    arr.push(item);
+    index.set(pid, arr);
+  }
+  for (const [k, v] of index.entries()) {
+    index.set(k, [...v].sort(compareResources));
+  }
+  return index;
+}
+
+async function api(path) {
+  const resp = await fetch(path, { headers: { "Content-Type": "application/json" } });
+  const data = await resp.json().catch(() => ({ error: "Invalid JSON" }));
+  if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+  return data;
+}
+
+async function apiPost(path, body) {
+  const resp = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({ error: "Invalid JSON" }));
+  if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/* ResourceRow                                                          */
+/* ------------------------------------------------------------------ */
+
+function ResourceIcon({ resource }) {
+  if (resource.icon_emoji) {
+    return h("span", { className: "text-[13px] leading-none" }, resource.icon_emoji);
+  }
+  if (resource.resource_type === "data_source") {
+    return h(Database, { className: "w-3.5 h-3.5 text-stone-500" });
+  }
+  return h(FileText, { className: "w-3.5 h-3.5 text-stone-500" });
+}
+
+function ResourceRow({
+  resource, selectedState, loading, includesSubtree,
+  canExpand, expanded, depth, disabled, onToggle, onToggleExpand,
+}) {
+  const selected = selectedState !== "none";
+
+  return h("div", {
+    "data-resource-id": resource.resource_id,
+    className: cn(
+      "flex min-h-9 items-center gap-2 rounded-lg px-2 py-1.5 transition",
+      selectedState === "explicit" ? "bg-stone-100"
+        : selectedState === "descendant" ? "bg-stone-50"
+        : "hover:bg-stone-50",
+    ),
+    style: { paddingLeft: (8 + depth * 18) + "px" },
+    title: [resource.title || "Untitled", formatTypeLabel(resource.resource_type), resource.resource_id].filter(Boolean).join("\n"),
+  },
+    canExpand
+      ? h("button", {
+          type: "button",
+          className: "flex w-4 h-4 shrink-0 items-center justify-center rounded text-stone-500 hover:bg-stone-200/60 hover:text-stone-700",
+          "aria-label": expanded ? "Collapse nested items" : "Expand nested items",
+          onClick: () => onToggleExpand && onToggleExpand(resource),
+        }, expanded ? h(ChevronDown, { className: "w-3.5 h-3.5" }) : h(ChevronRight, { className: "w-3.5 h-3.5" }))
+      : h("span", { className: "w-4 shrink-0", "aria-hidden": "true" }),
+
+    h(Checkbox, {
+      checked: selected,
+      disabled,
+      onCheckedChange: (next) => onToggle && onToggle(resource, next),
+    }),
+
+    h("span", { className: "flex w-4 h-4 shrink-0 items-center justify-center" },
+      h(ResourceIcon, { resource })),
+
+    h("div", { className: "min-w-0 flex-1" },
+      h("div", { className: "flex min-w-0 items-center gap-2" },
+        h("span", { className: "truncate text-[13px] text-stone-900" }, resource.title || "Untitled"),
+        h(Badge, { variant: "outline", className: "h-5 shrink-0 rounded-full px-2 text-[10px] text-stone-500" },
+          resource.resource_type === "data_source" ? "Data source" : "Page"),
+        selectedState === "explicit" && h(Badge, { variant: "outline", className: "h-5 shrink-0 rounded-full px-2 text-[10px]" }, "Selected"),
+        selectedState === "explicit" && includesSubtree && h(Badge, { variant: "outline", className: "h-5 shrink-0 rounded-full px-2 text-[10px]" }, "Includes subtree"),
+        selectedState === "descendant" && h(Badge, { variant: "outline", className: "h-5 shrink-0 rounded-full px-2 text-[10px]" }, "In selected subtree"),
+      ),
+    ),
+
+    loading && h(LoaderCircle, { className: "w-3.5 h-3.5 shrink-0 text-stone-500" }),
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Main App                                                             */
+/* ------------------------------------------------------------------ */
+
+function SelectionApp() {
+  const [catalog, setCatalog] = useState([]);
+  const [selectedRootIds, setSelectedRootIds] = useState(new Set());
+  const [discoveredByRoot, setDiscoveredByRoot] = useState(new Map());
+  const [loadingRootIds, setLoadingRootIds] = useState(new Set());
+  const [collapsedIds, setCollapsedIds] = useState(new Set());
+  const [inputValue, setInputValue] = useState("");
+  const [refreshingCatalog, setRefreshingCatalog] = useState(false);
+  const [searchingCatalog, setSearchingCatalog] = useState(false);
+  const [remoteSearchIds, setRemoteSearchIds] = useState(new Set());
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
+  const [bindStatus, setBindStatus] = useState("");
+
+  const deferredQuery = useDeferredValue(inputValue.trim().toLowerCase());
+
+  const rootIndex = new Map(catalog.map((r) => [r.resource_id, r]));
+
+  /* -- Load catalog ------------------------------------------------ */
+
+  async function refreshCatalog() {
+    setRefreshingCatalog(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("fetch_all", "true");
+      const payload = await api("/api/search?" + params.toString());
+      const results = dedupSort(payload.results || []);
+
+      setCatalog((current) => {
+        const selectedResources = Array.from(selectedRootIds)
+          .map((id) => rootIndex.get(id))
+          .filter(Boolean);
+        const discovered = Array.from(discoveredByRoot.values()).flat();
+        return dedupSort([...results, ...selectedResources, ...discovered]);
+      });
+      setCatalogLoaded(true);
+    } catch (err) {
+      console.error("Catalog refresh failed:", err);
+    } finally {
+      setRefreshingCatalog(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!catalogLoaded) refreshCatalog();
+  }, [catalogLoaded]);
+
+  /* -- Remote search ----------------------------------------------- */
+
+  useEffect(() => {
+    if (!catalogLoaded) return;
+    if (!deferredQuery) {
+      setRemoteSearchIds(new Set());
+      setSearchingCatalog(false);
+      return;
+    }
+    setRemoteSearchIds(new Set());
+    setSearchingCatalog(true);
+    let cancelled = false;
+    const tid = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        params.set("fetch_all", "true");
+        params.set("query", deferredQuery);
+        const payload = await api("/api/search?" + params.toString());
+        if (cancelled) return;
+        const results = dedupSort(payload.results || []);
+        setCatalog((prev) => dedupSort([...prev, ...results]));
+        setRemoteSearchIds(new Set(results.map((r) => r.resource_id)));
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Search failed:", err);
+          setRemoteSearchIds(new Set());
+        }
+      } finally {
+        if (!cancelled) setSearchingCatalog(false);
       }
-
-      /* ----------------------------------------------------------------
-       * i18n
-       * -------------------------------------------------------------- */
-      const translations = {
-        en: {
-          navBrand: "Agent Labbook",
-          title: "Choose Notion Roots",
-          subtitle:
-            "Search, expand, and bind the exact pages or data sources this project should use. You can also paste one or more Notion URLs directly.",
-          searchPlaceholder: "Search accessible pages or data sources",
-          refresh: "Refresh",
-          reloadBindings: "Reload bindings",
-          selectTitle: "Select Pages and Data Sources",
-          selectDesc:
-            "Selecting a root binds that page or data source with subtree scope. Expand rows to inspect nested content on demand.",
-          available: "Available content",
-          selected: "Pending selection",
-          bound: "Current bindings",
-          noResults: "No resources matched the current search.",
-          noSelection: "Nothing selected yet.",
-          noBindings: "No resources are currently bound.",
-          pastedUrls: "Paste Notion URLs",
-          pastedUrlsHint:
-            "One page or data source URL per line. These are added directly as binding roots.",
-          bindSelected: "Bind selected resources",
-          page: "Page",
-          data_source: "Data source",
-          expand: "Expand",
-          collapse: "Collapse",
-          selectionScope: "Selection scope",
-          resource: "resource",
-          subtree: "subtree",
-          loading: "Loading\u2026",
-          bindingSuccess: "Bindings saved.",
-          workspace: "Workspace",
-          chooser: "Local chooser",
-          catalogNotice:
-            "Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click Refresh.",
-          partialChildren:
-            "Showing fast results. Deeper nested content may still exist.",
-          scanDeeper: "Scan deeper",
-          scanningDeeper: "Scanning deeper\u2026",
-          addedMore: (count) =>
-            `Added ${count} more item${count === 1 ? "" : "s"}.`,
-          noAdditional: "No additional nested items were found.",
-          recommendationTitle: "Recommended binding path",
-          recommendationFallback:
-            "Choose the fastest binding path for this environment and user preference.",
-          recommendationQuestion: "Best next question",
-          recommendationQuestionFallback:
-            "Can you paste one or more exact Notion links, or do you want me to open the local chooser?",
-          filters: "Filters",
-          filter_all: "All",
-          filter_pages: "Pages",
-          filter_data_sources: "Data sources",
-          filter_roots: "Root-like",
-          filter_unbound: "Hide bound",
-          suggestedRoots: "Suggested roots",
-          moreMatches: "More matches",
-          boundBadge: "Already bound",
-          rootsSelected: (count) =>
-            `${count} root${count === 1 ? "" : "s"} selected`,
-          untitled: "Untitled",
-          langEn: "EN",
-          langZhHans: "\u7B80\u4F53",
-          langZhHant: "\u7E41\u9AD4",
-          recommendationModes: {
-            wait_for_auth: "Finish auth first",
-            url: "Paste exact links",
-            local_browser: "Open local chooser",
-            manual_mcp: "Search in chat",
-          },
-        },
-        "zh-hans": {
-          navBrand: "Agent Labbook",
-          title: "\u9009\u62E9 Notion \u6839\u8282\u70B9",
-          subtitle:
-            "\u641C\u7D22\u3001\u5C55\u5F00\u5E76\u7ED1\u5B9A\u9879\u76EE\u771F\u6B63\u9700\u8981\u4F7F\u7528\u7684\u9875\u9762\u6216\u6570\u636E\u5E93\u3002\u4F60\u4E5F\u53EF\u4EE5\u76F4\u63A5\u7C98\u8D34\u4E00\u4E2A\u6216\u591A\u4E2A Notion \u94FE\u63A5\u3002",
-          searchPlaceholder:
-            "\u641C\u7D22\u53EF\u8BBF\u95EE\u7684\u9875\u9762\u6216\u6570\u636E\u5E93",
-          refresh: "\u5237\u65B0",
-          reloadBindings: "\u91CD\u65B0\u52A0\u8F7D\u7ED1\u5B9A",
-          selectTitle: "\u9009\u62E9\u9875\u9762\u548C\u6570\u636E\u5E93",
-          selectDesc:
-            "\u9009\u4E2D\u4E00\u4E2A\u6839\u8282\u70B9\u4F1A\u4EE5\u5B50\u6811\u8303\u56F4\u7ED1\u5B9A\u8BE5\u9875\u9762\u6216\u6570\u636E\u5E93\u3002\u5C55\u5F00\u884C\u53EF\u6309\u9700\u67E5\u770B\u5D4C\u5957\u5185\u5BB9\u3002",
-          available: "\u53EF\u9009\u5185\u5BB9",
-          selected: "\u5F85\u7ED1\u5B9A\u9009\u62E9",
-          bound: "\u5F53\u524D\u7ED1\u5B9A",
-          noResults:
-            "\u5F53\u524D\u641C\u7D22\u6CA1\u6709\u5339\u914D\u7ED3\u679C\u3002",
-          noSelection:
-            "\u8FD8\u6CA1\u6709\u9009\u62E9\u4EFB\u4F55\u5185\u5BB9\u3002",
-          noBindings:
-            "\u5F53\u524D\u8FD8\u6CA1\u6709\u4EFB\u4F55\u7ED1\u5B9A\u3002",
-          pastedUrls: "\u7C98\u8D34 Notion \u94FE\u63A5",
-          pastedUrlsHint:
-            "\u6BCF\u884C\u4E00\u4E2A\u9875\u9762\u6216\u6570\u636E\u5E93\u94FE\u63A5\u3002\u5B83\u4EEC\u4F1A\u76F4\u63A5\u4F5C\u4E3A\u7ED1\u5B9A\u6839\u8282\u70B9\u52A0\u5165\u3002",
-          bindSelected: "\u7ED1\u5B9A\u6240\u9009\u5185\u5BB9",
-          page: "\u9875\u9762",
-          data_source: "\u6570\u636E\u5E93",
-          expand: "\u5C55\u5F00",
-          collapse: "\u6536\u8D77",
-          selectionScope: "\u7ED1\u5B9A\u8303\u56F4",
-          resource: "resource",
-          subtree: "subtree",
-          loading: "\u52A0\u8F7D\u4E2D\u2026",
-          bindingSuccess: "\u7ED1\u5B9A\u5DF2\u4FDD\u5B58\u3002",
-          workspace: "\u5DE5\u4F5C\u533A",
-          chooser: "\u672C\u5730\u9009\u62E9\u5668",
-          catalogNotice:
-            "\u641C\u7D22\u4F1A\u5728\u5DF2\u5171\u4EAB\u7684\u5DE5\u4F5C\u533A\u4E2D\u67E5\u8BE2 Notion\u3002\u5982\u679C\u7F3A\u5C11\u67D0\u4E9B\u5185\u5BB9\uFF0C\u8BF7\u5148\u5728 Notion \u4E2D\u5C06\u5176\u5171\u4EAB\u7ED9\u96C6\u6210\uFF0C\u518D\u70B9\u51FB\u300C\u5237\u65B0\u300D\u3002",
-          partialChildren:
-            "\u5F53\u524D\u5148\u663E\u793A\u5FEB\u901F\u7ED3\u679C\uFF0C\u53EF\u80FD\u8FD8\u6709\u66F4\u6DF1\u5C42\u7684\u5D4C\u5957\u5185\u5BB9\u3002",
-          scanDeeper: "\u7EE7\u7EED\u6DF1\u5EA6\u626B\u63CF",
-          scanningDeeper: "\u6DF1\u5EA6\u626B\u63CF\u4E2D\u2026",
-          addedMore: (count) =>
-            `\u65B0\u589E ${count} \u4E2A\u7ED3\u679C\u3002`,
-          noAdditional:
-            "\u6CA1\u6709\u53D1\u73B0\u66F4\u591A\u5D4C\u5957\u5185\u5BB9\u3002",
-          recommendationTitle: "\u63A8\u8350\u7ED1\u5B9A\u8DEF\u5F84",
-          recommendationFallback:
-            "\u8BF7\u6839\u636E\u5F53\u524D\u73AF\u5883\u548C\u7528\u6237\u504F\u597D\u9009\u62E9\u6700\u5408\u9002\u7684\u7ED1\u5B9A\u65B9\u5F0F\u3002",
-          recommendationQuestion:
-            "\u5EFA\u8BAE\u4E0B\u4E00\u53E5\u5148\u95EE",
-          recommendationQuestionFallback:
-            "\u4F60\u80FD\u76F4\u63A5\u7C98\u8D34\u4E00\u4E2A\u6216\u591A\u4E2A Notion \u94FE\u63A5\u5417\uFF1F\u5982\u679C\u4E0D\u80FD\uFF0C\u6211\u53EF\u4EE5\u6253\u5F00\u672C\u5730\u9009\u62E9\u5668\u3002",
-          filters: "\u7B5B\u9009",
-          filter_all: "\u5168\u90E8",
-          filter_pages: "\u9875\u9762",
-          filter_data_sources: "\u6570\u636E\u5E93",
-          filter_roots: "\u66F4\u50CF\u6839\u8282\u70B9",
-          filter_unbound: "\u53EA\u770B\u672A\u7ED1\u5B9A",
-          suggestedRoots: "\u63A8\u8350\u6839\u8282\u70B9",
-          moreMatches: "\u66F4\u591A\u5339\u914D\u7ED3\u679C",
-          boundBadge: "\u5DF2\u7ED1\u5B9A",
-          rootsSelected: (count) =>
-            `\u5DF2\u9009\u62E9 ${count} \u4E2A\u6839\u8282\u70B9`,
-          untitled: "\u65E0\u6807\u9898",
-          langEn: "EN",
-          langZhHans: "\u7B80\u4F53",
-          langZhHant: "\u7E41\u9AD4",
-          recommendationModes: {
-            wait_for_auth: "\u5148\u5B8C\u6210\u8BA4\u8BC1",
-            url: "\u7C98\u8D34\u7CBE\u786E\u94FE\u63A5",
-            local_browser: "\u6253\u5F00\u672C\u5730\u9009\u62E9\u5668",
-            manual_mcp: "\u5728\u804A\u5929\u91CC\u641C\u7D22",
-          },
-        },
-        "zh-hant": {
-          navBrand: "Agent Labbook",
-          title: "\u9078\u64C7 Notion \u6839\u7BC0\u9EDE",
-          subtitle:
-            "\u641C\u5C0B\u3001\u5C55\u958B\u4E26\u7D81\u5B9A\u5C08\u6848\u771F\u6B63\u9700\u8981\u4F7F\u7528\u7684\u9801\u9762\u6216\u8CC7\u6599\u5EAB\u3002\u4F60\u4E5F\u53EF\u4EE5\u76F4\u63A5\u8CBC\u4E0A\u4E00\u500B\u6216\u591A\u500B Notion \u9023\u7D50\u3002",
-          searchPlaceholder:
-            "\u641C\u5C0B\u53EF\u5B58\u53D6\u7684\u9801\u9762\u6216\u8CC7\u6599\u5EAB",
-          refresh: "\u91CD\u65B0\u6574\u7406",
-          reloadBindings: "\u91CD\u65B0\u8F09\u5165\u7D81\u5B9A",
-          selectTitle: "\u9078\u64C7\u9801\u9762\u8207\u8CC7\u6599\u5EAB",
-          selectDesc:
-            "\u9078\u53D6\u4E00\u500B\u6839\u7BC0\u9EDE\u6703\u4EE5\u5B50\u6A39\u7BC4\u570D\u7D81\u5B9A\u8A72\u9801\u9762\u6216\u8CC7\u6599\u5EAB\u3002\u5C55\u958B\u5217\u53EF\u4F9D\u9700\u6C42\u67E5\u770B\u5DE2\u72C0\u5167\u5BB9\u3002",
-          available: "\u53EF\u9078\u5167\u5BB9",
-          selected: "\u5F85\u7D81\u5B9A\u9078\u64C7",
-          bound: "\u76EE\u524D\u7D81\u5B9A",
-          noResults:
-            "\u76EE\u524D\u641C\u5C0B\u6C92\u6709\u7B26\u5408\u7D50\u679C\u3002",
-          noSelection:
-            "\u5C1A\u672A\u9078\u64C7\u4EFB\u4F55\u5167\u5BB9\u3002",
-          noBindings:
-            "\u76EE\u524D\u5C1A\u672A\u7D81\u5B9A\u4EFB\u4F55\u8CC7\u6E90\u3002",
-          pastedUrls: "\u8CBC\u4E0A Notion \u9023\u7D50",
-          pastedUrlsHint:
-            "\u6BCF\u884C\u4E00\u500B\u9801\u9762\u6216\u8CC7\u6599\u5EAB\u9023\u7D50\u3002\u5B83\u5011\u6703\u76F4\u63A5\u4F5C\u70BA\u7D81\u5B9A\u6839\u7BC0\u9EDE\u52A0\u5165\u3002",
-          bindSelected: "\u7D81\u5B9A\u6240\u9078\u5167\u5BB9",
-          page: "\u9801\u9762",
-          data_source: "\u8CC7\u6599\u5EAB",
-          expand: "\u5C55\u958B",
-          collapse: "\u6536\u5408",
-          selectionScope: "\u7D81\u5B9A\u7BC4\u570D",
-          resource: "resource",
-          subtree: "subtree",
-          loading: "\u8F09\u5165\u4E2D\u2026",
-          bindingSuccess: "\u7D81\u5B9A\u5DF2\u5132\u5B58\u3002",
-          workspace: "\u5DE5\u4F5C\u5340",
-          chooser: "\u672C\u6A5F\u9078\u64C7\u5668",
-          catalogNotice:
-            "\u641C\u5C0B\u6703\u5728\u5DF2\u5206\u4EAB\u7684\u5DE5\u4F5C\u5340\u4E2D\u67E5\u8A62 Notion\u3002\u5982\u679C\u7F3A\u5C11\u67D0\u4E9B\u5167\u5BB9\uFF0C\u8ACB\u5148\u5728 Notion \u4E2D\u5C07\u5176\u5206\u4EAB\u7D66\u6574\u5408\uFF0C\u518D\u9EDE\u64CA\u300C\u91CD\u65B0\u6574\u7406\u300D\u3002",
-          partialChildren:
-            "\u76EE\u524D\u5148\u986F\u793A\u5FEB\u901F\u7D50\u679C\uFF0C\u53EF\u80FD\u9084\u6709\u66F4\u6DF1\u5C64\u7684\u5DE2\u72C0\u5167\u5BB9\u3002",
-          scanDeeper: "\u7E7C\u7E8C\u6DF1\u5EA6\u6383\u63CF",
-          scanningDeeper: "\u6DF1\u5EA6\u6383\u63CF\u4E2D\u2026",
-          addedMore: (count) =>
-            `\u65B0\u589E ${count} \u500B\u7D50\u679C\u3002`,
-          noAdditional:
-            "\u6C92\u6709\u627E\u5230\u66F4\u591A\u5DE2\u72C0\u5167\u5BB9\u3002",
-          recommendationTitle: "\u63A8\u85A6\u7D81\u5B9A\u8DEF\u5F91",
-          recommendationFallback:
-            "\u8ACB\u4F9D\u7167\u76EE\u524D\u74B0\u5883\u8207\u4F7F\u7528\u8005\u504F\u597D\u9078\u64C7\u6700\u5408\u9069\u7684\u7D81\u5B9A\u65B9\u5F0F\u3002",
-          recommendationQuestion:
-            "\u5EFA\u8B70\u4E0B\u4E00\u53E5\u5148\u554F",
-          recommendationQuestionFallback:
-            "\u4F60\u80FD\u76F4\u63A5\u8CBC\u4E0A\u4E00\u500B\u6216\u591A\u500B Notion \u9023\u7D50\u55CE\uFF1F\u5982\u679C\u4E0D\u80FD\uFF0C\u6211\u53EF\u4EE5\u958B\u555F\u672C\u6A5F\u9078\u64C7\u5668\u3002",
-          filters: "\u7BE9\u9078",
-          filter_all: "\u5168\u90E8",
-          filter_pages: "\u9801\u9762",
-          filter_data_sources: "\u8CC7\u6599\u5EAB",
-          filter_roots: "\u66F4\u50CF\u6839\u7BC0\u9EDE",
-          filter_unbound: "\u53EA\u770B\u672A\u7D81\u5B9A",
-          suggestedRoots: "\u63A8\u85A6\u6839\u7BC0\u9EDE",
-          moreMatches: "\u66F4\u591A\u7B26\u5408\u7D50\u679C",
-          boundBadge: "\u5DF2\u7D81\u5B9A",
-          rootsSelected: (count) =>
-            `\u5DF2\u9078\u64C7 ${count} \u500B\u6839\u7BC0\u9EDE`,
-          untitled: "\u7121\u6A19\u984C",
-          langEn: "EN",
-          langZhHans: "\u7B80\u4F53",
-          langZhHant: "\u7E41\u9AD4",
-          recommendationModes: {
-            wait_for_auth: "\u5148\u5B8C\u6210\u9A57\u8B49",
-            url: "\u8CBC\u4E0A\u7CBE\u78BA\u9023\u7D50",
-            local_browser: "\u958B\u555F\u672C\u6A5F\u9078\u64C7\u5668",
-            manual_mcp: "\u5728\u804A\u5929\u4E2D\u641C\u5C0B",
-          },
-        },
-      };
-
-      function detectLang() {
-        try {
-          const saved = localStorage.getItem("sp-lang");
-          if (saved && translations[saved]) return saved;
-        } catch {
-          /* localStorage may be unavailable */
-        }
-        const nav = navigator.language || "";
-        if (/^zh[-_](tw|hk|mo|hant)/i.test(nav) || nav === "zh-Hant")
-          return "zh-hant";
-        if (/^zh/i.test(nav)) return "zh-hans";
-        return "en";
-      }
-
-      let currentLang = detectLang();
-      let t = translations[currentLang];
-
-      function setLang(lang) {
-        currentLang = lang;
-        t = translations[lang];
-        try {
-          localStorage.setItem("sp-lang", lang);
-        } catch {}
-        shellRendered = false;
-        renderDynamic();
-      }
-
-      /* ----------------------------------------------------------------
-       * Reactive state
-       * -------------------------------------------------------------- */
-      const state = {
-        query: "",
-        catalog: [],
-        children: new Map(),
-        expanded: new Set(),
-        selected: new Map(),
-        bindings: [],
-        loading: false,
-        message: "",
-        messageClass: "",
-        searchTimer: null,
-        filter: "all",
-        hideBound: false,
-        childMeta: new Map(),
-        deepLoading: new Set(),
-      };
-
-      /* ----------------------------------------------------------------
-       * Helpers
-       * -------------------------------------------------------------- */
-      function $(id) {
-        return document.getElementById(id);
-      }
-
-      function api(path, options = {}) {
-        return fetch(path, {
-          headers: { "Content-Type": "application/json" },
-          ...options,
-        }).then(async (response) => {
-          const payload = await response
-            .json()
-            .catch(() => ({ error: "Invalid JSON response." }));
-          if (!response.ok)
-            throw new Error(payload.error || `HTTP ${response.status}`);
-          return payload;
-        });
-      }
-
-      function parsePastedUrls() {
-        const textarea = $("url-input");
-        if (!textarea) return [];
-        const scope = ($("url-scope") || {}).value || "subtree";
-        return textarea.value
-          .split(/\n+/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((url) => ({
-            key: `url:${url}`,
-            title: url,
-            resource_id_or_url: url,
-            resource_type: null,
-            selection_scope: scope,
-            isUrl: true,
-          }));
-      }
-
-      function describeParent(item) {
-        const parent = item.parent || null;
-        if (!parent || typeof parent !== "object") return "";
-        if (parent.type === "workspace") return "workspace";
-        if (parent.type === "page_id" && parent.page_id)
-          return `page \u00b7 ${parent.page_id}`;
-        if (parent.type === "data_source_id" && parent.data_source_id)
-          return `data source \u00b7 ${parent.data_source_id}`;
-        if (parent.type === "database_id" && parent.database_id)
-          return `database \u00b7 ${parent.database_id}`;
-        return parent.type || "";
-      }
-
-      function isRootLike(item) {
-        const parent = item.parent || null;
-        return !parent || parent.type === "workspace";
-      }
-
-      function isBound(item) {
-        return state.bindings.some(
-          (binding) => binding.resource_id === item.resource_id
-        );
-      }
-
-      function mergeByResourceId(existingItems, nextItems) {
-        const byId = new Map();
-        for (const item of existingItems || [])
-          byId.set(item.resource_id, item);
-        for (const item of nextItems || []) byId.set(item.resource_id, item);
-        return Array.from(byId.values());
-      }
-
-      function formatTypeLabel(type) {
-        if (type === "data_source") return t.data_source;
-        if (type === "page") return t.page;
-        return String(type || "resource").replace(/_/g, " ");
-      }
-
-      /* ----------------------------------------------------------------
-       * Selection
-       * -------------------------------------------------------------- */
-      function toggleSelection(item) {
-        const key = item.key || item.resource_id;
-        if (state.selected.has(key)) {
-          state.selected.delete(key);
-        } else {
-          state.selected.set(key, {
-            resource_id_or_url:
-              item.resource_url || item.resource_id_or_url || item.resource_id,
-            resource_type: item.resource_type || null,
-            title: item.title,
-            selection_scope: item.selection_scope || "subtree",
-            isUrl: Boolean(item.isUrl),
-          });
-        }
-        renderDynamic();
-      }
-
-      function updateSelectedScope(key, scope) {
-        const sel = state.selected.get(key);
-        if (!sel) return;
-        sel.selection_scope = scope;
-        renderDynamic();
-      }
-
-      /* ----------------------------------------------------------------
-       * Data loading
-       * -------------------------------------------------------------- */
-      function scheduleSearch() {
-        if (state.searchTimer) clearTimeout(state.searchTimer);
-        state.searchTimer = setTimeout(loadCatalog, 250);
-      }
-
-      async function loadBindings() {
-        const payload = await api("/api/bindings");
-        state.bindings = payload.resources || [];
-        renderDynamic();
-      }
-
-      async function loadCatalog() {
-        state.loading = true;
-        renderDynamic();
-        try {
-          const params = new URLSearchParams();
-          params.set("fetch_all", "true");
-          if (state.query.trim()) params.set("query", state.query.trim());
-          const payload = await api(`/api/search?${params.toString()}`);
-          state.catalog = payload.results || [];
-          state.message = "";
-          state.messageClass = "";
-        } catch (error) {
-          state.message = String(error.message || error);
-          state.messageClass = "error";
-        } finally {
-          state.loading = false;
-          renderDynamic();
-        }
-      }
-
-      async function toggleExpand(item) {
-        const key = item.resource_id;
-        if (state.expanded.has(key)) {
-          state.expanded.delete(key);
-          renderDynamic();
-          return;
-        }
-        if (!state.children.has(key)) {
-          state.loading = true;
-          renderDynamic();
-          try {
-            const params = new URLSearchParams();
-            params.set(
-              "resource_id_or_url",
-              item.resource_url || item.resource_id
-            );
-            params.set("resource_type", item.resource_type);
-            params.set("limit", "500");
-            params.set("mode", "shallow");
-            const payload = await api(`/api/children?${params.toString()}`);
-            state.children.set(key, payload.results || []);
-            state.childMeta.set(key, {
-              partial: Boolean(payload.partial),
-              mode: payload.mode || "shallow",
-            });
-          } catch (error) {
-            state.message = String(error.message || error);
-            state.messageClass = "error";
-          } finally {
-            state.loading = false;
-          }
-        }
-        state.expanded.add(key);
-        renderDynamic();
-      }
-
-      async function scanDeeper(item) {
-        const key = item.resource_id;
-        state.deepLoading.add(key);
-        renderDynamic();
-        try {
-          const params = new URLSearchParams();
-          params.set(
-            "resource_id_or_url",
-            item.resource_url || item.resource_id
-          );
-          params.set("resource_type", item.resource_type);
-          params.set("limit", "500");
-          params.set("mode", "deep");
-          const payload = await api(`/api/children?${params.toString()}`);
-          const previous = state.children.get(key) || [];
-          const merged = mergeByResourceId(previous, payload.results || []);
-          state.children.set(key, merged);
-          state.childMeta.set(key, {
-            partial: Boolean(payload.partial),
-            mode: payload.mode || "deep",
-            addedCount: Math.max(0, merged.length - previous.length),
-          });
-        } catch (error) {
-          state.message = String(error.message || error);
-          state.messageClass = "error";
-        } finally {
-          state.deepLoading.delete(key);
-          renderDynamic();
-        }
-      }
-
-      async function bindSelected() {
-        const resourceRefs = [
-          ...Array.from(state.selected.values()).map((item) => ({
-            resource_id_or_url: item.resource_id_or_url,
-            resource_type: item.resource_type,
-            title: item.isUrl ? undefined : item.title,
-            selection_scope: item.selection_scope,
-          })),
-          ...parsePastedUrls().map((item) => ({
-            resource_id_or_url: item.resource_id_or_url,
-            selection_scope: item.selection_scope,
-          })),
-        ];
-        if (!resourceRefs.length) {
-          state.message = t.noSelection;
-          state.messageClass = "error";
-          renderDynamic();
-          return;
-        }
-
-        state.loading = true;
-        renderDynamic();
-        try {
-          await api("/api/bind", {
-            method: "POST",
-            body: JSON.stringify({ resource_refs: resourceRefs }),
-          });
-          state.message = t.bindingSuccess;
-          state.messageClass = "ok";
-          state.selected.clear();
-          const urlInput = $("url-input");
-          if (urlInput) urlInput.value = "";
-          await loadBindings();
-        } catch (error) {
-          state.message = String(error.message || error);
-          state.messageClass = "error";
-        } finally {
-          state.loading = false;
-          renderDynamic();
-        }
-      }
-
-      /* ----------------------------------------------------------------
-       * DOM builders — tree rows in the new card-based style
-       * -------------------------------------------------------------- */
-      function renderResourceIcon(item) {
-        const span = document.createElement("span");
-        span.className = "tree-icon";
-        if (item.icon_emoji) {
-          span.textContent = item.icon_emoji;
-        } else {
-          span.appendChild(
-            icon(item.resource_type === "data_source" ? "database" : "fileText")
-          );
-        }
-        return span;
-      }
-
-      function renderNode(item, depth = 0) {
-        const key = item.resource_id;
-        const children = state.children.get(key) || [];
-        const selected = state.selected.get(key);
-        const isExpanded = state.expanded.has(key);
-        const wrapper = document.createElement("div");
-
-        /* --- Row --- */
-        const row = document.createElement("div");
-        row.className = "tree-row";
-        row.setAttribute("data-resource-id", key);
-        if (selected) row.classList.add("selected-explicit");
-        row.style.paddingLeft = `${8 + depth * 20}px`;
-
-        /* Toggle button */
-        const toggleBtn = document.createElement("button");
-        toggleBtn.type = "button";
-        toggleBtn.className = "tree-toggle";
-        toggleBtn.appendChild(icon(isExpanded ? "chevronDown" : "chevronRight"));
-        toggleBtn.setAttribute(
-          "aria-label",
-          `${isExpanded ? t.collapse : t.expand} ${item.title || key}`
-        );
-        toggleBtn.addEventListener("click", () => toggleExpand(item));
-        row.appendChild(toggleBtn);
-
-        /* Checkbox */
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.className = "tree-checkbox";
-        checkbox.checked = Boolean(selected);
-        checkbox.setAttribute(
-          "aria-label",
-          `Select ${item.title || item.resource_id}`
-        );
-        checkbox.addEventListener("change", () => toggleSelection(item));
-        row.appendChild(checkbox);
-
-        /* Icon */
-        row.appendChild(renderResourceIcon(item));
-
-        /* Content */
-        const content = document.createElement("div");
-        content.className = "tree-content";
-
-        const titleEl = document.createElement("span");
-        titleEl.className = "tree-title";
-        titleEl.textContent = item.title || t.untitled;
-        content.appendChild(titleEl);
-
-        /* Type badge */
-        const typeBadge = document.createElement("span");
-        typeBadge.className = "badge badge-outline";
-        typeBadge.textContent = formatTypeLabel(item.resource_type);
-        content.appendChild(typeBadge);
-
-        /* Selected badge */
-        if (selected) {
-          const selBadge = document.createElement("span");
-          selBadge.className = "badge badge-accent";
-          selBadge.textContent = t.selected || "Selected";
-          content.appendChild(selBadge);
-        }
-
-        /* Bound badge */
-        if (isBound(item)) {
-          const boundBadge = document.createElement("span");
-          boundBadge.className = "badge badge-outline";
-          boundBadge.textContent = t.boundBadge;
-          content.appendChild(boundBadge);
-        }
-
-        /* Root-like badge */
-        if (isRootLike(item)) {
-          const rootBadge = document.createElement("span");
-          rootBadge.className = "badge badge-outline";
-          rootBadge.textContent = t.filter_roots;
-          content.appendChild(rootBadge);
-        }
-
-        row.appendChild(content);
-
-        /* Scope select */
-        const scope = document.createElement("select");
-        scope.setAttribute(
-          "aria-label",
-          `${t.selectionScope} for ${item.title || item.resource_id}`
-        );
-        for (const [val, label] of [
-          ["resource", t.resource],
-          ["subtree", t.subtree],
-        ]) {
-          const opt = document.createElement("option");
-          opt.value = val;
-          opt.textContent = label;
-          scope.appendChild(opt);
-        }
-        scope.value = selected?.selection_scope || "subtree";
-        scope.addEventListener("change", (event) => {
-          if (!selected) toggleSelection(item);
-          updateSelectedScope(key, event.target.value);
-        });
-        row.appendChild(scope);
-
-        /* Loader */
-        if (state.loading && !state.children.has(key) && state.expanded.has(key)) {
-          const loader = document.createElement("div");
-          loader.className = "tree-loader";
-          row.appendChild(loader);
-        }
-
-        wrapper.appendChild(row);
-
-        /* --- Children --- */
-        if (isExpanded) {
-          const childContainer = document.createElement("div");
-          childContainer.className = "tree-children";
-          childContainer.setAttribute("role", "group");
-          const childMeta = state.childMeta.get(key) || {
-            partial: false,
-            mode: "shallow",
-          };
-          if (!children.length) {
-            const empty = document.createElement("div");
-            empty.className = "tree-hint";
-            empty.textContent = t.noResults;
-            childContainer.appendChild(empty);
-          } else {
-            for (const child of children) {
-              childContainer.appendChild(renderNode(child, depth + 1));
-            }
-          }
-          /* Partial / scan deeper */
-          if (childMeta.partial && childMeta.mode !== "deep") {
-            const hintRow = document.createElement("div");
-            hintRow.className = "tree-hint";
-            const hintText = document.createTextNode(t.partialChildren + " ");
-            hintRow.appendChild(hintText);
-            const deeperBtn = document.createElement("button");
-            deeperBtn.className = "btn btn-secondary btn-sm";
-            deeperBtn.textContent = state.deepLoading.has(key)
-              ? t.scanningDeeper
-              : t.scanDeeper;
-            deeperBtn.disabled = state.deepLoading.has(key);
-            deeperBtn.addEventListener("click", () => scanDeeper(item));
-            hintRow.appendChild(deeperBtn);
-            childContainer.appendChild(hintRow);
-          } else if (childMeta.mode === "deep") {
-            const hintRow = document.createElement("div");
-            hintRow.className = "tree-hint";
-            hintRow.textContent = childMeta.addedCount
-              ? t.addedMore(childMeta.addedCount)
-              : t.noAdditional;
-            childContainer.appendChild(hintRow);
-          }
-          wrapper.appendChild(childContainer);
-        }
-
-        return wrapper;
-      }
-
-      /* ----------------------------------------------------------------
-       * Rendering: static shell + dynamic regions
-       * -------------------------------------------------------------- */
-      let shellRendered = false;
-
-      function renderLangSwitcher() {
-        const container = $("lang-switcher");
-        if (!container) return;
-        container.innerHTML = "";
-        for (const [lang, label] of [
-          ["en", t.langEn],
-          ["zh-hans", t.langZhHans],
-          ["zh-hant", t.langZhHant],
-        ]) {
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className =
-            "lang-btn" + (lang === currentLang ? " active" : "");
-          btn.textContent = label;
-          btn.addEventListener("click", () => setLang(lang));
-          container.appendChild(btn);
-        }
-      }
-
-      function renderShell() {
-        if (shellRendered) return;
-        shellRendered = true;
-
-        const app = $("app");
-        app.innerHTML = "";
-        renderLangSwitcher();
-
-        /* ── Page header ─────────────────────────────── */
-        const header = document.createElement("div");
-        header.style.marginBottom = "8px";
-
-        const titleRow = document.createElement("div");
-        titleRow.style.display = "flex";
-        titleRow.style.alignItems = "flex-start";
-        titleRow.style.justifyContent = "space-between";
-        titleRow.style.gap = "12px";
-        titleRow.style.flexWrap = "wrap";
-
-        const titleBlock = document.createElement("div");
-        const h1 = document.createElement("h1");
-        h1.className = "page-title";
-        h1.textContent = t.title;
-        titleBlock.appendChild(h1);
-        const subtitle = document.createElement("p");
-        subtitle.className = "page-subtitle";
-        subtitle.textContent = t.subtitle;
-        titleBlock.appendChild(subtitle);
-        titleRow.appendChild(titleBlock);
-
-        const workspaceBadge = document.createElement("span");
-        workspaceBadge.className = "badge badge-workspace";
-        workspaceBadge.textContent = `${t.workspace}: ${config.workspace_name || config.project_root}`;
-        titleRow.appendChild(workspaceBadge);
-        header.appendChild(titleRow);
-        app.appendChild(header);
-
-        /* Stack for all cards */
-        const stack = document.createElement("div");
-        stack.className = "stack";
-        stack.id = "card-stack";
-
-        /* ── Recommendation card ─────────────────────── */
-        const bindingRecommendation = config.binding_recommendation || null;
-        const bindingOptions = Array.isArray(config.binding_options)
-          ? config.binding_options
-          : [];
-
-        const recCard = document.createElement("div");
-        recCard.className = "card recommendation-card";
-        const recBody = document.createElement("div");
-        recBody.style.padding = "20px";
-
-        const recTitle = document.createElement("div");
-        recTitle.style.fontWeight = "600";
-        recTitle.style.fontSize = "0.875rem";
-        recTitle.style.marginBottom = "8px";
-        recTitle.textContent = t.recommendationTitle;
-        recBody.appendChild(recTitle);
-
-        const recReason = document.createElement("p");
-        recReason.className = "card-desc";
-        recReason.textContent =
-          bindingRecommendation?.reason || t.recommendationFallback;
-        recBody.appendChild(recReason);
-
-        const recQuestion = document.createElement("div");
-        recQuestion.className = "rec-question";
-        const recQuestionLabel = document.createElement("strong");
-        recQuestionLabel.textContent = t.recommendationQuestion + ": ";
-        recQuestion.appendChild(recQuestionLabel);
-        recQuestion.appendChild(
-          document.createTextNode(
-            config.binding_question || t.recommendationQuestionFallback
-          )
-        );
-        recBody.appendChild(recQuestion);
-
-        if (bindingOptions.length) {
-          const optionsWrap = document.createElement("div");
-          optionsWrap.className = "rec-options";
-          for (const option of bindingOptions) {
-            const node = document.createElement("div");
-            node.className = "rec-option";
-            const modeLabel =
-              t.recommendationModes?.[option.mode] ||
-              option.label ||
-              option.mode;
-            const optTitle = document.createElement("div");
-            optTitle.className = "rec-option-title";
-            optTitle.textContent = modeLabel;
-            if (option.recommended) {
-              const recBadge = document.createElement("span");
-              recBadge.className = "rec-option-recommended";
-              recBadge.textContent = "Recommended";
-              optTitle.appendChild(document.createTextNode(" "));
-              optTitle.appendChild(recBadge);
-            }
-            node.appendChild(optTitle);
-            const optMeta = document.createElement("div");
-            optMeta.className = "rec-option-reason";
-            optMeta.textContent = option.reason;
-            node.appendChild(optMeta);
-            optionsWrap.appendChild(node);
-          }
-          recBody.appendChild(optionsWrap);
-        }
-        recCard.appendChild(recBody);
-        stack.appendChild(recCard);
-
-        /* ── Main content card ───────────────────────── */
-        const mainCard = document.createElement("div");
-        mainCard.className = "card";
-
-        /* Card header */
-        const cardHeader = document.createElement("div");
-        cardHeader.className = "card-header";
-
-        const headerRow = document.createElement("div");
-        headerRow.className = "card-header-row";
-        const headerText = document.createElement("div");
-        const cardTitle = document.createElement("h2");
-        cardTitle.className = "card-title";
-        cardTitle.textContent = t.selectTitle;
-        headerText.appendChild(cardTitle);
-        const cardDesc = document.createElement("p");
-        cardDesc.className = "card-desc";
-        cardDesc.textContent = t.selectDesc;
-        headerText.appendChild(cardDesc);
-        headerRow.appendChild(headerText);
-
-        const refreshBtn = document.createElement("button");
-        refreshBtn.className = "btn btn-secondary btn-sm";
-        refreshBtn.appendChild(icon("refresh"));
-        refreshBtn.appendChild(document.createTextNode(" " + t.refresh));
-        refreshBtn.addEventListener("click", () => loadCatalog());
-        headerRow.appendChild(refreshBtn);
-        cardHeader.appendChild(headerRow);
-
-        /* Search row */
-        const searchRow = document.createElement("div");
-        searchRow.style.display = "flex";
-        searchRow.style.gap = "8px";
-        searchRow.style.alignItems = "center";
-        searchRow.style.flexWrap = "wrap";
-
-        const inputWrap = document.createElement("div");
-        inputWrap.className = "input-wrap";
-        inputWrap.appendChild(icon("search"));
-        const searchInput = document.createElement("input");
-        searchInput.id = "search";
-        searchInput.type = "search";
-        searchInput.placeholder = t.searchPlaceholder;
-        searchInput.value = state.query;
-        searchInput.setAttribute("aria-label", t.searchPlaceholder);
-        searchInput.addEventListener("input", (event) => {
-          state.query = event.target.value;
-          scheduleSearch();
-        });
-        searchInput.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            loadCatalog();
-          }
-        });
-        inputWrap.appendChild(searchInput);
-        searchRow.appendChild(inputWrap);
-
-        const filterSelect = document.createElement("select");
-        filterSelect.id = "filter";
-        filterSelect.setAttribute("aria-label", t.filters);
-        for (const [val, label] of [
-          ["all", t.filter_all],
-          ["pages", t.filter_pages],
-          ["data_sources", t.filter_data_sources],
-          ["roots", t.filter_roots],
-        ]) {
-          const opt = document.createElement("option");
-          opt.value = val;
-          opt.textContent = label;
-          filterSelect.appendChild(opt);
-        }
-        filterSelect.value = state.filter;
-        filterSelect.addEventListener("change", (event) => {
-          state.filter = event.target.value;
-          renderDynamic();
-        });
-        searchRow.appendChild(filterSelect);
-        cardHeader.appendChild(searchRow);
-
-        /* Toolbar: count pill + hide bound */
-        const toolbar = document.createElement("div");
-        toolbar.className = "toolbar";
-
-        const countPill = document.createElement("span");
-        countPill.className = "badge badge-outline";
-        countPill.id = "count-pill";
-        countPill.textContent = "0 results";
-        toolbar.appendChild(countPill);
-
-        const spacer = document.createElement("div");
-        spacer.className = "toolbar-spacer";
-        toolbar.appendChild(spacer);
-
-        const hideBoundLabel = document.createElement("label");
-        const hideBoundCheckbox = document.createElement("input");
-        hideBoundCheckbox.id = "hide-bound";
-        hideBoundCheckbox.type = "checkbox";
-        hideBoundCheckbox.checked = state.hideBound;
-        hideBoundCheckbox.addEventListener("change", (event) => {
-          state.hideBound = Boolean(event.target.checked);
-          renderDynamic();
-        });
-        hideBoundLabel.appendChild(hideBoundCheckbox);
-        hideBoundLabel.appendChild(
-          document.createTextNode(" " + t.filter_unbound)
-        );
-        toolbar.appendChild(hideBoundLabel);
-        cardHeader.appendChild(toolbar);
-
-        /* Catalog notice */
-        const notice = document.createElement("div");
-        notice.className = "notice notice-amber";
-        notice.textContent = t.catalogNotice;
-        cardHeader.appendChild(notice);
-
-        mainCard.appendChild(cardHeader);
-
-        /* Card body — results */
-        const cardBody = document.createElement("div");
-        cardBody.className = "card-body";
-        const results = document.createElement("div");
-        results.id = "results";
-        results.className = "tree-list";
-        results.setAttribute("role", "tree");
-        results.setAttribute("aria-label", t.available);
-        cardBody.appendChild(results);
-        mainCard.appendChild(cardBody);
-        stack.appendChild(mainCard);
-
-        /* ── Selection & URL paste card ───────────────── */
-        const selCard = document.createElement("div");
-        selCard.className = "card";
-
-        const selHeader = document.createElement("div");
-        selHeader.className = "card-header";
-        const selTitle = document.createElement("h2");
-        selTitle.className = "card-title";
-        selTitle.textContent = t.selected;
-        selHeader.appendChild(selTitle);
-        selCard.appendChild(selHeader);
-
-        const selBody = document.createElement("div");
-        selBody.className = "card-body";
-
-        const selectedDiv = document.createElement("div");
-        selectedDiv.id = "selected";
-        selectedDiv.style.display = "flex";
-        selectedDiv.style.flexDirection = "column";
-        selectedDiv.style.gap = "8px";
-        selectedDiv.style.marginBottom = "16px";
-        selBody.appendChild(selectedDiv);
-
-        /* URL paste section */
-        const urlLabel = document.createElement("div");
-        urlLabel.className = "section-label";
-        urlLabel.textContent = t.pastedUrls;
-        selBody.appendChild(urlLabel);
-
-        const urlHint = document.createElement("p");
-        urlHint.className = "card-desc";
-        urlHint.style.marginBottom = "8px";
-        urlHint.textContent = t.pastedUrlsHint;
-        selBody.appendChild(urlHint);
-
-        const urlTextarea = document.createElement("textarea");
-        urlTextarea.id = "url-input";
-        urlTextarea.spellcheck = false;
-        urlTextarea.setAttribute("aria-label", t.pastedUrls);
-        selBody.appendChild(urlTextarea);
-
-        const urlToolbar = document.createElement("div");
-        urlToolbar.className = "toolbar";
-        urlToolbar.style.marginTop = "8px";
-        const urlScopeLabel = document.createElement("label");
-        urlScopeLabel.style.gap = "6px";
-        urlScopeLabel.textContent = t.selectionScope + " ";
-        const urlScopeSelect = document.createElement("select");
-        urlScopeSelect.id = "url-scope";
-        for (const [val, label] of [
-          ["subtree", t.subtree],
-          ["resource", t.resource],
-        ]) {
-          const opt = document.createElement("option");
-          opt.value = val;
-          opt.textContent = label;
-          urlScopeSelect.appendChild(opt);
-        }
-        urlScopeLabel.appendChild(urlScopeSelect);
-        urlToolbar.appendChild(urlScopeLabel);
-
-        const spacer2 = document.createElement("div");
-        spacer2.className = "toolbar-spacer";
-        urlToolbar.appendChild(spacer2);
-
-        const reloadBtn = document.createElement("button");
-        reloadBtn.className = "btn btn-secondary btn-sm";
-        reloadBtn.textContent = t.reloadBindings;
-        reloadBtn.addEventListener("click", () => loadBindings());
-        urlToolbar.appendChild(reloadBtn);
-        selBody.appendChild(urlToolbar);
-
-        /* Status */
-        const statusDiv = document.createElement("div");
-        statusDiv.id = "status";
-        statusDiv.className = "status-msg";
-        selBody.appendChild(statusDiv);
-
-        selCard.appendChild(selBody);
-
-        /* Divider + Bindings section */
-        const divider = document.createElement("hr");
-        divider.className = "divider";
-        selCard.appendChild(divider);
-
-        const bindHeader = document.createElement("div");
-        bindHeader.className = "card-header";
-        const bindTitle = document.createElement("h2");
-        bindTitle.className = "card-title";
-        bindTitle.textContent = t.bound;
-        bindHeader.appendChild(bindTitle);
-        selCard.appendChild(bindHeader);
-
-        const bindBody = document.createElement("div");
-        bindBody.className = "card-body";
-        const bindingsDiv = document.createElement("div");
-        bindingsDiv.id = "bindings";
-        bindingsDiv.style.display = "flex";
-        bindingsDiv.style.flexDirection = "column";
-        bindingsDiv.style.gap = "8px";
-        bindBody.appendChild(bindingsDiv);
-        selCard.appendChild(bindBody);
-
-        stack.appendChild(selCard);
-        app.appendChild(stack);
-
-        /* ── Sticky action bar ───────────────────────── */
-        const actionBar = document.createElement("div");
-        actionBar.className = "action-bar";
-        actionBar.id = "action-bar";
-        const actionCard = document.createElement("div");
-        actionCard.className = "card";
-        const actionInner = document.createElement("div");
-        actionInner.className = "action-bar-inner";
-
-        const actionText = document.createElement("div");
-        actionText.id = "action-text";
-        actionText.className = "action-bar-text";
-        actionInner.appendChild(actionText);
-
-        const bindButton = document.createElement("button");
-        bindButton.id = "bind-button";
-        bindButton.className = "btn btn-primary";
-        bindButton.textContent = t.bindSelected;
-        bindButton.addEventListener("click", () => bindSelected());
-        actionInner.appendChild(bindButton);
-
-        actionCard.appendChild(actionInner);
-        actionBar.appendChild(actionCard);
-        app.appendChild(actionBar);
-      }
-
-      /* ----------------------------------------------------------------
-       * renderDynamic — update only the mutable regions
-       * -------------------------------------------------------------- */
-      function renderDynamic() {
-        renderShell();
-
-        /* Count pill */
-        const countPill = $("count-pill");
-        if (countPill) {
-          const count = state.catalog.length;
-          countPill.textContent = `${count} result${count === 1 ? "" : "s"}`;
-        }
-
-        /* Status */
-        const statusDiv = $("status");
-        if (statusDiv) {
-          statusDiv.className = `status-msg ${state.messageClass}`;
-          statusDiv.textContent = state.loading ? t.loading : state.message;
-        }
-
-        /* Action bar text */
-        const actionText = $("action-text");
-        if (actionText) {
-          const selectedCount =
-            state.selected.size + parsePastedUrls().length;
-          if (state.loading) {
-            actionText.textContent = t.loading;
-          } else {
-            actionText.textContent = t.rootsSelected(selectedCount);
-          }
-        }
-
-        /* Results */
-        const results = $("results");
-        if (results) {
-          results.innerHTML = "";
-          let visibleCatalog = state.catalog;
-          if (state.hideBound) {
-            visibleCatalog = visibleCatalog.filter((item) => !isBound(item));
-          }
-          if (state.filter === "pages") {
-            visibleCatalog = visibleCatalog.filter(
-              (item) => item.resource_type === "page"
-            );
-          } else if (state.filter === "data_sources") {
-            visibleCatalog = visibleCatalog.filter(
-              (item) => item.resource_type === "data_source"
-            );
-          } else if (state.filter === "roots") {
-            visibleCatalog = visibleCatalog.filter((item) =>
-              isRootLike(item)
-            );
-          }
-          if (!visibleCatalog.length) {
-            const empty = document.createElement("div");
-            empty.className = "empty";
-            empty.textContent = state.loading ? t.loading : t.noResults;
-            results.appendChild(empty);
-          } else {
-            const suggestedRoots = visibleCatalog.filter((item) =>
-              isRootLike(item)
-            );
-            const remainingMatches = visibleCatalog.filter(
-              (item) => !isRootLike(item)
-            );
-
-            if (suggestedRoots.length) {
-              const sectionLabel = document.createElement("div");
-              sectionLabel.className = "section-label";
-              sectionLabel.style.paddingLeft = "8px";
-              sectionLabel.textContent = `${t.suggestedRoots} \u00b7 ${suggestedRoots.length}`;
-              results.appendChild(sectionLabel);
-              for (const item of suggestedRoots) {
-                results.appendChild(renderNode(item));
-              }
-            }
-
-            if (remainingMatches.length) {
-              const grouped = new Map();
-              for (const item of remainingMatches) {
-                const key = item.resource_type || "other";
-                if (!grouped.has(key)) grouped.set(key, []);
-                grouped.get(key).push(item);
-              }
-              for (const [type, items] of grouped.entries()) {
-                const sectionLabel = document.createElement("div");
-                sectionLabel.className = "section-label";
-                sectionLabel.style.paddingLeft = "8px";
-                sectionLabel.style.marginTop = "12px";
-                sectionLabel.textContent = `${t.moreMatches} \u00b7 ${formatTypeLabel(type)} \u00b7 ${items.length}`;
-                results.appendChild(sectionLabel);
-                for (const item of items) {
-                  results.appendChild(renderNode(item));
-                }
-              }
-            }
-          }
-        }
-
-        /* Selected items */
-        const selectedDiv = $("selected");
-        if (selectedDiv) {
-          selectedDiv.innerHTML = "";
-          if (!state.selected.size) {
-            const empty = document.createElement("div");
-            empty.className = "empty";
-            empty.textContent = t.noSelection;
-            selectedDiv.appendChild(empty);
-          } else {
-            for (const [key, item] of state.selected.entries()) {
-              const node = document.createElement("div");
-              node.className = "selected-item";
-
-              const body = document.createElement("div");
-              body.className = "selected-item-body";
-              const titleEl = document.createElement("div");
-              titleEl.className = "selected-item-title";
-              titleEl.textContent = item.title || item.resource_id_or_url;
-              body.appendChild(titleEl);
-              const metaEl = document.createElement("div");
-              metaEl.className = "selected-item-meta";
-              metaEl.textContent = formatTypeLabel(
-                item.resource_type || "url"
-              );
-              body.appendChild(metaEl);
-              node.appendChild(body);
-
-              const scope = document.createElement("select");
-              scope.setAttribute(
-                "aria-label",
-                `${t.selectionScope} for ${item.title || key}`
-              );
-              for (const [val, label] of [
-                ["resource", t.resource],
-                ["subtree", t.subtree],
-              ]) {
-                const opt = document.createElement("option");
-                opt.value = val;
-                opt.textContent = label;
-                scope.appendChild(opt);
-              }
-              scope.value = item.selection_scope;
-              scope.addEventListener("change", (event) =>
-                updateSelectedScope(key, event.target.value)
-              );
-              node.appendChild(scope);
-              selectedDiv.appendChild(node);
-            }
-          }
-        }
-
-        /* Bindings list */
-        const bindingsDiv = $("bindings");
-        if (bindingsDiv) {
-          bindingsDiv.innerHTML = "";
-          if (!state.bindings.length) {
-            const empty = document.createElement("div");
-            empty.className = "empty";
-            empty.textContent = t.noBindings;
-            bindingsDiv.appendChild(empty);
-          } else {
-            for (const item of state.bindings) {
-              const node = document.createElement("div");
-              node.className = "selected-item";
-              const body = document.createElement("div");
-              body.className = "selected-item-body";
-              const titleEl = document.createElement("div");
-              titleEl.className = "selected-item-title";
-              titleEl.textContent = item.title;
-              body.appendChild(titleEl);
-              const metaEl = document.createElement("div");
-              metaEl.className = "selected-item-meta";
-              metaEl.textContent = `${formatTypeLabel(item.resource_type)} \u00b7 ${item.selection_scope} \u00b7 ${item.alias}`;
-              body.appendChild(metaEl);
-              node.appendChild(body);
-              bindingsDiv.appendChild(node);
-            }
-          }
-        }
-      }
-
-      /* ----------------------------------------------------------------
-       * Bootstrap
-       * -------------------------------------------------------------- */
-      renderShell();
-      loadCatalog();
-      loadBindings();
+    }, 250);
+    return () => { cancelled = true; clearTimeout(tid); };
+  }, [catalogLoaded, deferredQuery]);
+
+  /* -- Children discovery ------------------------------------------ */
+
+  async function ensureChildren(rootId, resourceType) {
+    const nid = normalizeNotionIdLike(rootId);
+    const ntype = normalizeResourceType(resourceType);
+    if (!nid || (ntype !== "page" && ntype !== "data_source")) return;
+    if (discoveredByRoot.has(nid) || loadingRootIds.has(nid)) return;
+
+    setLoadingRootIds((s) => { const n = new Set(s); n.add(nid); return n; });
+    try {
+      const params = new URLSearchParams();
+      params.set("resource_id_or_url", nid);
+      params.set("resource_type", ntype);
+      params.set("limit", "500");
+      params.set("mode", "shallow");
+      const payload = await api("/api/children?" + params.toString());
+      const descendants = dedupSort(payload.results || []);
+      setCatalog((prev) => dedupSort([...prev, ...descendants]));
+      setDiscoveredByRoot((m) => { const n = new Map(m); n.set(nid, descendants); return n; });
+    } catch {
+      setDiscoveredByRoot((m) => { const n = new Map(m); n.set(nid, []); return n; });
+    } finally {
+      setLoadingRootIds((s) => { const n = new Set(s); n.delete(nid); return n; });
+    }
+  }
+
+  /* -- Selection --------------------------------------------------- */
+
+  function toggleSelection(resource, nextChecked) {
+    const rid = normalizeNotionIdLike(resource.resource_id);
+    if (!rid) return;
+    setSelectedRootIds((s) => {
+      const n = new Set(s);
+      nextChecked ? n.add(rid) : n.delete(rid);
+      return n;
+    });
+  }
+
+  /* -- Tree logic -------------------------------------------------- */
+
+  const childIndex = buildChildIndex(catalog);
+  const parentIndex = new Map(catalog.map((r) => [r.resource_id, resolvedParentId(r)]));
+
+  function collectDescendants(rootId) {
+    const result = [];
+    const children = childIndex.get(rootId) || [];
+    for (const ch of children) { result.push(ch); result.push(...collectDescendants(ch.resource_id)); }
+    return result;
+  }
+
+  const autoIncludedIds = new Set();
+  for (const rootId of selectedRootIds) {
+    for (const ch of collectDescendants(rootId)) {
+      if (!selectedRootIds.has(ch.resource_id)) autoIncludedIds.add(ch.resource_id);
+    }
+  }
+
+  const searchActive = Boolean(deferredQuery);
+  const visibleIds = new Set(searchActive ? [] : catalog.map((r) => r.resource_id));
+  for (const r of catalog) {
+    if (selectedRootIds.has(r.resource_id) || autoIncludedIds.has(r.resource_id) ||
+        (searchActive ? (remoteSearchIds.has(r.resource_id) || matchesQuery(r, deferredQuery)) : matchesQuery(r, deferredQuery))) {
+      visibleIds.add(r.resource_id);
+    }
+  }
+  for (const rid of Array.from(visibleIds)) {
+    let pid = parentIndex.get(rid);
+    while (pid && rootIndex.has(pid)) {
+      if (visibleIds.has(pid)) { pid = parentIndex.get(pid); continue; }
+      visibleIds.add(pid);
+      pid = parentIndex.get(pid);
+    }
+  }
+
+  function isExpanded(rid) {
+    const hasKnown = Boolean((childIndex.get(rid) || []).length);
+    if (!hasKnown && !discoveredByRoot.has(rid)) return false;
+    if (searchActive) return true;
+    return !collapsedIds.has(rid);
+  }
+
+  async function toggleCollapsed(resource) {
+    const rid = normalizeNotionIdLike(resource.resource_id);
+    if (!rid) return;
+    if (isExpanded(rid)) {
+      setCollapsedIds((s) => { const n = new Set(s); n.add(rid); return n; });
+      return;
+    }
+    setCollapsedIds((s) => { const n = new Set(s); n.delete(rid); return n; });
+    if (canHaveChildren(resource.resource_type) && !discoveredByRoot.has(rid)) {
+      await ensureChildren(rid, resource.resource_type);
+    }
+  }
+
+  const rootResources = catalog
+    .filter((r) => {
+      if (!visibleIds.has(r.resource_id)) return false;
+      const pid = parentIndex.get(r.resource_id);
+      return !pid || !rootIndex.has(pid) || !visibleIds.has(pid);
+    })
+    .sort((a, b) => {
+      const as = selectedRootIds.has(a.resource_id) ? 2 : autoIncludedIds.has(a.resource_id) ? 1 : 0;
+      const bs = selectedRootIds.has(b.resource_id) ? 2 : autoIncludedIds.has(b.resource_id) ? 1 : 0;
+      if (as !== bs) return bs - as;
+      return compareResources(a, b);
+    });
+
+  const visibleRows = [];
+  function appendRows(resource, depth) {
+    if (!visibleIds.has(resource.resource_id)) return;
+    visibleRows.push({ resource, depth });
+    if (isExpanded(resource.resource_id)) {
+      for (const ch of childIndex.get(resource.resource_id) || []) appendRows(ch, depth + 1);
+    }
+  }
+  for (const r of rootResources) appendRows(r, 0);
+
+  /* -- Bind -------------------------------------------------------- */
+
+  const finalBundle = Array.from(selectedRootIds)
+    .map((id) => rootIndex.get(id))
+    .filter(Boolean)
+    .map((r) => ({
+      resource_id_or_url: r.resource_url || r.resource_id,
+      resource_type: r.resource_type || null,
+      title: r.title,
+      selection_scope: "subtree",
+    }));
+
+  async function finishBinding() {
+    if (!finalBundle.length) return;
+    setBindStatus("binding");
+    try {
+      await apiPost("/api/bind", { resource_refs: finalBundle });
+      setBindStatus("success");
+      setSelectedRootIds(new Set());
+    } catch (err) {
+      setBindStatus("error: " + err.message);
+    }
+  }
+
+  /* -- Render ------------------------------------------------------ */
+
+  const workspaceLabel = config.workspace_name || config.project_root || "workspace";
+  const catalogNotice = "Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click Refresh.";
+
+  return h("div", { className: "mx-auto min-h-screen w-full max-w-3xl px-3 py-6 sm:px-5 sm:py-8" },
+    h("div", { className: "space-y-4 pb-28" },
+
+      /* Title section */
+      h("div", { className: "space-y-1" },
+        h("h1", { className: "max-w-2xl text-xl font-semibold tracking-tight text-stone-950 sm:text-2xl" },
+          "Choose Notion Content"),
+        h("p", { className: "text-sm text-stone-500" },
+          "Pick the pages and data sources from ", workspaceLabel,
+          " that this project should be allowed to use."),
+      ),
+
+      /* Main card */
+      h(Card, { className: "border-stone-200 shadow-sm" },
+        h(CardHeader, { className: "gap-3" },
+          h("div", { className: "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" },
+            h("div", { className: "space-y-1" },
+              h(CardTitle, { className: "text-base" }, "Select Pages and Data Sources"),
+              h(CardDescription, null,
+                "Selecting a root binds that page or data source with subtree scope. Expand rows to inspect nested content on demand."),
+            ),
+            h(Button, {
+              variant: "secondary", size: "sm",
+              disabled: refreshingCatalog,
+              onClick: () => refreshCatalog(),
+            },
+              h(RefreshCw, { className: cn("w-3.5 h-3.5", refreshingCatalog && "animate-spin") }),
+              "Refresh"),
+          ),
+          h("div", { className: "flex flex-col gap-2 sm:flex-row sm:items-center" },
+            h("div", { className: "relative flex-1" },
+              h(Search, { className: "pointer-events-none absolute left-3 top-1/2 w-4 h-4 -translate-y-1/2 text-stone-400" }),
+              h(Input, {
+                value: inputValue,
+                onChange: (e) => { startTransition(() => { setInputValue(e.target.value); }); },
+                className: "pl-9",
+                placeholder: "Search workspace by title, type, or ID",
+              }),
+            ),
+          ),
+          h("div", { className: "rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900" },
+            catalogNotice),
+        ),
+        h(CardContent, null,
+          !catalogLoaded && refreshingCatalog
+            ? h("div", { className: "rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500" },
+                "Loading available pages and data sources...")
+            : visibleRows.length
+              ? h("div", { className: "space-y-0.5" },
+                  visibleRows.map(({ resource, depth }) => {
+                    const ss = selectedRootIds.has(resource.resource_id) ? "explicit"
+                      : autoIncludedIds.has(resource.resource_id) ? "descendant" : "none";
+                    const hasChildren = Boolean((childIndex.get(resource.resource_id) || []).length);
+                    const ce = hasChildren || loadingRootIds.has(resource.resource_id) ||
+                      (canHaveChildren(resource.resource_type) && !discoveredByRoot.has(resource.resource_id));
+                    return h(ResourceRow, {
+                      key: resource.resource_id,
+                      resource,
+                      selectedState: ss,
+                      loading: loadingRootIds.has(resource.resource_id),
+                      includesSubtree: ss === "explicit" && canHaveChildren(resource.resource_type),
+                      canExpand: ce,
+                      expanded: isExpanded(resource.resource_id),
+                      depth,
+                      disabled: ss === "descendant",
+                      onToggle: toggleSelection,
+                      onToggleExpand: toggleCollapsed,
+                    });
+                  }))
+              : h("div", { className: "rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500" },
+                  "No pages or data sources matched this filter."),
+        ),
+      ),
+    ),
+
+    /* Sticky bottom bar */
+    h("div", { className: "sticky bottom-3 z-20" },
+      h(Card, { className: "border-stone-200 bg-white/95 shadow-lg backdrop-blur" },
+        h(CardContent, { className: "flex items-center justify-between gap-3 pt-5" },
+          h("div", { className: "min-w-0" },
+            h("p", { className: "text-sm text-stone-500" },
+              searchingCatalog ? "Searching Notion..."
+                : loadingRootIds.size ? "Loading nested content..."
+                : bindStatus === "binding" ? "Binding resources..."
+                : bindStatus === "success" ? "Bindings saved successfully."
+                : bindStatus.startsWith("error") ? bindStatus
+                : finalBundle.length + " root" + (finalBundle.length === 1 ? "" : "s") + " selected"),
+          ),
+          h(Button, {
+            disabled: !finalBundle.length || bindStatus === "binding",
+            onClick: () => finishBinding(),
+          }, "Bind Selected"),
+        ),
+      ),
+    ),
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Mount                                                                */
+/* ------------------------------------------------------------------ */
+
+ReactDOM.createRoot(document.getElementById("root")).render(h(SelectionApp));
     </script>
   </body>
 </html>

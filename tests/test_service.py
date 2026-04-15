@@ -189,7 +189,9 @@ class ServiceTests(unittest.TestCase):
         keyring_mock.set_password.assert_called_once()
         self.assertEqual(payload["storage"], "keychain")
 
-    def test_configure_internal_integration_auto_preserves_existing_backend(self) -> None:
+    def test_configure_internal_integration_auto_preserves_existing_backend(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             save_project_session(
                 tmpdir,
@@ -707,7 +709,7 @@ class ServiceTests(unittest.TestCase):
                                 finally:
                                     session.stop()
 
-        self.assertIn("Choose Notion Roots", root_html)
+        self.assertIn("Choose Notion Content", root_html)
         self.assertEqual(search_payload["result_count"], 1)
         self.assertEqual(bind_response["resource_count"], 1)
         bind_mock.assert_called_once()
