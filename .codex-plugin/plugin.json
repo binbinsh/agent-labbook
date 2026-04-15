@@ -1,17 +1,18 @@
 {
   "name": "agent-labbook",
-  "version": "0.17.1",
+  "version": "0.17.3",
   "description": "Bind a Codex or Claude Code project to selected Notion pages and data sources through a Notion Internal Integration.",
   "author": {
     "name": "Binbin Shen",
     "email": "binbinsh@gmail.com",
     "url": "https://github.com/binbinsh/"
   },
-  "homepage": "https://github.com/binbinsh/agent-labbook/",
+  "homepage": "https://github.com/binbinsh/agent-labbook",
   "repository": "https://github.com/binbinsh/agent-labbook",
   "license": "MIT",
   "keywords": [
     "codex",
+    "claude-code",
     "notion",
     "internal-integration",
     "mcp"

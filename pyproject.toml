@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-labbook"
-version = "0.17.2"
+version = "0.17.3"
 description = "Notion Internal Integration binding for Codex, Claude Code, and other MCP clients."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,8 +38,9 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/binbinsh/agent-labbook"
 Repository = "https://github.com/binbinsh/agent-labbook"
+Documentation = "https://github.com/binbinsh/agent-labbook#readme"
+Changelog = "https://github.com/binbinsh/agent-labbook/releases"
 Issues = "https://github.com/binbinsh/agent-labbook/issues"
-Changelog = "https://github.com/binbinsh/agent-labbook/blob/main/CHANGELOG.md"
 
 [project.scripts]
 agent-labbook = "labbook.cli:main"
