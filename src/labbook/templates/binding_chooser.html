@@ -5,21 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Labbook Binding Chooser</title>
     <style>
+      /* ================================================================
+       * Design tokens — warm paper palette matching the OAuth-era UI
+       * ============================================================== */
       :root {
         --bg: #faf7f2;
-        --paper: #fffdf9;
+        --paper: rgba(255, 253, 250, 0.82);
+        --paper-solid: #fffdf9;
         --ink: #1a1410;
         --muted: #6b5e52;
-        --line: #e6ddd2;
+        --muted-light: #9a8d80;
+        --line: rgba(28, 20, 16, 0.08);
+        --line-strong: rgba(28, 20, 16, 0.12);
         --accent: #c4532d;
         --accent-hover: #a8432a;
+        --accent-bg: rgba(196, 83, 45, 0.10);
+        --accent-border: rgba(196, 83, 45, 0.2);
         --ok: #17643d;
         --error: #9d2f2f;
-        --focus-ring: rgba(196, 83, 45, 0.45);
-        --radius-sm: 14px;
-        --radius-lg: 22px;
+        --focus-ring: rgba(196, 83, 45, 0.3);
+        --radius: 16px;
+        --radius-lg: 20px;
         --radius-pill: 999px;
-        --shadow-card: 0 20px 60px rgba(26, 20, 16, 0.05);
+        --shadow-card: 0 1px 3px rgba(26, 20, 16, 0.06);
+        --shadow-lg: 0 8px 30px rgba(26, 20, 16, 0.08);
         --transition: 0.15s ease;
       }
       *,
@@ -29,289 +38,629 @@
       }
       body {
         margin: 0;
-        font-family: Inter, system-ui, sans-serif;
+        font-family: "Inter", ui-sans-serif, system-ui, -apple-system,
+          BlinkMacSystemFont, "Segoe UI", sans-serif;
         color: var(--ink);
-        background: radial-gradient(
-            circle at top left,
-            rgba(196, 83, 45, 0.1),
-            transparent 30%
-          ),
-          linear-gradient(180deg, #fffaf5, var(--bg));
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
         min-height: 100vh;
       }
-
-      /* Focus ring */
       :focus-visible {
         outline: 2px solid var(--focus-ring);
         outline-offset: 2px;
       }
 
-      .shell {
-        max-width: 1240px;
+      /* ================================================================
+       * Nav bar — sticky top, frosted glass
+       * ============================================================== */
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        border-bottom: 1px solid var(--line);
+        background: rgba(250, 247, 242, 0.85);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+      }
+      .nav-inner {
+        max-width: 760px;
         margin: 0 auto;
-        padding: 32px 20px 48px;
-      }
-
-      /* Hero ------------------------------------------------------------ */
-      .hero {
         display: flex;
+        align-items: center;
         justify-content: space-between;
-        gap: 20px;
-        align-items: flex-end;
-        margin-bottom: 24px;
+        height: 56px;
+        padding: 0 12px;
       }
-      h1 {
-        margin: 0;
-        font-size: clamp(2rem, 4vw, 3rem);
-        font-family: "DM Serif Display", "Noto Serif SC", "Noto Serif TC",
-          serif;
-        line-height: 1;
+      .nav-brand {
+        font-family: "DM Serif Display", serif;
+        font-size: 1.125rem;
+        color: var(--ink);
+        text-decoration: none;
       }
-      .subtle {
-        color: var(--muted);
-        margin-top: 10px;
-        max-width: 64ch;
-      }
-      .workspace {
-        border: 1px solid var(--line);
-        border-radius: var(--radius-pill);
-        padding: 10px 14px;
-        background: rgba(255, 255, 255, 0.8);
-        color: var(--muted);
-        font-size: 0.95rem;
-        white-space: nowrap;
-      }
-
-      /* Recommendation card ---------------------------------------------- */
-      .recommendation {
-        margin-bottom: 18px;
-        border: 1px solid #e5c7b8;
-        background: linear-gradient(180deg, #fffaf4, #fff6ef);
-      }
-      .recommendation strong {
-        display: block;
-        margin-bottom: 8px;
-      }
-      .options {
+      .lang-switcher {
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 12px;
+        gap: 4px;
       }
-      .option {
-        border: 1px solid var(--line);
-        border-radius: var(--radius-sm);
-        background: #fff;
-        padding: 10px 12px;
-        min-width: 180px;
-        flex: 1 1 220px;
-        transition: box-shadow var(--transition);
+      .lang-btn {
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: none;
+        font-size: 0.75rem;
+        font-weight: 500;
+        cursor: pointer;
+        background: transparent;
+        color: var(--muted-light);
+        transition: background var(--transition), color var(--transition);
       }
-      .option:hover {
-        box-shadow: 0 2px 8px rgba(26, 20, 16, 0.08);
-      }
-      .option-title {
-        font-weight: 600;
-        margin-bottom: 4px;
-      }
-      .option-title .recommended {
-        margin-left: 6px;
+      .lang-btn:hover {
+        background: rgba(196, 83, 45, 0.06);
         color: var(--accent);
       }
-
-      /* Layout ----------------------------------------------------------- */
-      .layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr);
-        gap: 20px;
+      .lang-btn.active {
+        background: var(--accent-bg);
+        color: var(--accent);
+        font-weight: 600;
       }
+
+      /* ================================================================
+       * Layout container
+       * ============================================================== */
+      .container {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px 12px 160px;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      /* ================================================================
+       * Typography
+       * ============================================================== */
+      .page-title {
+        margin: 0;
+        font-family: "DM Serif Display", "Noto Serif SC", "Noto Serif TC",
+          serif;
+        font-size: clamp(1.25rem, 3vw, 1.5rem);
+        font-weight: 400;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+      }
+      .page-subtitle {
+        margin: 4px 0 0;
+        font-size: 0.875rem;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      /* ================================================================
+       * Card
+       * ============================================================== */
       .card {
         background: var(--paper);
         border: 1px solid var(--line);
         border-radius: var(--radius-lg);
-        padding: 18px;
         box-shadow: var(--shadow-card);
+        overflow: hidden;
+      }
+      .card-header {
+        padding: 20px 20px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .card-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .card-title {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .card-desc {
+        margin: 0;
+        font-size: 0.875rem;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .card-body {
+        padding: 16px 20px 20px;
       }
 
-      /* Controls --------------------------------------------------------- */
-      .controls {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto;
-        gap: 12px;
-        margin-bottom: 16px;
-      }
-      input[type="search"],
-      textarea,
-      select {
-        width: 100%;
-        border: 1px solid var(--line);
-        border-radius: var(--radius-sm);
-        padding: 12px 14px;
+      /* ================================================================
+       * Buttons
+       * ============================================================== */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        white-space: nowrap;
+        border-radius: 12px;
+        border: none;
         font: inherit;
-        color: var(--ink);
-        background: #fff;
-        transition: border-color var(--transition);
-      }
-      input[type="search"]:focus,
-      textarea:focus,
-      select:focus {
-        border-color: var(--accent);
-      }
-      textarea {
-        min-height: 120px;
-        resize: vertical;
-      }
-      button {
-        border: 0;
-        border-radius: var(--radius-sm);
-        background: var(--accent);
-        color: #fff;
-        font: inherit;
-        font-weight: 600;
-        padding: 12px 16px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        padding: 8px 16px;
         cursor: pointer;
-        transition: background var(--transition), transform 0.1s ease;
+        transition: background var(--transition), transform 0.08s ease;
       }
-      button:active:not(:disabled) {
+      .btn:active:not(:disabled) {
         transform: scale(0.97);
       }
-      button.secondary {
-        background: #efe5da;
-        color: var(--ink);
-      }
-      button:hover:not(:disabled) {
-        background: var(--accent-hover);
-      }
-      button.secondary:hover:not(:disabled) {
-        background: #e6d7c7;
-      }
-      button:disabled {
+      .btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
       }
-
-      /* Section titles --------------------------------------------------- */
-      .section-title {
-        margin: 0 0 12px;
-        font-size: 1.1rem;
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn-primary:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+      .btn-secondary {
+        background: transparent;
+        border: 1px solid var(--line-strong);
+        color: var(--ink);
+      }
+      .btn-secondary:hover:not(:disabled) {
+        background: rgba(0, 0, 0, 0.03);
+      }
+      .btn-sm {
+        padding: 6px 12px;
+        font-size: 0.75rem;
+        border-radius: 8px;
       }
 
-      /* Result list ------------------------------------------------------ */
-      .list {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
+      /* ================================================================
+       * Inputs
+       * ============================================================== */
+      .input-wrap {
+        position: relative;
+        flex: 1;
       }
-      .item {
-        border: 1px solid var(--line);
-        border-radius: 16px;
+      .input-wrap .search-icon {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 16px;
+        height: 16px;
+        color: var(--muted-light);
+        pointer-events: none;
+      }
+      input[type="search"],
+      input[type="text"] {
+        width: 100%;
+        height: 40px;
+        border: 1px solid var(--line-strong);
+        border-radius: 12px;
+        padding: 0 12px 0 36px;
+        font: inherit;
+        font-size: 0.875rem;
+        color: var(--ink);
         background: #fff;
+        outline: none;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        transition: border-color var(--transition), box-shadow var(--transition);
+      }
+      input[type="search"]:focus,
+      input[type="text"]:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--focus-ring);
+      }
+      select {
+        height: 32px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        padding: 0 8px;
+        font: inherit;
+        font-size: 0.8125rem;
+        color: var(--ink);
+        background: #fff;
+        cursor: pointer;
+      }
+      textarea {
+        width: 100%;
+        min-height: 100px;
+        border: 1px solid var(--line-strong);
+        border-radius: 12px;
         padding: 12px;
-        transition: box-shadow var(--transition);
+        font: inherit;
+        font-size: 0.875rem;
+        color: var(--ink);
+        background: #fff;
+        resize: vertical;
       }
-      .item:hover {
-        box-shadow: 0 2px 12px rgba(26, 20, 16, 0.06);
+      textarea:focus {
+        border-color: var(--accent);
+        outline: none;
+        box-shadow: 0 0 0 3px var(--focus-ring);
       }
-      .item-head {
-        display: grid;
-        grid-template-columns: auto auto 1fr auto auto;
-        gap: 10px;
-        align-items: start;
+
+      /* ================================================================
+       * Notice boxes
+       * ============================================================== */
+      .notice {
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-size: 0.8125rem;
+        line-height: 1.6;
       }
-      .depth {
+      .notice-amber {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #92400e;
+      }
+      .notice-rose {
+        background: #fff1f2;
+        border: 1px solid #fecdd3;
+        color: #9f1239;
+      }
+
+      /* ================================================================
+       * Badge
+       * ============================================================== */
+      .badge {
         display: inline-flex;
-        width: 1.25rem;
-        justify-content: center;
+        align-items: center;
+        height: 20px;
+        padding: 0 8px;
+        border-radius: var(--radius-pill);
+        font-size: 0.625rem;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .badge-outline {
+        border: 1px solid var(--line-strong);
+        color: var(--muted-light);
+      }
+      .badge-accent {
+        border: 1px solid var(--accent-border);
+        color: var(--accent);
+      }
+      .badge-workspace {
+        height: auto;
+        padding: 4px 10px;
+        font-size: 0.8125rem;
+        border: 1px solid var(--line-strong);
         color: var(--muted);
+        background: rgba(255, 255, 255, 0.6);
       }
-      .title {
-        font-weight: 600;
-        margin-bottom: 4px;
+
+      /* ================================================================
+       * Toolbar row
+       * ============================================================== */
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
       }
-      .meta {
-        color: var(--muted);
-        font-size: 0.9rem;
+      .toolbar-spacer {
+        flex: 1;
       }
-      .crumb {
+      .toolbar label {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        font-size: 0.85rem;
+        font-size: 0.8125rem;
         color: var(--muted);
-        margin-top: 4px;
-        flex-wrap: wrap;
+        cursor: pointer;
       }
-      .crumb span {
-        border-radius: var(--radius-pill);
-        background: #f3eee8;
-        padding: 4px 8px;
-      }
-      .children {
-        margin-top: 10px;
-        padding-left: 22px;
-        border-left: 1px dashed var(--line);
+      .toolbar label input[type="checkbox"] {
+        accent-color: var(--accent);
       }
 
-      /* Toolbar / pill --------------------------------------------------- */
-      .toolbar {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-        margin-bottom: 12px;
-      }
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 7px 10px;
-        border-radius: var(--radius-pill);
-        background: #f2ebe3;
-        color: var(--muted);
-        font-size: 0.9rem;
-      }
-
-      /* Selected / bindings ---------------------------------------------- */
-      .selected-list {
+      /* ================================================================
+       * Resource tree rows — the heart of the new design
+       * ============================================================== */
+      .tree-list {
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        margin-bottom: 16px;
+        gap: 2px;
       }
-      .selected-item {
-        display: grid;
+      .tree-row {
+        display: flex;
+        align-items: center;
         gap: 8px;
+        min-height: 36px;
+        padding: 6px 8px;
+        border-radius: 10px;
+        transition: background var(--transition);
+      }
+      .tree-row:hover {
+        background: var(--bg);
+      }
+      .tree-row.selected-explicit {
+        background: #fef3ee;
+      }
+      .tree-row.selected-descendant {
+        background: var(--bg);
+      }
+
+      .tree-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        border: none;
+        background: transparent;
+        padding: 0;
+        border-radius: 4px;
+        color: var(--muted-light);
+        cursor: pointer;
+        transition: background var(--transition), color var(--transition);
+      }
+      .tree-toggle:hover {
+        background: rgba(196, 83, 45, 0.08);
+        color: var(--muted);
+      }
+      .tree-toggle-placeholder {
+        width: 16px;
+        flex-shrink: 0;
+      }
+
+      .tree-checkbox {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
+
+      .tree-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        font-size: 13px;
+        line-height: 1;
+        color: var(--muted-light);
+      }
+
+      .tree-content {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .tree-title {
+        font-size: 0.8125rem;
+        color: var(--ink);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 360px;
+      }
+
+      .tree-loader {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        border: 2px solid var(--accent-border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      /* Children container */
+      .tree-children {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      /* Partial / scan deeper hint inside children */
+      .tree-hint {
+        padding: 8px 8px 8px 48px;
+        font-size: 0.8125rem;
+        color: var(--muted);
+      }
+      .tree-hint .btn {
+        margin-left: 8px;
+      }
+
+      /* ================================================================
+       * Selected list (right panel items, now inline)
+       * ============================================================== */
+      .selected-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
         border: 1px solid var(--line);
-        border-radius: var(--radius-sm);
-        padding: 12px;
+        border-radius: 12px;
         background: #fff;
         transition: box-shadow var(--transition);
+        animation: fade-in 0.15s ease both;
       }
       .selected-item:hover {
         box-shadow: 0 2px 8px rgba(26, 20, 16, 0.06);
       }
-      .hint,
-      .empty {
+      .selected-item-body {
+        flex: 1;
+        min-width: 0;
+      }
+      .selected-item-title {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--ink);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .selected-item-meta {
+        font-size: 0.75rem;
         color: var(--muted);
-        font-size: 0.95rem;
-      }
-      .status {
-        min-height: 24px;
-        color: var(--muted);
-        margin-top: 8px;
-        transition: color var(--transition);
-      }
-      .ok {
-        color: var(--ok);
-      }
-      .error {
-        color: var(--error);
-      }
-      a {
-        color: var(--accent);
+        margin-top: 2px;
       }
 
-      /* Animations ------------------------------------------------------- */
+      /* ================================================================
+       * Recommendation card
+       * ============================================================== */
+      .recommendation-card {
+        background: linear-gradient(180deg, #fffaf4, #fff6ef);
+        border: 1px solid #e5c7b8;
+      }
+      .rec-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .rec-option {
+        flex: 1 1 180px;
+        min-width: 160px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        padding: 10px 12px;
+        transition: box-shadow var(--transition);
+      }
+      .rec-option:hover {
+        box-shadow: 0 2px 8px rgba(26, 20, 16, 0.06);
+      }
+      .rec-option-title {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .rec-option-recommended {
+        color: var(--accent);
+        font-weight: 600;
+        font-size: 0.75rem;
+        margin-left: 6px;
+      }
+      .rec-option-reason {
+        font-size: 0.75rem;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .rec-question {
+        margin-top: 10px;
+        font-size: 0.8125rem;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .rec-question strong {
+        color: var(--ink);
+      }
+
+      /* ================================================================
+       * Sticky bottom action bar
+       * ============================================================== */
+      .action-bar {
+        position: sticky;
+        bottom: 12px;
+        z-index: 20;
+        max-width: 760px;
+        margin: 0 auto;
+      }
+      .action-bar .card {
+        background: rgba(255, 253, 250, 0.95);
+        box-shadow: var(--shadow-lg);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+      .action-bar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 20px;
+      }
+      .action-bar-text {
+        font-size: 0.875rem;
+        color: var(--muted);
+      }
+
+      /* ================================================================
+       * Status message
+       * ============================================================== */
+      .status-msg {
+        font-size: 0.8125rem;
+        min-height: 20px;
+        margin-top: 8px;
+        color: var(--muted);
+        transition: color var(--transition);
+      }
+      .status-msg.ok {
+        color: var(--ok);
+      }
+      .status-msg.error {
+        color: var(--error);
+      }
+
+      /* ================================================================
+       * Empty state
+       * ============================================================== */
+      .empty {
+        border: 1px dashed var(--line-strong);
+        border-radius: 12px;
+        background: var(--bg);
+        padding: 32px 16px;
+        text-align: center;
+        font-size: 0.875rem;
+        color: var(--muted);
+      }
+
+      /* ================================================================
+       * Divider
+       * ============================================================== */
+      .divider {
+        height: 1px;
+        background: var(--line);
+        border: none;
+        margin: 0;
+      }
+
+      /* ================================================================
+       * Section within a card
+       * ============================================================== */
+      .section-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--muted-light);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin: 0 0 8px;
+      }
+
+      /* ================================================================
+       * Links
+       * ============================================================== */
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
+      /* ================================================================
+       * Animation
+       * ============================================================== */
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
       @keyframes fade-in {
         from {
           opacity: 0;
@@ -322,45 +671,89 @@
           transform: translateY(0);
         }
       }
-      .item,
-      .selected-item {
-        animation: fade-in 0.15s ease both;
+
+      /* ================================================================
+       * SVG icons inline
+       * ============================================================== */
+      .icon {
+        width: 14px;
+        height: 14px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
 
-      /* Responsive ------------------------------------------------------- */
-      @media (max-width: 960px) {
-        .layout {
-          grid-template-columns: 1fr;
-        }
-        .hero {
-          flex-direction: column;
-          align-items: start;
-        }
-        .controls {
-          grid-template-columns: 1fr;
-        }
-        .item-head {
-          grid-template-columns: auto 1fr;
+      /* ================================================================
+       * Responsive
+       * ============================================================== */
+      @media (min-width: 640px) {
+        .nav-inner,
+        .container {
+          padding-left: 20px;
+          padding-right: 20px;
         }
       }
     </style>
   </head>
   <body>
-    <div id="app" class="shell" role="main" aria-label="Binding chooser"></div>
+    <!-- Nav -->
+    <nav class="nav" role="navigation">
+      <div class="nav-inner">
+        <span class="nav-brand" id="nav-brand">Agent Labbook</span>
+        <div class="lang-switcher" id="lang-switcher"></div>
+      </div>
+    </nav>
+
+    <div class="container" id="app" role="main" aria-label="Binding chooser"></div>
+
     <script>
       const config = /*__LABBOOK_CONFIG_JSON__*/null;
+
+      /* ----------------------------------------------------------------
+       * SVG icon helpers (inline, no external deps)
+       * -------------------------------------------------------------- */
+      const _iconTemplates = {
+        chevronRight:
+          '<svg class="icon" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>',
+        chevronDown:
+          '<svg class="icon" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>',
+        search:
+          '<svg class="icon search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
+        refresh:
+          '<svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
+        fileText:
+          '<svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>',
+        database:
+          '<svg class="icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>',
+      };
+
+      const _iconParser = new DOMParser();
+
+      function icon(name) {
+        const doc = _iconParser.parseFromString(
+          _iconTemplates[name],
+          "image/svg+xml"
+        );
+        return document.importNode(doc.documentElement, true);
+      }
 
       /* ----------------------------------------------------------------
        * i18n
        * -------------------------------------------------------------- */
       const translations = {
         en: {
+          navBrand: "Agent Labbook",
           title: "Choose Notion Roots",
           subtitle:
             "Search, expand, and bind the exact pages or data sources this project should use. You can also paste one or more Notion URLs directly.",
           searchPlaceholder: "Search accessible pages or data sources",
           refresh: "Refresh",
           reloadBindings: "Reload bindings",
+          selectTitle: "Select Pages and Data Sources",
+          selectDesc:
+            "Selecting a root binds that page or data source with subtree scope. Expand rows to inspect nested content on demand.",
           available: "Available content",
           selected: "Pending selection",
           bound: "Current bindings",
@@ -382,6 +775,8 @@
           bindingSuccess: "Bindings saved.",
           workspace: "Workspace",
           chooser: "Local chooser",
+          catalogNotice:
+            "Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click Refresh.",
           partialChildren:
             "Showing fast results. Deeper nested content may still exist.",
           scanDeeper: "Scan deeper",
@@ -400,10 +795,16 @@
           filter_pages: "Pages",
           filter_data_sources: "Data sources",
           filter_roots: "Root-like",
-          filter_unbound: "Unbound only",
+          filter_unbound: "Hide bound",
           suggestedRoots: "Suggested roots",
           moreMatches: "More matches",
           boundBadge: "Already bound",
+          rootsSelected: (count) =>
+            `${count} root${count === 1 ? "" : "s"} selected`,
+          untitled: "Untitled",
+          langEn: "EN",
+          langZhHans: "\u7B80\u4F53",
+          langZhHant: "\u7E41\u9AD4",
           recommendationModes: {
             wait_for_auth: "Finish auth first",
             url: "Paste exact links",
@@ -412,6 +813,7 @@
           },
         },
         "zh-hans": {
+          navBrand: "Agent Labbook",
           title: "\u9009\u62E9 Notion \u6839\u8282\u70B9",
           subtitle:
             "\u641C\u7D22\u3001\u5C55\u5F00\u5E76\u7ED1\u5B9A\u9879\u76EE\u771F\u6B63\u9700\u8981\u4F7F\u7528\u7684\u9875\u9762\u6216\u6570\u636E\u5E93\u3002\u4F60\u4E5F\u53EF\u4EE5\u76F4\u63A5\u7C98\u8D34\u4E00\u4E2A\u6216\u591A\u4E2A Notion \u94FE\u63A5\u3002",
@@ -419,6 +821,9 @@
             "\u641C\u7D22\u53EF\u8BBF\u95EE\u7684\u9875\u9762\u6216\u6570\u636E\u5E93",
           refresh: "\u5237\u65B0",
           reloadBindings: "\u91CD\u65B0\u52A0\u8F7D\u7ED1\u5B9A",
+          selectTitle: "\u9009\u62E9\u9875\u9762\u548C\u6570\u636E\u5E93",
+          selectDesc:
+            "\u9009\u4E2D\u4E00\u4E2A\u6839\u8282\u70B9\u4F1A\u4EE5\u5B50\u6811\u8303\u56F4\u7ED1\u5B9A\u8BE5\u9875\u9762\u6216\u6570\u636E\u5E93\u3002\u5C55\u5F00\u884C\u53EF\u6309\u9700\u67E5\u770B\u5D4C\u5957\u5185\u5BB9\u3002",
           available: "\u53EF\u9009\u5185\u5BB9",
           selected: "\u5F85\u7ED1\u5B9A\u9009\u62E9",
           bound: "\u5F53\u524D\u7ED1\u5B9A",
@@ -443,11 +848,14 @@
           bindingSuccess: "\u7ED1\u5B9A\u5DF2\u4FDD\u5B58\u3002",
           workspace: "\u5DE5\u4F5C\u533A",
           chooser: "\u672C\u5730\u9009\u62E9\u5668",
+          catalogNotice:
+            "\u641C\u7D22\u4F1A\u5728\u5DF2\u5171\u4EAB\u7684\u5DE5\u4F5C\u533A\u4E2D\u67E5\u8BE2 Notion\u3002\u5982\u679C\u7F3A\u5C11\u67D0\u4E9B\u5185\u5BB9\uFF0C\u8BF7\u5148\u5728 Notion \u4E2D\u5C06\u5176\u5171\u4EAB\u7ED9\u96C6\u6210\uFF0C\u518D\u70B9\u51FB\u300C\u5237\u65B0\u300D\u3002",
           partialChildren:
             "\u5F53\u524D\u5148\u663E\u793A\u5FEB\u901F\u7ED3\u679C\uFF0C\u53EF\u80FD\u8FD8\u6709\u66F4\u6DF1\u5C42\u7684\u5D4C\u5957\u5185\u5BB9\u3002",
           scanDeeper: "\u7EE7\u7EED\u6DF1\u5EA6\u626B\u63CF",
           scanningDeeper: "\u6DF1\u5EA6\u626B\u63CF\u4E2D\u2026",
-          addedMore: (count) => `\u65B0\u589E ${count} \u4E2A\u7ED3\u679C\u3002`,
+          addedMore: (count) =>
+            `\u65B0\u589E ${count} \u4E2A\u7ED3\u679C\u3002`,
           noAdditional:
             "\u6CA1\u6709\u53D1\u73B0\u66F4\u591A\u5D4C\u5957\u5185\u5BB9\u3002",
           recommendationTitle: "\u63A8\u8350\u7ED1\u5B9A\u8DEF\u5F84",
@@ -466,6 +874,12 @@
           suggestedRoots: "\u63A8\u8350\u6839\u8282\u70B9",
           moreMatches: "\u66F4\u591A\u5339\u914D\u7ED3\u679C",
           boundBadge: "\u5DF2\u7ED1\u5B9A",
+          rootsSelected: (count) =>
+            `\u5DF2\u9009\u62E9 ${count} \u4E2A\u6839\u8282\u70B9`,
+          untitled: "\u65E0\u6807\u9898",
+          langEn: "EN",
+          langZhHans: "\u7B80\u4F53",
+          langZhHant: "\u7E41\u9AD4",
           recommendationModes: {
             wait_for_auth: "\u5148\u5B8C\u6210\u8BA4\u8BC1",
             url: "\u7C98\u8D34\u7CBE\u786E\u94FE\u63A5",
@@ -474,6 +888,7 @@
           },
         },
         "zh-hant": {
+          navBrand: "Agent Labbook",
           title: "\u9078\u64C7 Notion \u6839\u7BC0\u9EDE",
           subtitle:
             "\u641C\u5C0B\u3001\u5C55\u958B\u4E26\u7D81\u5B9A\u5C08\u6848\u771F\u6B63\u9700\u8981\u4F7F\u7528\u7684\u9801\u9762\u6216\u8CC7\u6599\u5EAB\u3002\u4F60\u4E5F\u53EF\u4EE5\u76F4\u63A5\u8CBC\u4E0A\u4E00\u500B\u6216\u591A\u500B Notion \u9023\u7D50\u3002",
@@ -481,6 +896,9 @@
             "\u641C\u5C0B\u53EF\u5B58\u53D6\u7684\u9801\u9762\u6216\u8CC7\u6599\u5EAB",
           refresh: "\u91CD\u65B0\u6574\u7406",
           reloadBindings: "\u91CD\u65B0\u8F09\u5165\u7D81\u5B9A",
+          selectTitle: "\u9078\u64C7\u9801\u9762\u8207\u8CC7\u6599\u5EAB",
+          selectDesc:
+            "\u9078\u53D6\u4E00\u500B\u6839\u7BC0\u9EDE\u6703\u4EE5\u5B50\u6A39\u7BC4\u570D\u7D81\u5B9A\u8A72\u9801\u9762\u6216\u8CC7\u6599\u5EAB\u3002\u5C55\u958B\u5217\u53EF\u4F9D\u9700\u6C42\u67E5\u770B\u5DE2\u72C0\u5167\u5BB9\u3002",
           available: "\u53EF\u9078\u5167\u5BB9",
           selected: "\u5F85\u7D81\u5B9A\u9078\u64C7",
           bound: "\u76EE\u524D\u7D81\u5B9A",
@@ -505,11 +923,14 @@
           bindingSuccess: "\u7D81\u5B9A\u5DF2\u5132\u5B58\u3002",
           workspace: "\u5DE5\u4F5C\u5340",
           chooser: "\u672C\u6A5F\u9078\u64C7\u5668",
+          catalogNotice:
+            "\u641C\u5C0B\u6703\u5728\u5DF2\u5206\u4EAB\u7684\u5DE5\u4F5C\u5340\u4E2D\u67E5\u8A62 Notion\u3002\u5982\u679C\u7F3A\u5C11\u67D0\u4E9B\u5167\u5BB9\uFF0C\u8ACB\u5148\u5728 Notion \u4E2D\u5C07\u5176\u5206\u4EAB\u7D66\u6574\u5408\uFF0C\u518D\u9EDE\u64CA\u300C\u91CD\u65B0\u6574\u7406\u300D\u3002",
           partialChildren:
             "\u76EE\u524D\u5148\u986F\u793A\u5FEB\u901F\u7D50\u679C\uFF0C\u53EF\u80FD\u9084\u6709\u66F4\u6DF1\u5C64\u7684\u5DE2\u72C0\u5167\u5BB9\u3002",
           scanDeeper: "\u7E7C\u7E8C\u6DF1\u5EA6\u6383\u63CF",
           scanningDeeper: "\u6DF1\u5EA6\u6383\u63CF\u4E2D\u2026",
-          addedMore: (count) => `\u65B0\u589E ${count} \u500B\u7D50\u679C\u3002`,
+          addedMore: (count) =>
+            `\u65B0\u589E ${count} \u500B\u7D50\u679C\u3002`,
           noAdditional:
             "\u6C92\u6709\u627E\u5230\u66F4\u591A\u5DE2\u72C0\u5167\u5BB9\u3002",
           recommendationTitle: "\u63A8\u85A6\u7D81\u5B9A\u8DEF\u5F91",
@@ -528,6 +949,12 @@
           suggestedRoots: "\u63A8\u85A6\u6839\u7BC0\u9EDE",
           moreMatches: "\u66F4\u591A\u7B26\u5408\u7D50\u679C",
           boundBadge: "\u5DF2\u7D81\u5B9A",
+          rootsSelected: (count) =>
+            `\u5DF2\u9078\u64C7 ${count} \u500B\u6839\u7BC0\u9EDE`,
+          untitled: "\u7121\u6A19\u984C",
+          langEn: "EN",
+          langZhHans: "\u7B80\u4F53",
+          langZhHant: "\u7E41\u9AD4",
           recommendationModes: {
             wait_for_auth: "\u5148\u5B8C\u6210\u9A57\u8B49",
             url: "\u8CBC\u4E0A\u7CBE\u78BA\u9023\u7D50",
@@ -551,7 +978,18 @@
         return "en";
       }
 
-      const t = translations[detectLang()];
+      let currentLang = detectLang();
+      let t = translations[currentLang];
+
+      function setLang(lang) {
+        currentLang = lang;
+        t = translations[lang];
+        try {
+          localStorage.setItem("sp-lang", lang);
+        } catch {}
+        shellRendered = false;
+        renderDynamic();
+      }
 
       /* ----------------------------------------------------------------
        * Reactive state
@@ -638,9 +1076,16 @@
 
       function mergeByResourceId(existingItems, nextItems) {
         const byId = new Map();
-        for (const item of existingItems || []) byId.set(item.resource_id, item);
+        for (const item of existingItems || [])
+          byId.set(item.resource_id, item);
         for (const item of nextItems || []) byId.set(item.resource_id, item);
         return Array.from(byId.values());
+      }
+
+      function formatTypeLabel(type) {
+        if (type === "data_source") return t.data_source;
+        if (type === "page") return t.page;
+        return String(type || "resource").replace(/_/g, " ");
       }
 
       /* ----------------------------------------------------------------
@@ -689,7 +1134,7 @@
         renderDynamic();
         try {
           const params = new URLSearchParams();
-          params.set("page_size", String(config.page_size));
+          params.set("fetch_all", "true");
           if (state.query.trim()) params.set("query", state.query.trim());
           const payload = await api(`/api/search?${params.toString()}`);
           state.catalog = payload.results || [];
@@ -721,7 +1166,7 @@
               item.resource_url || item.resource_id
             );
             params.set("resource_type", item.resource_type);
-            params.set("limit", "50");
+            params.set("limit", "500");
             params.set("mode", "shallow");
             const payload = await api(`/api/children?${params.toString()}`);
             state.children.set(key, payload.results || []);
@@ -751,7 +1196,7 @@
             item.resource_url || item.resource_id
           );
           params.set("resource_type", item.resource_type);
-          params.set("limit", "50");
+          params.set("limit", "500");
           params.set("mode", "deep");
           const payload = await api(`/api/children?${params.toString()}`);
           const previous = state.children.get(key) || [];
@@ -814,89 +1259,109 @@
       }
 
       /* ----------------------------------------------------------------
-       * DOM builders (result nodes)
+       * DOM builders — tree rows in the new card-based style
        * -------------------------------------------------------------- */
+      function renderResourceIcon(item) {
+        const span = document.createElement("span");
+        span.className = "tree-icon";
+        if (item.icon_emoji) {
+          span.textContent = item.icon_emoji;
+        } else {
+          span.appendChild(
+            icon(item.resource_type === "data_source" ? "database" : "fileText")
+          );
+        }
+        return span;
+      }
+
       function renderNode(item, depth = 0) {
         const key = item.resource_id;
         const children = state.children.get(key) || [];
         const selected = state.selected.get(key);
+        const isExpanded = state.expanded.has(key);
         const wrapper = document.createElement("div");
-        wrapper.className = "item";
-        wrapper.setAttribute("role", "treeitem");
-        wrapper.setAttribute(
-          "aria-expanded",
-          state.expanded.has(key) ? "true" : "false"
+
+        /* --- Row --- */
+        const row = document.createElement("div");
+        row.className = "tree-row";
+        row.setAttribute("data-resource-id", key);
+        if (selected) row.classList.add("selected-explicit");
+        row.style.paddingLeft = `${8 + depth * 20}px`;
+
+        /* Toggle button */
+        const toggleBtn = document.createElement("button");
+        toggleBtn.type = "button";
+        toggleBtn.className = "tree-toggle";
+        toggleBtn.appendChild(icon(isExpanded ? "chevronDown" : "chevronRight"));
+        toggleBtn.setAttribute(
+          "aria-label",
+          `${isExpanded ? t.collapse : t.expand} ${item.title || key}`
         );
+        toggleBtn.addEventListener("click", () => toggleExpand(item));
+        row.appendChild(toggleBtn);
 
-        const head = document.createElement("div");
-        head.className = "item-head";
-
-        const depthEl = document.createElement("div");
-        depthEl.className = "depth";
-        depthEl.textContent = depth ? "\u2514" : "";
-        depthEl.setAttribute("aria-hidden", "true");
-        head.appendChild(depthEl);
-
+        /* Checkbox */
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
+        checkbox.className = "tree-checkbox";
         checkbox.checked = Boolean(selected);
         checkbox.setAttribute(
           "aria-label",
           `Select ${item.title || item.resource_id}`
         );
         checkbox.addEventListener("change", () => toggleSelection(item));
-        head.appendChild(checkbox);
+        row.appendChild(checkbox);
 
-        const body = document.createElement("div");
+        /* Icon */
+        row.appendChild(renderResourceIcon(item));
 
-        const titleEl = document.createElement("div");
-        titleEl.className = "title";
-        titleEl.textContent = item.title;
-        body.appendChild(titleEl);
+        /* Content */
+        const content = document.createElement("div");
+        content.className = "tree-content";
 
-        const crumb = document.createElement("div");
-        crumb.className = "crumb";
-        const typeChip = document.createElement("span");
-        typeChip.textContent = t[item.resource_type] || item.resource_type;
-        crumb.appendChild(typeChip);
-        if (isRootLike(item)) {
-          const rootChip = document.createElement("span");
-          rootChip.textContent = t.filter_roots;
-          crumb.appendChild(rootChip);
+        const titleEl = document.createElement("span");
+        titleEl.className = "tree-title";
+        titleEl.textContent = item.title || t.untitled;
+        content.appendChild(titleEl);
+
+        /* Type badge */
+        const typeBadge = document.createElement("span");
+        typeBadge.className = "badge badge-outline";
+        typeBadge.textContent = formatTypeLabel(item.resource_type);
+        content.appendChild(typeBadge);
+
+        /* Selected badge */
+        if (selected) {
+          const selBadge = document.createElement("span");
+          selBadge.className = "badge badge-accent";
+          selBadge.textContent = t.selected || "Selected";
+          content.appendChild(selBadge);
         }
+
+        /* Bound badge */
         if (isBound(item)) {
-          const boundChip = document.createElement("span");
-          boundChip.textContent = t.boundBadge;
-          crumb.appendChild(boundChip);
+          const boundBadge = document.createElement("span");
+          boundBadge.className = "badge badge-outline";
+          boundBadge.textContent = t.boundBadge;
+          content.appendChild(boundBadge);
         }
-        body.appendChild(crumb);
 
-        const meta = document.createElement("div");
-        meta.className = "meta";
-        meta.textContent = `${t[item.resource_type] || item.resource_type} \u00b7 ${item.resource_id}`;
-        body.appendChild(meta);
-
-        const parentText = describeParent(item);
-        if (parentText || item.last_edited_time) {
-          const details = document.createElement("div");
-          details.className = "meta";
-          details.textContent = [parentText, item.last_edited_time]
-            .filter(Boolean)
-            .join(" \u00b7 ");
-          body.appendChild(details);
+        /* Root-like badge */
+        if (isRootLike(item)) {
+          const rootBadge = document.createElement("span");
+          rootBadge.className = "badge badge-outline";
+          rootBadge.textContent = t.filter_roots;
+          content.appendChild(rootBadge);
         }
-        if (item.resource_url) {
-          const link = document.createElement("a");
-          link.href = item.resource_url;
-          link.target = "_blank";
-          link.rel = "noreferrer";
-          link.textContent = item.resource_url;
-          body.appendChild(link);
-        }
-        head.appendChild(body);
 
+        row.appendChild(content);
+
+        /* Scope select */
         const scope = document.createElement("select");
-        scope.setAttribute("aria-label", `${t.selectionScope} for ${item.title || item.resource_id}`);
+        scope.setAttribute(
+          "aria-label",
+          `${t.selectionScope} for ${item.title || item.resource_id}`
+        );
         for (const [val, label] of [
           ["resource", t.resource],
           ["subtree", t.subtree],
@@ -911,63 +1376,60 @@
           if (!selected) toggleSelection(item);
           updateSelectedScope(key, event.target.value);
         });
-        head.appendChild(scope);
+        row.appendChild(scope);
 
-        const expandBtn = document.createElement("button");
-        expandBtn.className = "secondary";
-        expandBtn.textContent = state.expanded.has(key) ? t.collapse : t.expand;
-        expandBtn.setAttribute(
-          "aria-label",
-          `${state.expanded.has(key) ? t.collapse : t.expand} ${item.title || item.resource_id}`
-        );
-        expandBtn.addEventListener("click", () => toggleExpand(item));
-        head.appendChild(expandBtn);
+        /* Loader */
+        if (state.loading && !state.children.has(key) && state.expanded.has(key)) {
+          const loader = document.createElement("div");
+          loader.className = "tree-loader";
+          row.appendChild(loader);
+        }
 
-        wrapper.appendChild(head);
+        wrapper.appendChild(row);
 
-        if (state.expanded.has(key)) {
-          const childWrap = document.createElement("div");
-          childWrap.className = "children";
-          childWrap.setAttribute("role", "group");
+        /* --- Children --- */
+        if (isExpanded) {
+          const childContainer = document.createElement("div");
+          childContainer.className = "tree-children";
+          childContainer.setAttribute("role", "group");
           const childMeta = state.childMeta.get(key) || {
             partial: false,
             mode: "shallow",
           };
           if (!children.length) {
             const empty = document.createElement("div");
-            empty.className = "empty";
+            empty.className = "tree-hint";
             empty.textContent = t.noResults;
-            childWrap.appendChild(empty);
+            childContainer.appendChild(empty);
           } else {
             for (const child of children) {
-              childWrap.appendChild(renderNode(child, depth + 1));
+              childContainer.appendChild(renderNode(child, depth + 1));
             }
           }
+          /* Partial / scan deeper */
           if (childMeta.partial && childMeta.mode !== "deep") {
-            const partial = document.createElement("div");
-            partial.className = "toolbar";
-            const hint = document.createElement("div");
-            hint.className = "hint";
-            hint.textContent = t.partialChildren;
-            partial.appendChild(hint);
-            const deeper = document.createElement("button");
-            deeper.className = "secondary";
-            deeper.textContent = state.deepLoading.has(key)
+            const hintRow = document.createElement("div");
+            hintRow.className = "tree-hint";
+            const hintText = document.createTextNode(t.partialChildren + " ");
+            hintRow.appendChild(hintText);
+            const deeperBtn = document.createElement("button");
+            deeperBtn.className = "btn btn-secondary btn-sm";
+            deeperBtn.textContent = state.deepLoading.has(key)
               ? t.scanningDeeper
               : t.scanDeeper;
-            deeper.disabled = state.deepLoading.has(key);
-            deeper.addEventListener("click", () => scanDeeper(item));
-            partial.appendChild(deeper);
-            childWrap.appendChild(partial);
+            deeperBtn.disabled = state.deepLoading.has(key);
+            deeperBtn.addEventListener("click", () => scanDeeper(item));
+            hintRow.appendChild(deeperBtn);
+            childContainer.appendChild(hintRow);
           } else if (childMeta.mode === "deep") {
-            const partial = document.createElement("div");
-            partial.className = "hint";
-            partial.textContent = childMeta.addedCount
+            const hintRow = document.createElement("div");
+            hintRow.className = "tree-hint";
+            hintRow.textContent = childMeta.addedCount
               ? t.addedMore(childMeta.addedCount)
               : t.noAdditional;
-            childWrap.appendChild(partial);
+            childContainer.appendChild(hintRow);
           }
-          wrapper.appendChild(childWrap);
+          wrapper.appendChild(childContainer);
         }
 
         return wrapper;
@@ -975,13 +1437,27 @@
 
       /* ----------------------------------------------------------------
        * Rendering: static shell + dynamic regions
-       *
-       * The shell (hero, recommendation, layout skeleton) is rendered
-       * once.  Only the dynamic content regions (results, selected,
-       * bindings, status) are re-rendered on state changes.  This
-       * preserves input focus and scroll position.
        * -------------------------------------------------------------- */
       let shellRendered = false;
+
+      function renderLangSwitcher() {
+        const container = $("lang-switcher");
+        if (!container) return;
+        container.innerHTML = "";
+        for (const [lang, label] of [
+          ["en", t.langEn],
+          ["zh-hans", t.langZhHans],
+          ["zh-hant", t.langZhHant],
+        ]) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className =
+            "lang-btn" + (lang === currentLang ? " active" : "");
+          btn.textContent = label;
+          btn.addEventListener("click", () => setLang(lang));
+          container.appendChild(btn);
+        }
+      }
 
       function renderShell() {
         if (shellRendered) return;
@@ -989,53 +1465,68 @@
 
         const app = $("app");
         app.innerHTML = "";
+        renderLangSwitcher();
 
-        /* Hero -------------------------------------------------------- */
-        const hero = document.createElement("div");
-        hero.className = "hero";
+        /* ── Page header ─────────────────────────────── */
+        const header = document.createElement("div");
+        header.style.marginBottom = "8px";
 
-        const heroLeft = document.createElement("div");
-        const heroPill = document.createElement("div");
-        heroPill.className = "pill";
-        heroPill.textContent = t.chooser;
-        heroLeft.appendChild(heroPill);
+        const titleRow = document.createElement("div");
+        titleRow.style.display = "flex";
+        titleRow.style.alignItems = "flex-start";
+        titleRow.style.justifyContent = "space-between";
+        titleRow.style.gap = "12px";
+        titleRow.style.flexWrap = "wrap";
 
-        const heroTitle = document.createElement("h1");
-        heroTitle.textContent = t.title;
-        heroLeft.appendChild(heroTitle);
+        const titleBlock = document.createElement("div");
+        const h1 = document.createElement("h1");
+        h1.className = "page-title";
+        h1.textContent = t.title;
+        titleBlock.appendChild(h1);
+        const subtitle = document.createElement("p");
+        subtitle.className = "page-subtitle";
+        subtitle.textContent = t.subtitle;
+        titleBlock.appendChild(subtitle);
+        titleRow.appendChild(titleBlock);
 
-        const heroSubtitle = document.createElement("div");
-        heroSubtitle.className = "subtle";
-        heroSubtitle.textContent = t.subtitle;
-        heroLeft.appendChild(heroSubtitle);
-        hero.appendChild(heroLeft);
+        const workspaceBadge = document.createElement("span");
+        workspaceBadge.className = "badge badge-workspace";
+        workspaceBadge.textContent = `${t.workspace}: ${config.workspace_name || config.project_root}`;
+        titleRow.appendChild(workspaceBadge);
+        header.appendChild(titleRow);
+        app.appendChild(header);
 
-        const heroWorkspace = document.createElement("div");
-        heroWorkspace.className = "workspace";
-        heroWorkspace.textContent = `${t.workspace}: ${config.workspace_name || config.project_root}`;
-        hero.appendChild(heroWorkspace);
-        app.appendChild(hero);
+        /* Stack for all cards */
+        const stack = document.createElement("div");
+        stack.className = "stack";
+        stack.id = "card-stack";
 
-        /* Recommendation ----------------------------------------------- */
-        const recommendation = document.createElement("div");
-        recommendation.className = "card recommendation";
+        /* ── Recommendation card ─────────────────────── */
         const bindingRecommendation = config.binding_recommendation || null;
         const bindingOptions = Array.isArray(config.binding_options)
           ? config.binding_options
           : [];
 
-        const recTitle = document.createElement("strong");
-        recTitle.textContent = t.recommendationTitle;
-        recommendation.appendChild(recTitle);
+        const recCard = document.createElement("div");
+        recCard.className = "card recommendation-card";
+        const recBody = document.createElement("div");
+        recBody.style.padding = "20px";
 
-        const recReason = document.createElement("div");
-        recReason.className = "subtle";
+        const recTitle = document.createElement("div");
+        recTitle.style.fontWeight = "600";
+        recTitle.style.fontSize = "0.875rem";
+        recTitle.style.marginBottom = "8px";
+        recTitle.textContent = t.recommendationTitle;
+        recBody.appendChild(recTitle);
+
+        const recReason = document.createElement("p");
+        recReason.className = "card-desc";
         recReason.textContent =
           bindingRecommendation?.reason || t.recommendationFallback;
-        recommendation.appendChild(recReason);
+        recBody.appendChild(recReason);
 
         const recQuestion = document.createElement("div");
-        recQuestion.className = "hint";
+        recQuestion.className = "rec-question";
         const recQuestionLabel = document.createElement("strong");
         recQuestionLabel.textContent = t.recommendationQuestion + ": ";
         recQuestion.appendChild(recQuestionLabel);
@@ -1044,77 +1535,79 @@
             config.binding_question || t.recommendationQuestionFallback
           )
         );
-        recommendation.appendChild(recQuestion);
+        recBody.appendChild(recQuestion);
 
-        const optionsWrap = document.createElement("div");
-        optionsWrap.className = "options";
-        for (const option of bindingOptions) {
-          const node = document.createElement("div");
-          node.className = "option";
-          const modeLabel =
-            t.recommendationModes?.[option.mode] ||
-            option.label ||
-            option.mode;
-          const optTitle = document.createElement("div");
-          optTitle.className = "option-title";
-          optTitle.textContent = modeLabel;
-          if (option.recommended) {
-            const recBadge = document.createElement("span");
-            recBadge.className = "recommended";
-            recBadge.textContent = "Recommended";
-            optTitle.appendChild(document.createTextNode(" "));
-            optTitle.appendChild(recBadge);
+        if (bindingOptions.length) {
+          const optionsWrap = document.createElement("div");
+          optionsWrap.className = "rec-options";
+          for (const option of bindingOptions) {
+            const node = document.createElement("div");
+            node.className = "rec-option";
+            const modeLabel =
+              t.recommendationModes?.[option.mode] ||
+              option.label ||
+              option.mode;
+            const optTitle = document.createElement("div");
+            optTitle.className = "rec-option-title";
+            optTitle.textContent = modeLabel;
+            if (option.recommended) {
+              const recBadge = document.createElement("span");
+              recBadge.className = "rec-option-recommended";
+              recBadge.textContent = "Recommended";
+              optTitle.appendChild(document.createTextNode(" "));
+              optTitle.appendChild(recBadge);
+            }
+            node.appendChild(optTitle);
+            const optMeta = document.createElement("div");
+            optMeta.className = "rec-option-reason";
+            optMeta.textContent = option.reason;
+            node.appendChild(optMeta);
+            optionsWrap.appendChild(node);
           }
-          node.appendChild(optTitle);
-          const optMeta = document.createElement("div");
-          optMeta.className = "meta";
-          optMeta.textContent = option.reason;
-          node.appendChild(optMeta);
-          optionsWrap.appendChild(node);
+          recBody.appendChild(optionsWrap);
         }
-        recommendation.appendChild(optionsWrap);
-        app.appendChild(recommendation);
+        recCard.appendChild(recBody);
+        stack.appendChild(recCard);
 
-        /* Layout grid -------------------------------------------------- */
-        const layout = document.createElement("div");
-        layout.className = "layout";
+        /* ── Main content card ───────────────────────── */
+        const mainCard = document.createElement("div");
+        mainCard.className = "card";
 
-        /* Left card ---------------------------------------------------- */
-        const left = document.createElement("div");
-        left.className = "card";
+        /* Card header */
+        const cardHeader = document.createElement("div");
+        cardHeader.className = "card-header";
 
-        const leftToolbar = document.createElement("div");
-        leftToolbar.className = "toolbar";
-        const projectPill = document.createElement("div");
-        projectPill.className = "pill";
-        projectPill.textContent = config.project_root;
-        leftToolbar.appendChild(projectPill);
+        const headerRow = document.createElement("div");
+        headerRow.className = "card-header-row";
+        const headerText = document.createElement("div");
+        const cardTitle = document.createElement("h2");
+        cardTitle.className = "card-title";
+        cardTitle.textContent = t.selectTitle;
+        headerText.appendChild(cardTitle);
+        const cardDesc = document.createElement("p");
+        cardDesc.className = "card-desc";
+        cardDesc.textContent = t.selectDesc;
+        headerText.appendChild(cardDesc);
+        headerRow.appendChild(headerText);
 
-        const countPill = document.createElement("div");
-        countPill.className = "pill";
-        countPill.id = "count-pill";
-        countPill.textContent = "0 results";
-        leftToolbar.appendChild(countPill);
+        const refreshBtn = document.createElement("button");
+        refreshBtn.className = "btn btn-secondary btn-sm";
+        refreshBtn.appendChild(icon("refresh"));
+        refreshBtn.appendChild(document.createTextNode(" " + t.refresh));
+        refreshBtn.addEventListener("click", () => loadCatalog());
+        headerRow.appendChild(refreshBtn);
+        cardHeader.appendChild(headerRow);
 
-        const hideBoundLabel = document.createElement("label");
-        hideBoundLabel.className = "pill";
-        const hideBoundCheckbox = document.createElement("input");
-        hideBoundCheckbox.id = "hide-bound";
-        hideBoundCheckbox.type = "checkbox";
-        hideBoundCheckbox.checked = state.hideBound;
-        hideBoundCheckbox.addEventListener("change", (event) => {
-          state.hideBound = Boolean(event.target.checked);
-          renderDynamic();
-        });
-        hideBoundLabel.appendChild(hideBoundCheckbox);
-        hideBoundLabel.appendChild(
-          document.createTextNode(" " + t.filter_unbound)
-        );
-        leftToolbar.appendChild(hideBoundLabel);
-        left.appendChild(leftToolbar);
+        /* Search row */
+        const searchRow = document.createElement("div");
+        searchRow.style.display = "flex";
+        searchRow.style.gap = "8px";
+        searchRow.style.alignItems = "center";
+        searchRow.style.flexWrap = "wrap";
 
-        const controls = document.createElement("div");
-        controls.className = "controls";
+        const inputWrap = document.createElement("div");
+        inputWrap.className = "input-wrap";
+        inputWrap.appendChild(icon("search"));
         const searchInput = document.createElement("input");
         searchInput.id = "search";
         searchInput.type = "search";
@@ -1131,7 +1624,8 @@
             loadCatalog();
           }
         });
-        controls.appendChild(searchInput);
+        inputWrap.appendChild(searchInput);
+        searchRow.appendChild(inputWrap);
 
         const filterSelect = document.createElement("select");
         filterSelect.id = "filter";
@@ -1152,66 +1646,105 @@
           state.filter = event.target.value;
           renderDynamic();
         });
-        controls.appendChild(filterSelect);
+        searchRow.appendChild(filterSelect);
+        cardHeader.appendChild(searchRow);
 
-        const searchButton = document.createElement("button");
-        searchButton.textContent = t.refresh;
-        searchButton.addEventListener("click", () => loadCatalog());
-        controls.appendChild(searchButton);
+        /* Toolbar: count pill + hide bound */
+        const toolbar = document.createElement("div");
+        toolbar.className = "toolbar";
 
-        const bindingsButton = document.createElement("button");
-        bindingsButton.className = "secondary";
-        bindingsButton.textContent = t.reloadBindings;
-        bindingsButton.addEventListener("click", () => loadBindings());
-        controls.appendChild(bindingsButton);
-        left.appendChild(controls);
+        const countPill = document.createElement("span");
+        countPill.className = "badge badge-outline";
+        countPill.id = "count-pill";
+        countPill.textContent = "0 results";
+        toolbar.appendChild(countPill);
 
-        const availableTitle = document.createElement("h2");
-        availableTitle.className = "section-title";
-        availableTitle.textContent = t.available;
-        left.appendChild(availableTitle);
+        const spacer = document.createElement("div");
+        spacer.className = "toolbar-spacer";
+        toolbar.appendChild(spacer);
 
-        const resultsDiv = document.createElement("div");
-        resultsDiv.id = "results";
-        resultsDiv.className = "list";
-        resultsDiv.setAttribute("role", "tree");
-        resultsDiv.setAttribute("aria-label", t.available);
-        left.appendChild(resultsDiv);
-        layout.appendChild(left);
+        const hideBoundLabel = document.createElement("label");
+        const hideBoundCheckbox = document.createElement("input");
+        hideBoundCheckbox.id = "hide-bound";
+        hideBoundCheckbox.type = "checkbox";
+        hideBoundCheckbox.checked = state.hideBound;
+        hideBoundCheckbox.addEventListener("change", (event) => {
+          state.hideBound = Boolean(event.target.checked);
+          renderDynamic();
+        });
+        hideBoundLabel.appendChild(hideBoundCheckbox);
+        hideBoundLabel.appendChild(
+          document.createTextNode(" " + t.filter_unbound)
+        );
+        toolbar.appendChild(hideBoundLabel);
+        cardHeader.appendChild(toolbar);
 
-        /* Right card --------------------------------------------------- */
-        const right = document.createElement("div");
-        right.className = "card";
+        /* Catalog notice */
+        const notice = document.createElement("div");
+        notice.className = "notice notice-amber";
+        notice.textContent = t.catalogNotice;
+        cardHeader.appendChild(notice);
 
-        const selectedTitle = document.createElement("h2");
-        selectedTitle.className = "section-title";
-        selectedTitle.textContent = t.selected;
-        right.appendChild(selectedTitle);
+        mainCard.appendChild(cardHeader);
+
+        /* Card body — results */
+        const cardBody = document.createElement("div");
+        cardBody.className = "card-body";
+        const results = document.createElement("div");
+        results.id = "results";
+        results.className = "tree-list";
+        results.setAttribute("role", "tree");
+        results.setAttribute("aria-label", t.available);
+        cardBody.appendChild(results);
+        mainCard.appendChild(cardBody);
+        stack.appendChild(mainCard);
+
+        /* ── Selection & URL paste card ───────────────── */
+        const selCard = document.createElement("div");
+        selCard.className = "card";
+
+        const selHeader = document.createElement("div");
+        selHeader.className = "card-header";
+        const selTitle = document.createElement("h2");
+        selTitle.className = "card-title";
+        selTitle.textContent = t.selected;
+        selHeader.appendChild(selTitle);
+        selCard.appendChild(selHeader);
+
+        const selBody = document.createElement("div");
+        selBody.className = "card-body";
+
         const selectedDiv = document.createElement("div");
         selectedDiv.id = "selected";
-        selectedDiv.className = "selected-list";
-        selectedDiv.setAttribute("aria-label", t.selected);
-        right.appendChild(selectedDiv);
+        selectedDiv.style.display = "flex";
+        selectedDiv.style.flexDirection = "column";
+        selectedDiv.style.gap = "8px";
+        selectedDiv.style.marginBottom = "16px";
+        selBody.appendChild(selectedDiv);
 
-        const pastedTitle = document.createElement("h2");
-        pastedTitle.className = "section-title";
-        pastedTitle.textContent = t.pastedUrls;
-        right.appendChild(pastedTitle);
-        const pastedHint = document.createElement("div");
-        pastedHint.className = "hint";
-        pastedHint.textContent = t.pastedUrlsHint;
-        right.appendChild(pastedHint);
+        /* URL paste section */
+        const urlLabel = document.createElement("div");
+        urlLabel.className = "section-label";
+        urlLabel.textContent = t.pastedUrls;
+        selBody.appendChild(urlLabel);
+
+        const urlHint = document.createElement("p");
+        urlHint.className = "card-desc";
+        urlHint.style.marginBottom = "8px";
+        urlHint.textContent = t.pastedUrlsHint;
+        selBody.appendChild(urlHint);
 
         const urlTextarea = document.createElement("textarea");
         urlTextarea.id = "url-input";
         urlTextarea.spellcheck = false;
         urlTextarea.setAttribute("aria-label", t.pastedUrls);
-        right.appendChild(urlTextarea);
+        selBody.appendChild(urlTextarea);
 
         const urlToolbar = document.createElement("div");
         urlToolbar.className = "toolbar";
+        urlToolbar.style.marginTop = "8px";
         const urlScopeLabel = document.createElement("label");
-        urlScopeLabel.className = "pill";
+        urlScopeLabel.style.gap = "6px";
         urlScopeLabel.textContent = t.selectionScope + " ";
         const urlScopeSelect = document.createElement("select");
         urlScopeSelect.id = "url-scope";
@@ -1226,31 +1759,76 @@
         }
         urlScopeLabel.appendChild(urlScopeSelect);
         urlToolbar.appendChild(urlScopeLabel);
-        right.appendChild(urlToolbar);
+
+        const spacer2 = document.createElement("div");
+        spacer2.className = "toolbar-spacer";
+        urlToolbar.appendChild(spacer2);
+
+        const reloadBtn = document.createElement("button");
+        reloadBtn.className = "btn btn-secondary btn-sm";
+        reloadBtn.textContent = t.reloadBindings;
+        reloadBtn.addEventListener("click", () => loadBindings());
+        urlToolbar.appendChild(reloadBtn);
+        selBody.appendChild(urlToolbar);
+
+        /* Status */
+        const statusDiv = document.createElement("div");
+        statusDiv.id = "status";
+        statusDiv.className = "status-msg";
+        selBody.appendChild(statusDiv);
+
+        selCard.appendChild(selBody);
+
+        /* Divider + Bindings section */
+        const divider = document.createElement("hr");
+        divider.className = "divider";
+        selCard.appendChild(divider);
+
+        const bindHeader = document.createElement("div");
+        bindHeader.className = "card-header";
+        const bindTitle = document.createElement("h2");
+        bindTitle.className = "card-title";
+        bindTitle.textContent = t.bound;
+        bindHeader.appendChild(bindTitle);
+        selCard.appendChild(bindHeader);
+
+        const bindBody = document.createElement("div");
+        bindBody.className = "card-body";
+        const bindingsDiv = document.createElement("div");
+        bindingsDiv.id = "bindings";
+        bindingsDiv.style.display = "flex";
+        bindingsDiv.style.flexDirection = "column";
+        bindingsDiv.style.gap = "8px";
+        bindBody.appendChild(bindingsDiv);
+        selCard.appendChild(bindBody);
+
+        stack.appendChild(selCard);
+        app.appendChild(stack);
+
+        /* ── Sticky action bar ───────────────────────── */
+        const actionBar = document.createElement("div");
+        actionBar.className = "action-bar";
+        actionBar.id = "action-bar";
+        const actionCard = document.createElement("div");
+        actionCard.className = "card";
+        const actionInner = document.createElement("div");
+        actionInner.className = "action-bar-inner";
+
+        const actionText = document.createElement("div");
+        actionText.id = "action-text";
+        actionText.className = "action-bar-text";
+        actionInner.appendChild(actionText);
 
         const bindButton = document.createElement("button");
         bindButton.id = "bind-button";
+        bindButton.className = "btn btn-primary";
         bindButton.textContent = t.bindSelected;
         bindButton.addEventListener("click", () => bindSelected());
-        right.appendChild(bindButton);
+        actionInner.appendChild(bindButton);
 
-        const statusDiv = document.createElement("div");
-        statusDiv.id = "status";
-        statusDiv.className = "status";
-        right.appendChild(statusDiv);
-
-        const boundTitle = document.createElement("h2");
-        boundTitle.className = "section-title";
-        boundTitle.textContent = t.bound;
-        right.appendChild(boundTitle);
-        const bindingsDiv = document.createElement("div");
-        bindingsDiv.id = "bindings";
-        bindingsDiv.className = "selected-list";
-        bindingsDiv.setAttribute("aria-label", t.bound);
-        right.appendChild(bindingsDiv);
-
-        layout.appendChild(right);
-        app.appendChild(layout);
+        actionCard.appendChild(actionInner);
+        actionBar.appendChild(actionCard);
+        app.appendChild(actionBar);
       }
 
       /* ----------------------------------------------------------------
@@ -1259,21 +1837,33 @@
       function renderDynamic() {
         renderShell();
 
-        /* Count pill --------------------------------------------------- */
+        /* Count pill */
         const countPill = $("count-pill");
         if (countPill) {
           const count = state.catalog.length;
           countPill.textContent = `${count} result${count === 1 ? "" : "s"}`;
         }
 
-        /* Status ------------------------------------------------------- */
+        /* Status */
         const statusDiv = $("status");
         if (statusDiv) {
-          statusDiv.className = `status ${state.messageClass}`;
+          statusDiv.className = `status-msg ${state.messageClass}`;
           statusDiv.textContent = state.loading ? t.loading : state.message;
         }
 
-        /* Results ------------------------------------------------------ */
+        /* Action bar text */
+        const actionText = $("action-text");
+        if (actionText) {
+          const selectedCount =
+            state.selected.size + parsePastedUrls().length;
+          if (state.loading) {
+            actionText.textContent = t.loading;
+          } else {
+            actionText.textContent = t.rootsSelected(selectedCount);
+          }
+        }
+
+        /* Results */
         const results = $("results");
         if (results) {
           results.innerHTML = "";
@@ -1290,7 +1880,9 @@
               (item) => item.resource_type === "data_source"
             );
           } else if (state.filter === "roots") {
-            visibleCatalog = visibleCatalog.filter((item) => isRootLike(item));
+            visibleCatalog = visibleCatalog.filter((item) =>
+              isRootLike(item)
+            );
           }
           if (!visibleCatalog.length) {
             const empty = document.createElement("div");
@@ -1306,16 +1898,14 @@
             );
 
             if (suggestedRoots.length) {
-              const section = document.createElement("div");
-              section.className = "list";
-              const heading = document.createElement("div");
-              heading.className = "pill";
-              heading.textContent = `${t.suggestedRoots} \u00b7 ${suggestedRoots.length}`;
-              section.appendChild(heading);
+              const sectionLabel = document.createElement("div");
+              sectionLabel.className = "section-label";
+              sectionLabel.style.paddingLeft = "8px";
+              sectionLabel.textContent = `${t.suggestedRoots} \u00b7 ${suggestedRoots.length}`;
+              results.appendChild(sectionLabel);
               for (const item of suggestedRoots) {
-                section.appendChild(renderNode(item));
+                results.appendChild(renderNode(item));
               }
-              results.appendChild(section);
             }
 
             if (remainingMatches.length) {
@@ -1326,22 +1916,21 @@
                 grouped.get(key).push(item);
               }
               for (const [type, items] of grouped.entries()) {
-                const section = document.createElement("div");
-                section.className = "list";
-                const heading = document.createElement("div");
-                heading.className = "pill";
-                heading.textContent = `${t.moreMatches} \u00b7 ${t[type] || type} \u00b7 ${items.length}`;
-                section.appendChild(heading);
+                const sectionLabel = document.createElement("div");
+                sectionLabel.className = "section-label";
+                sectionLabel.style.paddingLeft = "8px";
+                sectionLabel.style.marginTop = "12px";
+                sectionLabel.textContent = `${t.moreMatches} \u00b7 ${formatTypeLabel(type)} \u00b7 ${items.length}`;
+                results.appendChild(sectionLabel);
                 for (const item of items) {
-                  section.appendChild(renderNode(item));
+                  results.appendChild(renderNode(item));
                 }
-                results.appendChild(section);
               }
             }
           }
         }
 
-        /* Selected ----------------------------------------------------- */
+        /* Selected items */
         const selectedDiv = $("selected");
         if (selectedDiv) {
           selectedDiv.innerHTML = "";
@@ -1354,15 +1943,26 @@
             for (const [key, item] of state.selected.entries()) {
               const node = document.createElement("div");
               node.className = "selected-item";
-              const titleEl = document.createElement("strong");
+
+              const body = document.createElement("div");
+              body.className = "selected-item-body";
+              const titleEl = document.createElement("div");
+              titleEl.className = "selected-item-title";
               titleEl.textContent = item.title || item.resource_id_or_url;
-              node.appendChild(titleEl);
+              body.appendChild(titleEl);
               const metaEl = document.createElement("div");
-              metaEl.className = "meta";
-              metaEl.textContent = item.resource_type || "url";
-              node.appendChild(metaEl);
+              metaEl.className = "selected-item-meta";
+              metaEl.textContent = formatTypeLabel(
+                item.resource_type || "url"
+              );
+              body.appendChild(metaEl);
+              node.appendChild(body);
+
               const scope = document.createElement("select");
-              scope.setAttribute("aria-label", `${t.selectionScope} for ${item.title || key}`);
+              scope.setAttribute(
+                "aria-label",
+                `${t.selectionScope} for ${item.title || key}`
+              );
               for (const [val, label] of [
                 ["resource", t.resource],
                 ["subtree", t.subtree],
@@ -1382,7 +1982,7 @@
           }
         }
 
-        /* Bindings ----------------------------------------------------- */
+        /* Bindings list */
         const bindingsDiv = $("bindings");
         if (bindingsDiv) {
           bindingsDiv.innerHTML = "";
@@ -1395,13 +1995,17 @@
             for (const item of state.bindings) {
               const node = document.createElement("div");
               node.className = "selected-item";
-              const titleEl = document.createElement("strong");
+              const body = document.createElement("div");
+              body.className = "selected-item-body";
+              const titleEl = document.createElement("div");
+              titleEl.className = "selected-item-title";
               titleEl.textContent = item.title;
-              node.appendChild(titleEl);
+              body.appendChild(titleEl);
               const metaEl = document.createElement("div");
-              metaEl.className = "meta";
-              metaEl.textContent = `${item.resource_type} \u00b7 ${item.selection_scope} \u00b7 ${item.alias}`;
-              node.appendChild(metaEl);
+              metaEl.className = "selected-item-meta";
+              metaEl.textContent = `${formatTypeLabel(item.resource_type)} \u00b7 ${item.selection_scope} \u00b7 ${item.alias}`;
+              body.appendChild(metaEl);
+              node.appendChild(body);
               bindingsDiv.appendChild(node);
             }
           }

@@ -237,8 +237,9 @@ def _serve_search(
     query: dict[str, list[str]],
 ) -> None:
     search_query = _qs_str(query, "query").strip()
+    fetch_all = _qs_str(query, "fetch_all").lower() in ("1", "true", "yes")
     page_size = _qs_int(query, "page_size", session.page_size)
-    cache_key = (search_query, page_size)
+    cache_key = (search_query, page_size, fetch_all)
 
     with session._cache_lock:
         cached = session._search_cache.get(cache_key)
@@ -252,6 +253,7 @@ def _serve_search(
         project_root=str(context["project_root"]),
         query=search_query or None,
         page_size=page_size,
+        fetch_all=fetch_all,
     )
     with session._cache_lock:
         session._search_cache[cache_key] = payload
@@ -267,7 +269,7 @@ def _serve_children(
     if not resource_ref:
         raise LabbookError("resource_id_or_url is required.")
     mode = _qs_str(query, "mode", "shallow").lower() or "shallow"
-    limit = _qs_int(query, "limit", DEFAULT_BINDING_BROWSER_PAGE_SIZE)
+    limit = _qs_int(query, "limit", 200)
     cache_key = (resource_ref, mode, limit)
 
     with session._cache_lock:

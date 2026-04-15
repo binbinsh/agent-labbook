@@ -62,7 +62,7 @@ class NormalizeDiscoveryLimitTests(unittest.TestCase):
         self.assertEqual(normalize_discovery_limit(0), MIN_DISCOVERY_LIMIT)
 
     def test_clamp_above_max(self) -> None:
-        self.assertEqual(normalize_discovery_limit(999), MAX_DISCOVERY_LIMIT)
+        self.assertEqual(normalize_discovery_limit(9999), MAX_DISCOVERY_LIMIT)
 
     def test_non_integer_raises(self) -> None:
         with self.assertRaises(LabbookError):

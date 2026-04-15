@@ -43,7 +43,7 @@ MAX_SEARCH_PAGE_SIZE = 100
 
 DEFAULT_DISCOVERY_LIMIT = 50
 MIN_DISCOVERY_LIMIT = 1
-MAX_DISCOVERY_LIMIT = 200
+MAX_DISCOVERY_LIMIT = 1000
 
 _MAX_ALIAS_SUFFIX = 10_000
 
@@ -308,11 +308,33 @@ def build_search_resources_payload(
     project_root: str,
     query: str | None = None,
     page_size: int | str | None = None,
+    fetch_all: bool = False,
 ) -> dict[str, Any]:
-    """Search the Notion workspace and return a ranked result payload."""
+    """Search the Notion workspace and return a ranked result payload.
+
+    When *fetch_all* is ``True``, paginate through all available results
+    from the Notion search API instead of returning a single page.
+    """
+    if fetch_all:
+        raw_results = client.search_all(query=query)
+        results: list[dict[str, Any]] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            normalized = normalize_notion_resource(item)
+            if normalized is not None:
+                results.append(normalized)
+        results = _rank_search_results(results, query=query)
+        return {
+            "project_root": str(project_root),
+            "query": str(query or "").strip() or None,
+            "page_size": len(results),
+            "result_count": len(results),
+            "results": results,
+        }
     page_limit = normalize_search_page_size(page_size)
     raw = client.search(query=query, page_size=page_limit)
-    results: list[dict[str, Any]] = []
+    results = []
     for item in raw.get("results", []):
         if not isinstance(item, dict):
             continue

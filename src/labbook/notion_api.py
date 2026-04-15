@@ -170,6 +170,7 @@ class NotionClient:
         *,
         query: str | None = None,
         page_size: int = 25,
+        start_cursor: str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "page_size": page_size,
@@ -181,7 +182,33 @@ class NotionClient:
         clean_query = str(query or "").strip()
         if clean_query:
             body["query"] = clean_query
+        if start_cursor:
+            body["start_cursor"] = start_cursor
         return self._request("POST", "/search", body=body)
+
+    def search_all(
+        self,
+        *,
+        query: str | None = None,
+        max_results: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Paginate through all search results up to *max_results*."""
+        results: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while len(results) < max_results:
+            payload = self.search(
+                query=query,
+                page_size=100,
+                start_cursor=cursor,
+            )
+            for item in payload.get("results", []):
+                results.append(item)
+            if not payload.get("has_more"):
+                break
+            cursor = payload.get("next_cursor")
+            if not cursor:
+                break
+        return results[:max_results]
 
     def list_block_children(
         self,
