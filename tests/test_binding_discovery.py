@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from labbook.binding_discovery import (
+from labbook.notion import (
     _normalize_parent_metadata,
     merge_discovery_resources,
     normalize_notion_resource,

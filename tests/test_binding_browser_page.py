@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from labbook.binding_browser_page import _inline_json, render_binding_browser_page
+from labbook.browser_ui import _inline_json, render_binding_browser_page
 
 
 class InlineJsonTests(unittest.TestCase):

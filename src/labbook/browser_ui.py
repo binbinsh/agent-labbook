@@ -1,129 +1,126 @@
+"""Browser UI: launch policy, binding chooser HTTP server, and HTML template rendering."""
+
 from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import threading
 import time
+import webbrowser
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Mapping
 from urllib import parse
 
-from .auth_flow import notion_client_for_project, open_browser_url, status
-from .binding_browser_page import render_binding_browser_page
-from .binding_ops import (
-    bind_resource_urls,
-    bind_resources,
-    build_discover_children_payload,
-    build_search_resources_payload,
-    list_bindings,
-)
 from .state import LabbookError, resolve_project_root
 
-logger = logging.getLogger("labbook.binding_ui")
-
-__all__ = [
-    "BindingBrowserSession",
-    "start_binding_browser",
-    "DEFAULT_BINDING_BROWSER_TIMEOUT_SECONDS",
-    "DEFAULT_BINDING_BROWSER_PAGE_SIZE",
-]
+logger = logging.getLogger("labbook.browser_ui")
 
 DEFAULT_BINDING_BROWSER_TIMEOUT_SECONDS = 1800
 DEFAULT_BINDING_BROWSER_PAGE_SIZE = 25
+DEFAULT_BROWSER_OPEN_TIMEOUT_SECONDS = 2.0
+_HEADLESS_ENV_VARS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "CI")
+_TEMPLATE_PATH = Path(__file__).parent / "templates" / "binding_chooser.html"
+_PLACEHOLDER = "/*__LABBOOK_CONFIG_JSON__*/null"
+_cached_template: str | None = None
+
+BrowserOpener = Callable[[str], bool]
+
+
+def likely_headless_environment(environ: Mapping[str, str] | None = None) -> bool:
+    values = environ if environ is not None else os.environ
+    return any(str(values.get(k) or "").strip() for k in _HEADLESS_ENV_VARS)
+
+
+def _system_browser_opener(url: str) -> bool:
+    return bool(webbrowser.open(url, new=2))
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserLaunchResult:
+    attempted: bool
+    opened: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserLaunchPolicy:
+    should_attempt: bool
+    timeout_seconds: float = DEFAULT_BROWSER_OPEN_TIMEOUT_SECONDS
+
+    @classmethod
+    def from_preference(
+        cls,
+        open_browser: bool | None,
+        *,
+        likely_headless: bool | None = None,
+        timeout_seconds: float = DEFAULT_BROWSER_OPEN_TIMEOUT_SECONDS,
+    ) -> BrowserLaunchPolicy:
+        if likely_headless is None:
+            likely_headless = likely_headless_environment()
+        should_attempt = (
+            bool(open_browser)
+            if open_browser is not None
+            else not bool(likely_headless)
+        )
+        return cls(
+            should_attempt=should_attempt,
+            timeout_seconds=max(0.0, float(timeout_seconds)),
+        )
+
+    def launch(
+        self, url: str, *, opener: BrowserOpener | None = None
+    ) -> BrowserLaunchResult:
+        if not self.should_attempt:
+            return BrowserLaunchResult(attempted=False, opened=False)
+        completed = threading.Event()
+        result = {"opened": False}
+        resolved_opener = opener or _system_browser_opener
+
+        def _open() -> None:
+            try:
+                result["opened"] = bool(resolved_opener(url))
+            except Exception:
+                result["opened"] = False
+            finally:
+                completed.set()
+
+        threading.Thread(target=_open, name="labbook-open-browser", daemon=True).start()
+        completed.wait(self.timeout_seconds)
+        if not completed.is_set():
+            return BrowserLaunchResult(attempted=True, opened=False)
+        return BrowserLaunchResult(attempted=True, opened=bool(result["opened"]))
 
 
 # ---------------------------------------------------------------------------
-# Session dataclass
+# HTML template rendering
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class BindingBrowserSession:
-    """Tracks a running binding-browser HTTP session."""
+def _load_template() -> str:
+    global _cached_template
+    if _cached_template is None:
+        _cached_template = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    return _cached_template
 
-    session_id: str
-    project_root: str
-    chooser_url: str
-    local_url: str
-    public_base_url: str | None
-    bind_host: str
-    bind_port: int
-    browser_opened: bool
-    open_browser_attempted: bool
-    timeout_seconds: int
-    page_size: int
-    workspace_name: str | None
-    binding_recommendation: dict[str, Any] | None
-    binding_options: list[dict[str, Any]]
-    binding_question: str | None
-    csrf_token: str = field(repr=False)
-    _server: ThreadingHTTPServer
-    _thread: threading.Thread
-    _route_prefix: str = ""
-    _allowed_origins: set[str] = field(default_factory=set, repr=False)
-    _stop_event: threading.Event = field(default_factory=threading.Event)
-    _timer: threading.Timer | None = None
-    _cache_lock: threading.Lock = field(default_factory=threading.Lock)
-    _search_cache: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
-    _children_cache: dict[tuple[str, str, int], dict[str, Any]] = field(
-        default_factory=dict
+
+def _inline_json(value: Any) -> str:
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
     )
 
-    def payload(self) -> dict[str, Any]:
-        """Return the session state as a serializable dict for tool output."""
-        return {
-            "project_root": self.project_root,
-            "chooser_url": self.chooser_url,
-            "local_url": self.local_url,
-            "public_base_url": self.public_base_url,
-            "bind_host": self.bind_host,
-            "bind_port": self.bind_port,
-            "browser_opened": self.browser_opened,
-            "open_browser_attempted": self.open_browser_attempted,
-            "timeout_seconds": self.timeout_seconds,
-            "page_size": self.page_size,
-            "workspace_name": self.workspace_name,
-            "binding_recommendation": self.binding_recommendation,
-            "binding_options": self.binding_options,
-            "binding_question": self.binding_question,
-            "recommended_next_action": (
-                "Use the browser chooser to select roots, "
-                "then verify the result with notion_list_bindings."
-            ),
-            "headless_flow_hint": (
-                "In headless environments, use notion_bind_resource_urls "
-                "when the user can paste exact Notion links. Otherwise combine "
-                "notion_search_resources, notion_discover_children, "
-                "and notion_bind_resources."
-            ),
-        }
 
-    def stop(self) -> None:
-        """Shut down the HTTP server and cancel the timeout timer."""
-        if self._stop_event.is_set():
-            return
-        self._stop_event.set()
-        logger.info("Binding browser session %s stopping", self.session_id)
-        try:
-            self._server.shutdown()
-        except Exception:
-            pass
-        try:
-            self._server.server_close()
-        except Exception:
-            pass
-        if self._timer is not None:
-            self._timer.cancel()
-
-    def wait(self) -> None:
-        """Block until the session is stopped."""
-        self._stop_event.wait()
+def render_binding_browser_page(payload: dict[str, Any]) -> str:
+    return _load_template().replace(_PLACEHOLDER, _inline_json(payload), 1)
 
 
 # ---------------------------------------------------------------------------
-# HTTP response helpers
+# HTTP helpers
 # ---------------------------------------------------------------------------
 
 
@@ -135,20 +132,17 @@ def _send(
     status_code: int = 200,
     extra_headers: dict[str, str] | None = None,
 ) -> None:
-    """Write a complete HTTP response."""
     handler.send_response(status_code)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(body)))
-    for key, value in (extra_headers or {}).items():
-        handler.send_header(key, value)
+    for k, v in (extra_headers or {}).items():
+        handler.send_header(k, v)
     handler.end_headers()
     handler.wfile.write(body)
 
 
 def _json_response(
-    handler: BaseHTTPRequestHandler,
-    payload: dict[str, Any],
-    status_code: int = 200,
+    handler: BaseHTTPRequestHandler, payload: dict[str, Any], status_code: int = 200
 ) -> None:
     _send(
         handler,
@@ -187,19 +181,12 @@ def _read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return decoded
 
 
-# ---------------------------------------------------------------------------
-# Query-string helpers
-# ---------------------------------------------------------------------------
-
-
 def _qs_str(query: dict[str, list[str]], key: str, default: str = "") -> str:
-    """Return the first query-string value for *key*, or *default*."""
     values = query.get(key)
     return str(values[0]) if values else default
 
 
 def _qs_int(query: dict[str, list[str]], key: str, default: int) -> int:
-    """Return the first query-string value for *key* as int, or *default*."""
     values = query.get(key)
     if not values:
         return default
@@ -209,9 +196,13 @@ def _qs_int(query: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
+# ---------------------------------------------------------------------------
+# Origin / URL helpers
+# ---------------------------------------------------------------------------
+
+
 def _is_loopback_host(hostname: str | None) -> bool:
-    clean = str(hostname or "").strip().lower()
-    return clean in {"127.0.0.1", "localhost", "::1"}
+    return str(hostname or "").strip().lower() in {"127.0.0.1", "localhost", "::1"}
 
 
 def _normalize_base_url(url: str) -> str:
@@ -220,17 +211,12 @@ def _normalize_base_url(url: str) -> str:
         raise LabbookError("public_base_url must be an absolute URL.")
     path = parsed.path or "/"
     if not path.endswith("/"):
-        path = path + "/"
+        path += "/"
     return parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
 def _default_port_for_scheme(scheme: str | None) -> int | None:
-    clean = str(scheme or "").strip().lower()
-    if clean == "http":
-        return 80
-    if clean == "https":
-        return 443
-    return None
+    return {"http": 80, "https": 443}.get(str(scheme or "").strip().lower())
 
 
 def _normalized_origin(url: str | None) -> tuple[str, str, int] | None:
@@ -244,22 +230,20 @@ def _normalized_origin(url: str | None) -> tuple[str, str, int] | None:
 
 
 def _same_origin(left: str, right: str) -> bool:
-    left_origin = _normalized_origin(left)
-    right_origin = _normalized_origin(right)
-    if left_origin is None or right_origin is None:
+    lo, ro = _normalized_origin(left), _normalized_origin(right)
+    if lo is None or ro is None:
         return False
-    if left_origin[0] != right_origin[0] or left_origin[2] != right_origin[2]:
+    if lo[0] != ro[0] or lo[2] != ro[2]:
         return False
-    if left_origin[1] == right_origin[1]:
+    if lo[1] == ro[1]:
         return True
-    return _is_loopback_host(left_origin[1]) and _is_loopback_host(right_origin[1])
+    return _is_loopback_host(lo[1]) and _is_loopback_host(ro[1])
 
 
 def _route_prefix_from_url(url: str | None) -> str:
     if not url:
         return ""
-    parsed = parse.urlparse(url)
-    path = str(parsed.path or "").rstrip("/")
+    path = str(parse.urlparse(url).path or "").rstrip("/")
     if not path or path == "/":
         return ""
     return path if path.startswith("/") else f"/{path}"
@@ -288,12 +272,89 @@ def _first_forwarded_value(raw: str | None) -> str | None:
     return clean.split(",", 1)[0].strip() or None
 
 
+# ---------------------------------------------------------------------------
+# Session dataclass
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BindingBrowserSession:
+    session_id: str
+    project_root: str
+    chooser_url: str
+    local_url: str
+    public_base_url: str | None
+    bind_host: str
+    bind_port: int
+    browser_opened: bool
+    open_browser_attempted: bool
+    timeout_seconds: int
+    page_size: int
+    workspace_name: str | None
+    binding_recommendation: dict[str, Any] | None
+    binding_options: list[dict[str, Any]]
+    binding_question: str | None
+    csrf_token: str = field(repr=False)
+    _server: ThreadingHTTPServer = field(repr=False)
+    _thread: threading.Thread = field(repr=False)
+    _route_prefix: str = ""
+    _allowed_origins: set[str] = field(default_factory=set, repr=False)
+    _stop_event: threading.Event = field(default_factory=threading.Event)
+    _timer: threading.Timer | None = None
+    _cache_lock: threading.Lock = field(default_factory=threading.Lock)
+    _search_cache: dict[tuple, dict[str, Any]] = field(default_factory=dict)
+    _children_cache: dict[tuple, dict[str, Any]] = field(default_factory=dict)
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "project_root": self.project_root,
+            "chooser_url": self.chooser_url,
+            "local_url": self.local_url,
+            "public_base_url": self.public_base_url,
+            "bind_host": self.bind_host,
+            "bind_port": self.bind_port,
+            "browser_opened": self.browser_opened,
+            "open_browser_attempted": self.open_browser_attempted,
+            "timeout_seconds": self.timeout_seconds,
+            "page_size": self.page_size,
+            "workspace_name": self.workspace_name,
+            "binding_recommendation": self.binding_recommendation,
+            "binding_options": self.binding_options,
+            "binding_question": self.binding_question,
+            "recommended_next_action": "Use the browser chooser to select roots, then verify the result with notion_list_bindings.",
+            "headless_flow_hint": "In headless environments, use notion_bind_resource_urls when the user can paste exact Notion links. Otherwise combine notion_search_resources, notion_discover_children, and notion_bind_resources.",
+        }
+
+    def stop(self) -> None:
+        if self._stop_event.is_set():
+            return
+        self._stop_event.set()
+        try:
+            self._server.shutdown()
+        except Exception:
+            pass
+        try:
+            self._server.server_close()
+        except Exception:
+            pass
+        if self._timer is not None:
+            self._timer.cancel()
+
+    def wait(self) -> None:
+        self._stop_event.wait()
+
+
+# ---------------------------------------------------------------------------
+# Request context helpers
+# ---------------------------------------------------------------------------
+
+
 def _request_scheme(
     handler: BaseHTTPRequestHandler, session: BindingBrowserSession
 ) -> str:
-    forwarded_proto = _first_forwarded_value(handler.headers.get("X-Forwarded-Proto"))
-    if forwarded_proto:
-        return forwarded_proto
+    fp = _first_forwarded_value(handler.headers.get("X-Forwarded-Proto"))
+    if fp:
+        return fp
     if session.public_base_url:
         parsed = parse.urlparse(session.public_base_url)
         if parsed.scheme:
@@ -304,9 +365,9 @@ def _request_scheme(
 def _request_netloc(
     handler: BaseHTTPRequestHandler, session: BindingBrowserSession
 ) -> str:
-    forwarded_host = _first_forwarded_value(handler.headers.get("X-Forwarded-Host"))
-    if forwarded_host:
-        return forwarded_host
+    fh = _first_forwarded_value(handler.headers.get("X-Forwarded-Host"))
+    if fh:
+        return fh
     host_header = str(handler.headers.get("Host") or "").strip()
     if host_header:
         return host_header
@@ -328,12 +389,10 @@ def _normalized_prefix(prefix: str | None) -> str:
 def _request_route_prefix(
     handler: BaseHTTPRequestHandler, session: BindingBrowserSession
 ) -> str:
-    forwarded_prefix = _normalized_prefix(
+    fp = _normalized_prefix(
         _first_forwarded_value(handler.headers.get("X-Forwarded-Prefix"))
     )
-    if forwarded_prefix:
-        return forwarded_prefix
-    return session._route_prefix
+    return fp if fp else session._route_prefix
 
 
 def _request_base_url(
@@ -347,8 +406,12 @@ def _request_base_url(
 
 
 # ---------------------------------------------------------------------------
-# GET route handlers
+# Route handlers
 # ---------------------------------------------------------------------------
+
+_RouteHandler = Callable[
+    [BaseHTTPRequestHandler, BindingBrowserSession, dict[str, list[str]]], None
+]
 
 
 def _serve_root(
@@ -356,7 +419,7 @@ def _serve_root(
     session: BindingBrowserSession,
     _query: dict[str, list[str]],
 ) -> None:
-    request_base_url = _request_base_url(handler, session)
+    base_url = _request_base_url(handler, session)
     _html_response(
         handler,
         render_binding_browser_page(
@@ -368,8 +431,8 @@ def _serve_root(
                 "binding_options": session.binding_options,
                 "binding_question": session.binding_question,
                 "session_id": session.session_id,
-                "chooser_url": request_base_url,
-                "api_base_url": request_base_url,
+                "chooser_url": base_url,
+                "api_base_url": base_url,
                 "csrf_token": session.csrf_token,
             }
         ),
@@ -381,6 +444,8 @@ def _serve_status(
     session: BindingBrowserSession,
     _query: dict[str, list[str]],
 ) -> None:
+    from .auth import status
+
     _json_response(handler, status(project_root=session.project_root))
 
 
@@ -393,12 +458,13 @@ def _serve_search(
     fetch_all = _qs_str(query, "fetch_all").lower() in ("1", "true", "yes")
     page_size = _qs_int(query, "page_size", session.page_size)
     cache_key = (search_query, page_size, fetch_all)
-
     with session._cache_lock:
         cached = session._search_cache.get(cache_key)
     if cached is not None:
         _json_response(handler, cached)
         return
+    from .auth import notion_client_for_project
+    from .notion import build_search_resources_payload
 
     client, context = notion_client_for_project(session.project_root)
     payload = build_search_resources_payload(
@@ -424,12 +490,13 @@ def _serve_children(
     mode = _qs_str(query, "mode", "shallow").lower() or "shallow"
     limit = _qs_int(query, "limit", 200)
     cache_key = (resource_ref, mode, limit)
-
     with session._cache_lock:
         cached = session._children_cache.get(cache_key)
     if cached is not None:
         _json_response(handler, cached)
         return
+    from .auth import notion_client_for_project
+    from .notion import build_discover_children_payload
 
     client, context = notion_client_for_project(session.project_root)
     payload = build_discover_children_payload(
@@ -450,12 +517,9 @@ def _serve_bindings(
     session: BindingBrowserSession,
     _query: dict[str, list[str]],
 ) -> None:
+    from .notion import list_bindings
+
     _json_response(handler, list_bindings(project_root=session.project_root))
-
-
-# ---------------------------------------------------------------------------
-# POST route handlers
-# ---------------------------------------------------------------------------
 
 
 def _serve_bind(
@@ -463,6 +527,8 @@ def _serve_bind(
     session: BindingBrowserSession,
     _query: dict[str, list[str]],
 ) -> None:
+    from .notion import bind_resources
+
     body = _read_json_body(handler)
     resource_refs = body.get("resource_refs")
     if not isinstance(resource_refs, list):
@@ -482,6 +548,8 @@ def _serve_bind_urls(
     session: BindingBrowserSession,
     _query: dict[str, list[str]],
 ) -> None:
+    from .notion import bind_resource_urls
+
     body = _read_json_body(handler)
     resource_urls = body.get("resource_urls")
     if not isinstance(resource_urls, list):
@@ -490,7 +558,7 @@ def _serve_bind_urls(
         handler,
         bind_resource_urls(
             project_root=session.project_root,
-            resource_urls=[str(item) for item in resource_urls],
+            resource_urls=[str(i) for i in resource_urls],
             selection_scope=body.get("selection_scope") or "subtree",
             default_alias=body.get("default_alias"),
         ),
@@ -506,15 +574,6 @@ def _serve_shutdown(
     threading.Thread(target=session.stop, daemon=True).start()
 
 
-# ---------------------------------------------------------------------------
-# Route tables
-# ---------------------------------------------------------------------------
-
-_RouteHandler = Callable[
-    [BaseHTTPRequestHandler, BindingBrowserSession, dict[str, list[str]]],
-    None,
-]
-
 _GET_ROUTES: dict[str, _RouteHandler] = {
     "/": _serve_root,
     "/api/status": _serve_status,
@@ -522,7 +581,6 @@ _GET_ROUTES: dict[str, _RouteHandler] = {
     "/api/children": _serve_children,
     "/api/bindings": _serve_bindings,
 }
-
 _POST_ROUTES: dict[str, _RouteHandler] = {
     "/api/bind": _serve_bind,
     "/api/bind-urls": _serve_bind_urls,
@@ -536,38 +594,29 @@ _POST_ROUTES: dict[str, _RouteHandler] = {
 
 
 def _binding_browser_handler(session: BindingBrowserSession):
-    """Return a BaseHTTPRequestHandler subclass bound to *session*."""
-
-    class BindingBrowserHandler(BaseHTTPRequestHandler):
+    class Handler(BaseHTTPRequestHandler):
         server_version = "AgentLabbookBindingBrowser/1.0"
 
         def log_message(self, _format: str, *_args: Any) -> None:
             return
 
         def _validate_origin(self) -> bool:
-            """Reject cross-origin mutating requests (CSRF protection)."""
             csrf_token = self.headers.get("X-Labbook-CSRF-Token") or ""
             if csrf_token != session.csrf_token:
                 _json_error(self, "Invalid or missing CSRF token.", 403)
                 return False
-
             allowed_bases = set(session._allowed_origins) | {
                 _request_base_url(self, session).rstrip("/")
             }
-
             origin = self.headers.get("Origin") or ""
             if not origin:
                 return True
-            if any(
-                _same_origin(origin.rstrip("/"), allowed)
-                for allowed in allowed_bases
-            ):
+            if any(_same_origin(origin.rstrip("/"), a) for a in allowed_bases):
                 return True
             if origin == "null":
                 referer = self.headers.get("Referer") or ""
                 if referer and any(
-                    _same_origin(referer.rstrip("/"), allowed)
-                    for allowed in allowed_bases
+                    _same_origin(referer.rstrip("/"), a) for a in allowed_bases
                 ):
                     return True
                 _json_error(self, "Cross-origin request rejected.", 403)
@@ -575,10 +624,7 @@ def _binding_browser_handler(session: BindingBrowserSession):
             _json_error(self, "Cross-origin request rejected.", 403)
             return False
 
-        def _dispatch(
-            self,
-            routes: dict[str, _RouteHandler],
-        ) -> None:
+        def _dispatch(self, routes: dict[str, _RouteHandler]) -> None:
             parsed = parse.urlparse(self.path)
             route_path = _strip_route_prefix(parsed.path, session._route_prefix)
             query = parse.parse_qs(parsed.query)
@@ -590,18 +636,18 @@ def _binding_browser_handler(session: BindingBrowserSession):
                 route_fn(self, session, query)
             except LabbookError as exc:
                 _json_error(self, str(exc), 400)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _json_error(self, f"Unexpected error: {exc}", 500)
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             self._dispatch(_GET_ROUTES)
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             if not self._validate_origin():
                 return
             self._dispatch(_POST_ROUTES)
 
-    return BindingBrowserHandler
+    return Handler
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +658,7 @@ def _binding_browser_handler(session: BindingBrowserSession):
 def start_binding_browser(
     *,
     project_root: str | None = None,
-    open_browser: bool = True,
+    open_browser: bool | None = None,
     timeout_seconds: int = DEFAULT_BINDING_BROWSER_TIMEOUT_SECONDS,
     page_size: int = DEFAULT_BINDING_BROWSER_PAGE_SIZE,
     host: str = "127.0.0.1",
@@ -620,34 +666,30 @@ def start_binding_browser(
     public_base_url: str | None = None,
     allowed_origins: list[str] | None = None,
 ) -> BindingBrowserSession:
-    """Start a local HTTP server for the binding browser UI.
+    from .auth import status
 
-    Returns a :class:`BindingBrowserSession` with the running server.
-    Call :meth:`BindingBrowserSession.stop` to tear it down.
-    """
     root = resolve_project_root(project_root)
     status_payload = status(root)
     if not status_payload.get("authenticated"):
         raise LabbookError(
-            "This project is not authenticated yet. "
-            "Configure the Internal Integration secret before "
-            "opening the binding chooser."
+            "This project is not authenticated yet. Configure the Internal Integration secret before opening the binding chooser."
         )
-
+    likely_headless = status_payload.get("likely_headless")
+    launch_policy = BrowserLaunchPolicy.from_preference(
+        open_browser,
+        likely_headless=bool(likely_headless) if likely_headless is not None else None,
+    )
     bind_host = str(host or "127.0.0.1").strip() or "127.0.0.1"
     bind_port = max(0, int(port or 0))
     server = ThreadingHTTPServer((bind_host, bind_port), BaseHTTPRequestHandler)
     actual_port = int(server.server_address[1])
-    local_url = (
-        f"http://{_display_host_for_bind_host(bind_host)}:{actual_port}/"
-    )
+    local_url = f"http://{_display_host_for_bind_host(bind_host)}:{actual_port}/"
     chooser_url = _normalize_base_url(public_base_url) if public_base_url else local_url
     route_prefix = _route_prefix_from_url(public_base_url)
-    normalized_allowed_origins: set[str] = set()
+    normalized_origins: set[str] = set()
     for candidate in [chooser_url, local_url, *(allowed_origins or [])]:
         if candidate:
-            normalized_allowed_origins.add(str(candidate).rstrip("/"))
-
+            normalized_origins.add(str(candidate).rstrip("/"))
     session = BindingBrowserSession(
         session_id=f"chooser-{time.time_ns()}",
         project_root=str(root),
@@ -657,7 +699,7 @@ def start_binding_browser(
         bind_host=bind_host,
         bind_port=actual_port,
         browser_opened=False,
-        open_browser_attempted=bool(open_browser),
+        open_browser_attempted=launch_policy.should_attempt,
         timeout_seconds=max(30, int(timeout_seconds)),
         page_size=page_size,
         workspace_name=status_payload.get("workspace_name"),
@@ -668,21 +710,14 @@ def start_binding_browser(
         _server=server,
         _thread=threading.Thread(target=server.serve_forever, daemon=True),
         _route_prefix=route_prefix,
-        _allowed_origins=normalized_allowed_origins,
+        _allowed_origins=normalized_origins,
     )
     server.RequestHandlerClass = _binding_browser_handler(session)
-
     session._thread.start()
     session._timer = threading.Timer(session.timeout_seconds, session.stop)
     session._timer.daemon = True
     session._timer.start()
-    session.browser_opened = (
-        open_browser_url(session.chooser_url) if open_browser else False
-    )
-    logger.info(
-        "Binding browser started at %s (session=%s, browser_opened=%s)",
-        session.chooser_url,
-        session.session_id,
-        session.browser_opened,
-    )
+    launch_result = launch_policy.launch(session.chooser_url)
+    session.open_browser_attempted = launch_result.attempted
+    session.browser_opened = launch_result.opened
     return session

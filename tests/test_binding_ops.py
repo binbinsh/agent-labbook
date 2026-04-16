@@ -7,13 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from labbook.binding_ops import (
+from labbook.notion import (
     DEFAULT_SEARCH_PAGE_SIZE,
-    MAX_SEARCH_PAGE_SIZE,
-    MIN_SEARCH_PAGE_SIZE,
-    DEFAULT_DISCOVERY_LIMIT,
-    MAX_DISCOVERY_LIMIT,
-    MIN_DISCOVERY_LIMIT,
+    NOTION_API_BASE,
     _alias_for_resource,
     _endpoint_for_resource,
     _normalize_binding_entry,
@@ -21,12 +17,10 @@ from labbook.binding_ops import (
     _normalize_selection_scope,
     _rank_search_results,
     _slugify_alias,
-    _MAX_ALIAS_SUFFIX,
     normalize_discovery_limit,
     normalize_search_page_size,
     build_list_bindings_payload,
 )
-from labbook.notion_api import NOTION_API_BASE
 from labbook.state import LabbookError
 
 
@@ -44,10 +38,10 @@ class NormalizeSearchPageSizeTests(unittest.TestCase):
         self.assertEqual(normalize_search_page_size("50"), 50)
 
     def test_clamp_below_min(self) -> None:
-        self.assertEqual(normalize_search_page_size(-5), MIN_SEARCH_PAGE_SIZE)
+        self.assertEqual(normalize_search_page_size(-5), 1)
 
     def test_clamp_above_max(self) -> None:
-        self.assertEqual(normalize_search_page_size(500), MAX_SEARCH_PAGE_SIZE)
+        self.assertEqual(normalize_search_page_size(500), 100)
 
     def test_non_integer_raises(self) -> None:
         with self.assertRaises(LabbookError):
@@ -56,13 +50,13 @@ class NormalizeSearchPageSizeTests(unittest.TestCase):
 
 class NormalizeDiscoveryLimitTests(unittest.TestCase):
     def test_default(self) -> None:
-        self.assertEqual(normalize_discovery_limit(None), DEFAULT_DISCOVERY_LIMIT)
+        self.assertEqual(normalize_discovery_limit(None), 50)
 
     def test_clamp_below_min(self) -> None:
-        self.assertEqual(normalize_discovery_limit(0), MIN_DISCOVERY_LIMIT)
+        self.assertEqual(normalize_discovery_limit(0), 1)
 
     def test_clamp_above_max(self) -> None:
-        self.assertEqual(normalize_discovery_limit(9999), MAX_DISCOVERY_LIMIT)
+        self.assertEqual(normalize_discovery_limit(9999), 1000)
 
     def test_non_integer_raises(self) -> None:
         with self.assertRaises(LabbookError):

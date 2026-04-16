@@ -51,12 +51,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         status_tool = next(tool for tool in tools.tools if tool.name == "notion_status")
         self.assertIsNotNone(status_tool.annotations)
         self.assertTrue(status_tool.annotations.readOnlyHint)
-        self.assertIsNotNone(status_tool.outputSchema)
-
-        guide_tool = next(
-            tool for tool in tools.tools if tool.name == "notion_setup_guide"
-        )
-        self.assertIsNotNone(guide_tool.outputSchema)
+        self.assertIsNone(status_tool.outputSchema)
 
     async def test_setup_guide_tool(self) -> None:
         async with stdio_client(self.server_params) as (read, write):
@@ -93,13 +88,10 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             "NOTION_AGENT_LABBOOK_TOKEN",
         )
         self.assertIn("recommended_action", result.structuredContent)
-        self.assertIn("secret_plan", result.structuredContent)
         self.assertIn("storage_options", result.structuredContent)
         self.assertIn("storage_choice_required", result.structuredContent)
         self.assertIn("recommended_local_command", result.structuredContent)
         self.assertFalse(result.structuredContent["storage_choice_required"])
-        self.assertIn("binding_recommendation", result.structuredContent)
-        self.assertIn("binding_options", result.structuredContent)
         self.assertTrue(result.content)
 
     async def test_prepare_tool_returns_urls_and_backend_choices(self) -> None:

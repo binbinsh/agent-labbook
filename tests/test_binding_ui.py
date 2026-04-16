@@ -1,4 +1,4 @@
-"""Tests for binding_ui — CSRF protection, HTTP error handling, endpoints."""
+"""Tests for browser_ui — CSRF protection, HTTP error handling, endpoints."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 from urllib import request as urlrequest
 
-from labbook.binding_ui import start_binding_browser
+from labbook.browser_ui import start_binding_browser
 from labbook.state import LabbookError, bindings_path, load_project_bindings
 
 
@@ -32,13 +32,13 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             **extra,
         }
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -47,7 +47,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -77,13 +77,13 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             finally:
                 session.stop()
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -92,7 +92,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -119,13 +119,13 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             finally:
                 session.stop()
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -134,7 +134,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -146,7 +146,9 @@ class BindingBrowserCsrfTests(unittest.TestCase):
     def test_loopback_alias_origin_post_accepted(self, *_mocks: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             session = self._start_session(tmpdir)
-            local_origin = session.chooser_url.rstrip("/").replace("127.0.0.1", "localhost")
+            local_origin = session.chooser_url.rstrip("/").replace(
+                "127.0.0.1", "localhost"
+            )
             try:
                 req = urlrequest.Request(
                     f"{session.chooser_url}api/shutdown",
@@ -160,13 +162,13 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             finally:
                 session.stop()
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -175,7 +177,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -204,13 +206,13 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             finally:
                 session.stop()
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -219,7 +221,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -230,7 +232,12 @@ class BindingBrowserCsrfTests(unittest.TestCase):
     )
     def test_missing_csrf_token_rejected(self, *_mocks: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            session = self._start_session(tmpdir)
+            session = start_binding_browser(
+                project_root=tmpdir,
+                open_browser=False,
+                timeout_seconds=60,
+                page_size=7,
+            )
             try:
                 req = urlrequest.Request(
                     f"{session.chooser_url}api/shutdown",
@@ -246,13 +253,13 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             finally:
                 session.stop()
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -261,7 +268,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -301,13 +308,13 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             finally:
                 session.stop()
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -316,7 +323,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -368,7 +375,7 @@ class BindingBrowserCsrfTests(unittest.TestCase):
 
 class BindingBrowserUnauthenticatedTests(unittest.TestCase):
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={"authenticated": False},
     )
     def test_unauthenticated_project_raises(self, _status_mock: mock.Mock) -> None:
@@ -381,14 +388,42 @@ class BindingBrowserUnauthenticatedTests(unittest.TestCase):
             self.assertIn("not authenticated", str(ctx.exception))
 
 
-class BindingBrowserGetEndpointTests(unittest.TestCase):
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+class BindingBrowserStartTests(unittest.TestCase):
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.status",
+        return_value={"authenticated": True, "likely_headless": True},
+    )
+    def test_headless_default_skips_auto_browser_open(
+        self,
+        _status_mock: mock.Mock,
+    ) -> None:
+        with mock.patch(
+            "labbook.browser_ui.webbrowser.open",
+            return_value=True,
+        ) as open_mock:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                session = start_binding_browser(
+                    project_root=tmpdir,
+                    timeout_seconds=60,
+                    page_size=7,
+                )
+                try:
+                    self.assertFalse(session.open_browser_attempted)
+                    self.assertFalse(session.browser_opened)
+                finally:
+                    session.stop()
+
+        open_mock.assert_not_called()
+
+
+class BindingBrowserGetEndpointTests(unittest.TestCase):
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
+    @mock.patch(
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -397,7 +432,7 @@ class BindingBrowserGetEndpointTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -425,13 +460,13 @@ class BindingBrowserGetEndpointTests(unittest.TestCase):
             finally:
                 session.stop()
 
-    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch("labbook.notion.list_bindings", return_value={"resources": []})
     @mock.patch(
-        "labbook.binding_ui.notion_client_for_project",
+        "labbook.auth.notion_client_for_project",
         return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
     )
     @mock.patch(
-        "labbook.binding_ui.build_search_resources_payload",
+        "labbook.notion.build_search_resources_payload",
         return_value={
             "results": [],
             "result_count": 0,
@@ -440,7 +475,7 @@ class BindingBrowserGetEndpointTests(unittest.TestCase):
         },
     )
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -469,7 +504,7 @@ class BindingBrowserGetEndpointTests(unittest.TestCase):
 
 class BindingBrowserBindEndpointTests(unittest.TestCase):
     @mock.patch(
-        "labbook.binding_ui.status",
+        "labbook.auth.status",
         return_value={
             "authenticated": True,
             "workspace_name": "Test",
@@ -478,9 +513,7 @@ class BindingBrowserBindEndpointTests(unittest.TestCase):
             "binding_question": None,
         },
     )
-    def test_bind_persists_bindings_file(
-        self, _status_mock: mock.Mock
-    ) -> None:
+    def test_bind_persists_bindings_file(self, _status_mock: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             expected_bindings_path = str(bindings_path(tmpdir))
             fake_client = mock.Mock()
@@ -494,7 +527,7 @@ class BindingBrowserBindEndpointTests(unittest.TestCase):
                             "type": "title",
                             "title": [{"plain_text": "Project Home"}],
                         }
-                    }
+                    },
                 },
                 "page",
             )
@@ -506,7 +539,7 @@ class BindingBrowserBindEndpointTests(unittest.TestCase):
             )
             try:
                 with mock.patch(
-                    "labbook.auth_flow.notion_client_for_project",
+                    "labbook.auth.notion_client_for_project",
                     side_effect=lambda project_root=None: (
                         fake_client,
                         {"project_root": str(project_root)},

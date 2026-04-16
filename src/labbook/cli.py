@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any
 
 from . import __version__
-from .auth_flow import configure_internal_integration, status
+from .auth import configure_internal_integration, status
 from .state import (
     TOKEN_ENV_VAR,
     bindings_path,
@@ -166,7 +166,7 @@ def _configure_secret_command(args: argparse.Namespace) -> int:
 def _run_mcp_command() -> int:
     """Launch the MCP stdio server."""
     try:
-        from .mcp_server import main as mcp_main
+        from .server import main as mcp_main
     except ModuleNotFoundError as exc:
         if exc.name == "mcp":
             raise RuntimeError(

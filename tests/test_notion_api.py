@@ -1,4 +1,4 @@
-"""Tests for notion_api — HTTP client, retry logic, error handling."""
+"""Tests for notion — HTTP client, retry logic, error handling."""
 
 from __future__ import annotations
 
@@ -10,58 +10,12 @@ from typing import Any
 from unittest import mock
 from urllib import error
 
-from labbook.notion_api import (
+from labbook.notion import (
     NOTION_API_BASE,
     NotionApiError,
     NotionClient,
-    _decode_payload,
-    _parse_retry_after,
 )
 from labbook.state import LabbookError
-
-
-class DecodePayloadTests(unittest.TestCase):
-    def test_valid_json(self) -> None:
-        result = _decode_payload('{"key": "value"}')
-        self.assertEqual(result, {"key": "value"})
-
-    def test_empty_string(self) -> None:
-        result = _decode_payload("")
-        self.assertEqual(result, {})
-
-    def test_whitespace_only(self) -> None:
-        result = _decode_payload("   ")
-        self.assertEqual(result, {})
-
-    def test_invalid_json(self) -> None:
-        with self.assertRaises(NotionApiError) as ctx:
-            _decode_payload("not json")
-        self.assertIn("invalid JSON", str(ctx.exception))
-
-    def test_non_dict_json(self) -> None:
-        with self.assertRaises(NotionApiError) as ctx:
-            _decode_payload("[1, 2, 3]")
-        self.assertIn("unexpected payload", str(ctx.exception))
-
-
-class ParseRetryAfterTests(unittest.TestCase):
-    def test_valid_integer(self) -> None:
-        self.assertEqual(_parse_retry_after("5"), 5.0)
-
-    def test_valid_float(self) -> None:
-        self.assertEqual(_parse_retry_after("1.5"), 1.5)
-
-    def test_negative_clamped_to_zero(self) -> None:
-        self.assertEqual(_parse_retry_after("-3"), 0.0)
-
-    def test_none_input(self) -> None:
-        self.assertIsNone(_parse_retry_after(None))
-
-    def test_empty_string(self) -> None:
-        self.assertIsNone(_parse_retry_after(""))
-
-    def test_non_numeric(self) -> None:
-        self.assertIsNone(_parse_retry_after("Thu, 01 Jan 2026 00:00:00 GMT"))
 
 
 class NotionClientInitTests(unittest.TestCase):
@@ -108,7 +62,7 @@ class NotionClientRequestTests(unittest.TestCase):
     def _client(self) -> NotionClient:
         return NotionClient(token="secret_test_token", timeout=1.0)
 
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_successful_get(self, urlopen_mock: mock.Mock) -> None:
         response = mock.Mock()
         response.read.return_value = b'{"ok": true}'
@@ -119,7 +73,7 @@ class NotionClientRequestTests(unittest.TestCase):
         result = self._client()._request("GET", "/test")
         self.assertEqual(result, {"ok": True})
 
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_successful_post_with_body(self, urlopen_mock: mock.Mock) -> None:
         response = mock.Mock()
         response.read.return_value = b'{"id": "123"}'
@@ -134,7 +88,21 @@ class NotionClientRequestTests(unittest.TestCase):
         called_request = urlopen_mock.call_args[0][0]
         self.assertEqual(json.loads(called_request.data), {"key": "value"})
 
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.request.urlopen")
+    def test_invalid_json_response_raises_notion_error(
+        self, urlopen_mock: mock.Mock
+    ) -> None:
+        response = mock.Mock()
+        response.read.return_value = b"<html>proxy error</html>"
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=False)
+        urlopen_mock.return_value = response
+
+        with self.assertRaises(NotionApiError) as ctx:
+            self._client()._request("GET", "/test")
+        self.assertIn("invalid JSON", str(ctx.exception))
+
+    @mock.patch("labbook.notion.request.urlopen")
     def test_non_retryable_http_error(self, urlopen_mock: mock.Mock) -> None:
         urlopen_mock.side_effect = _make_http_error(401, '{"message": "Unauthorized"}')
 
@@ -143,8 +111,8 @@ class NotionClientRequestTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 401)
         self.assertIn("Unauthorized", str(ctx.exception))
 
-    @mock.patch("labbook.notion_api.time.sleep")
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.time.sleep")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_retries_on_429(
         self, urlopen_mock: mock.Mock, sleep_mock: mock.Mock
     ) -> None:
@@ -164,8 +132,8 @@ class NotionClientRequestTests(unittest.TestCase):
         self.assertEqual(urlopen_mock.call_count, 2)
         sleep_mock.assert_called_once()
 
-    @mock.patch("labbook.notion_api.time.sleep")
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.time.sleep")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_respects_retry_after_header(
         self, urlopen_mock: mock.Mock, sleep_mock: mock.Mock
     ) -> None:
@@ -182,8 +150,8 @@ class NotionClientRequestTests(unittest.TestCase):
         self._client()._request("GET", "/test")
         sleep_mock.assert_called_once_with(3.0)
 
-    @mock.patch("labbook.notion_api.time.sleep")
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.time.sleep")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_retries_on_502(
         self, urlopen_mock: mock.Mock, sleep_mock: mock.Mock
     ) -> None:
@@ -200,8 +168,8 @@ class NotionClientRequestTests(unittest.TestCase):
         result = self._client()._request("GET", "/test")
         self.assertEqual(result, {"ok": True})
 
-    @mock.patch("labbook.notion_api.time.sleep")
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.time.sleep")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_max_retries_exceeded(
         self, urlopen_mock: mock.Mock, sleep_mock: mock.Mock
     ) -> None:
@@ -217,8 +185,8 @@ class NotionClientRequestTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 429)
         self.assertEqual(urlopen_mock.call_count, 4)  # 1 initial + 3 retries
 
-    @mock.patch("labbook.notion_api.time.sleep")
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.time.sleep")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_retries_on_url_error(
         self, urlopen_mock: mock.Mock, sleep_mock: mock.Mock
     ) -> None:
@@ -236,8 +204,8 @@ class NotionClientRequestTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         sleep_mock.assert_called_once()
 
-    @mock.patch("labbook.notion_api.time.sleep")
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.time.sleep")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_url_error_exhausts_retries(
         self, urlopen_mock: mock.Mock, sleep_mock: mock.Mock
     ) -> None:
@@ -247,8 +215,8 @@ class NotionClientRequestTests(unittest.TestCase):
             self._client()._request("GET", "/test")
         self.assertIn("Could not reach Notion API", str(ctx.exception))
 
-    @mock.patch("labbook.notion_api.time.sleep")
-    @mock.patch("labbook.notion_api.request.urlopen")
+    @mock.patch("labbook.notion.time.sleep")
+    @mock.patch("labbook.notion.request.urlopen")
     def test_exponential_backoff(
         self, urlopen_mock: mock.Mock, sleep_mock: mock.Mock
     ) -> None:

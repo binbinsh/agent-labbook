@@ -10,7 +10,6 @@ from uuid import UUID
 
 logger = logging.getLogger("labbook.state")
 
-
 INTEGRATION_ID = "agent-labbook"
 DEFAULT_NOTION_VERSION = "2026-03-11"
 PROJECT_STATE_DIRNAME = ".labbook"
@@ -62,21 +61,18 @@ def bindings_path(project_root: str | Path | None = None) -> Path:
 
 
 def _normalize_state_payload(
-    path: Path,
-    payload: dict[str, Any],
-    *,
-    for_save: bool,
+    path: Path, payload: dict[str, Any], *, for_save: bool
 ) -> dict[str, Any]:
     spec = _STATE_SCHEMA_SPECS.get(path.name)
     if spec is None:
         return dict(payload)
-
-    label = str(spec["label"])
-    current_version = int(spec["version"])
-    inject_integration = bool(spec["inject_integration"])
+    label, current_version, inject_integration = (
+        str(spec["label"]),
+        int(spec["version"]),
+        bool(spec["inject_integration"]),
+    )
     normalized = dict(payload)
     version_raw = normalized.get("version")
-
     if version_raw in (None, ""):
         version = 0
     else:
@@ -86,7 +82,6 @@ def _normalize_state_payload(
             raise LabbookError(
                 f"{label} has an invalid version field: {version_raw!r}."
             ) from exc
-
     if for_save:
         if version not in {0, current_version}:
             raise LabbookError(
@@ -101,7 +96,6 @@ def _normalize_state_payload(
             raise LabbookError(
                 f"{label} uses unsupported version {version}. Current version is {current_version}."
             )
-
     normalized["version"] = current_version
     if inject_integration:
         integration = (
@@ -125,7 +119,6 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         raise LabbookError(f"Invalid JSON in {path}") from exc
     if not isinstance(payload, dict):
         raise LabbookError(f"Expected an object in {path}")
-    logger.debug("Loaded state from %s", path)
     return _normalize_state_payload(path, payload, for_save=False)
 
 
@@ -136,7 +129,7 @@ def _save_json(path: Path, payload: dict[str, Any]) -> Path:
         try:
             os.chmod(path.parent, 0o700)
         except OSError:
-            logger.debug("Could not set permissions on %s", path.parent)
+            pass
     path.write_text(
         json.dumps(normalized_payload, ensure_ascii=False, indent=2, sort_keys=True)
         + "\n",
@@ -146,8 +139,7 @@ def _save_json(path: Path, payload: dict[str, Any]) -> Path:
         try:
             os.chmod(path, 0o600)
         except OSError:
-            logger.debug("Could not set permissions on %s", path)
-    logger.debug("Saved state to %s", path)
+            pass
     return path
 
 
@@ -195,7 +187,6 @@ def normalize_notion_id(value: str) -> str:
     raw = str(value or "").strip()
     if not raw:
         raise LabbookError("Notion resource ID cannot be empty.")
-
     candidates = re.findall(
         r"[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         raw,
@@ -205,5 +196,4 @@ def normalize_notion_id(value: str) -> str:
             return str(UUID(candidate))
         except ValueError:
             continue
-
     raise LabbookError(f"Could not find a valid Notion resource ID in {value!r}.")
