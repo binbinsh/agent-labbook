@@ -281,6 +281,71 @@ def _display_host_for_bind_host(host: str) -> str:
     return "127.0.0.1" if clean in {"0.0.0.0", "::", ""} else clean
 
 
+def _first_forwarded_value(raw: str | None) -> str | None:
+    clean = str(raw or "").strip()
+    if not clean:
+        return None
+    return clean.split(",", 1)[0].strip() or None
+
+
+def _request_scheme(
+    handler: BaseHTTPRequestHandler, session: BindingBrowserSession
+) -> str:
+    forwarded_proto = _first_forwarded_value(handler.headers.get("X-Forwarded-Proto"))
+    if forwarded_proto:
+        return forwarded_proto
+    if session.public_base_url:
+        parsed = parse.urlparse(session.public_base_url)
+        if parsed.scheme:
+            return parsed.scheme
+    return "http"
+
+
+def _request_netloc(
+    handler: BaseHTTPRequestHandler, session: BindingBrowserSession
+) -> str:
+    forwarded_host = _first_forwarded_value(handler.headers.get("X-Forwarded-Host"))
+    if forwarded_host:
+        return forwarded_host
+    host_header = str(handler.headers.get("Host") or "").strip()
+    if host_header:
+        return host_header
+    parsed = parse.urlparse(session.chooser_url)
+    if parsed.netloc:
+        return parsed.netloc
+    return f"{_display_host_for_bind_host(session.bind_host)}:{session.bind_port}"
+
+
+def _normalized_prefix(prefix: str | None) -> str:
+    clean = str(prefix or "").strip()
+    if not clean:
+        return ""
+    if not clean.startswith("/"):
+        clean = f"/{clean}"
+    return clean.rstrip("/")
+
+
+def _request_route_prefix(
+    handler: BaseHTTPRequestHandler, session: BindingBrowserSession
+) -> str:
+    forwarded_prefix = _normalized_prefix(
+        _first_forwarded_value(handler.headers.get("X-Forwarded-Prefix"))
+    )
+    if forwarded_prefix:
+        return forwarded_prefix
+    return session._route_prefix
+
+
+def _request_base_url(
+    handler: BaseHTTPRequestHandler, session: BindingBrowserSession
+) -> str:
+    scheme = _request_scheme(handler, session)
+    netloc = _request_netloc(handler, session)
+    prefix = _request_route_prefix(handler, session)
+    path = (prefix + "/") if prefix else "/"
+    return parse.urlunparse((scheme, netloc, path, "", "", ""))
+
+
 # ---------------------------------------------------------------------------
 # GET route handlers
 # ---------------------------------------------------------------------------
@@ -291,6 +356,7 @@ def _serve_root(
     session: BindingBrowserSession,
     _query: dict[str, list[str]],
 ) -> None:
+    request_base_url = _request_base_url(handler, session)
     _html_response(
         handler,
         render_binding_browser_page(
@@ -302,8 +368,8 @@ def _serve_root(
                 "binding_options": session.binding_options,
                 "binding_question": session.binding_question,
                 "session_id": session.session_id,
-                "chooser_url": session.chooser_url,
-                "api_base_url": session.chooser_url,
+                "chooser_url": request_base_url,
+                "api_base_url": request_base_url,
                 "csrf_token": session.csrf_token,
             }
         ),
@@ -485,19 +551,23 @@ def _binding_browser_handler(session: BindingBrowserSession):
                 _json_error(self, "Invalid or missing CSRF token.", 403)
                 return False
 
+            allowed_bases = set(session._allowed_origins) | {
+                _request_base_url(self, session).rstrip("/")
+            }
+
             origin = self.headers.get("Origin") or ""
             if not origin:
                 return True
             if any(
                 _same_origin(origin.rstrip("/"), allowed)
-                for allowed in session._allowed_origins
+                for allowed in allowed_bases
             ):
                 return True
             if origin == "null":
                 referer = self.headers.get("Referer") or ""
                 if referer and any(
                     _same_origin(referer.rstrip("/"), allowed)
-                    for allowed in session._allowed_origins
+                    for allowed in allowed_bases
                 ):
                     return True
                 _json_error(self, "Cross-origin request rejected.", 403)

@@ -301,6 +301,70 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             finally:
                 session.stop()
 
+    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch(
+        "labbook.binding_ui.notion_client_for_project",
+        return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
+    )
+    @mock.patch(
+        "labbook.binding_ui.build_search_resources_payload",
+        return_value={
+            "results": [],
+            "result_count": 0,
+            "page_size": 7,
+            "project_root": "/tmp",
+        },
+    )
+    @mock.patch(
+        "labbook.binding_ui.status",
+        return_value={
+            "authenticated": True,
+            "workspace_name": "Test",
+            "binding_recommendation": None,
+            "binding_options": [],
+            "binding_question": None,
+        },
+    )
+    def test_direct_remote_host_origin_accepted_without_public_base_url(
+        self, *_mocks: mock.Mock
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = start_binding_browser(
+                project_root=tmpdir,
+                open_browser=False,
+                timeout_seconds=60,
+                page_size=7,
+                host="0.0.0.0",
+            )
+            remote_host = f"172.16.0.88:{session.bind_port}"
+            remote_origin = f"http://{remote_host}"
+            try:
+                response = urlrequest.urlopen(
+                    urlrequest.Request(
+                        session.local_url,
+                        headers={"Host": remote_host},
+                    ),
+                    timeout=5,
+                )
+                html = response.read().decode("utf-8")
+                self.assertIn(f'"api_base_url": "{remote_origin}/"', html)
+
+                req = urlrequest.Request(
+                    f"{session.local_url}api/shutdown",
+                    data=b"{}",
+                    headers=self._csrf_headers(
+                        session,
+                        Origin=remote_origin,
+                        Host=remote_host,
+                    ),
+                    method="POST",
+                )
+                response = urlrequest.urlopen(req, timeout=5)
+                payload = json.loads(response.read().decode("utf-8"))
+                self.assertTrue(payload.get("ok"))
+            finally:
+                session.stop()
+
 
 class BindingBrowserUnauthenticatedTests(unittest.TestCase):
     @mock.patch(
