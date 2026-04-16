@@ -263,9 +263,16 @@ function formatTypeLabel(type) {
   return String(type || "resource").replace(/_/g, " ");
 }
 
+function formatDate(value) {
+  if (!value) return null;
+  try {
+    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(value));
+  } catch { return null; }
+}
+
 function matchesQuery(resource, query) {
   if (!query) return true;
-  const hay = [resource.title, resource.resource_id, resource.resource_type, resource.resource_url];
+  const hay = [resource.title, resource.resource_id, resource.resource_type, resource.parent_id, resource.parent_type, resource.parent_database_id, resource.resource_url];
   return hay.some((v) => String(v || "").toLowerCase().includes(query));
 }
 
@@ -329,6 +336,7 @@ function ResourceRow({
 
   return h("div", {
     "data-resource-id": resource.resource_id,
+    "data-selected-state": selectedState,
     className: cn(
       "flex min-h-9 items-center gap-2 rounded-lg px-2 py-1.5 transition",
       selectedState === "explicit" ? "bg-stone-100"
@@ -336,7 +344,7 @@ function ResourceRow({
         : "hover:bg-stone-50",
     ),
     style: { paddingLeft: (8 + depth * 18) + "px" },
-    title: [resource.title || "Untitled", formatTypeLabel(resource.resource_type), resource.resource_id].filter(Boolean).join("\n"),
+    title: [resource.title || "Untitled", formatTypeLabel(resource.resource_type), resource.resource_id, formatDate(resource.last_edited_time) ? "Edited " + formatDate(resource.last_edited_time) : null].filter(Boolean).join("\n"),
   },
     canExpand
       ? h("button", {
@@ -534,7 +542,7 @@ function SelectionApp() {
     const hasKnownChildren = Boolean((childIndex.get(rid) || []).length);
     const hasBeenFetched = discoveredByRoot.has(rid);
     if (!hasKnownChildren && !hasBeenFetched) return false;
-    if (searchActive) return true;
+    if (searchActive) return !collapsedIds.has(rid);
     return !collapsedIds.has(rid);
   }
 

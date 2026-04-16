@@ -98,6 +98,10 @@ class RenderBindingBrowserPageTests(unittest.TestCase):
         self.assertIn('backgroundColor: checked ? "#1c1917" : "#ffffff"', html)
         self.assertIn('borderColor: checked ? "#1c1917" : "#d6d3d1"', html)
 
+    def test_search_mode_still_respects_manual_tree_collapse(self) -> None:
+        html = render_binding_browser_page({})
+        self.assertIn("if (searchActive) return !collapsedIds.has(rid);", html)
+
 
 if __name__ == "__main__":
     unittest.main()
