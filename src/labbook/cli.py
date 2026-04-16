@@ -156,8 +156,6 @@ def _configure_secret_command(args: argparse.Namespace) -> int:
         secret=secret,
         project_root=project_root,
         storage=args.storage,
-        op_vault=args.op_vault,
-        op_item_title=args.op_item_title,
     )
     _json_dump(payload)
     return 0
@@ -234,22 +232,11 @@ def build_parser() -> argparse.ArgumentParser:
     secret_parser.add_argument(
         "--storage",
         default="auto",
-        choices=["auto", "keychain", "1password"],
+        choices=["auto", "keychain"],
         help=(
             "Local storage backend for the secret. "
-            "'auto' prefers keychain when available and otherwise "
-            "falls back to 1Password."
+            "'auto' selects the system keychain when available."
         ),
-    )
-    secret_parser.add_argument(
-        "--op-vault",
-        default=None,
-        help="Optional 1Password vault name or ID.",
-    )
-    secret_parser.add_argument(
-        "--op-item-title",
-        default=None,
-        help="Optional 1Password item title.",
     )
     secret_parser.set_defaults(func=_configure_secret_command)
 

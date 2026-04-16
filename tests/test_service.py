@@ -48,18 +48,6 @@ BACKENDS_BOTH = [
         "reason": None,
         "details": {"keyring_backend": "Keyring"},
     },
-    {
-        "backend": "1password",
-        "display_name": "1Password",
-        "available": True,
-        "selected_by_default": False,
-        "reason": None,
-        "details": {
-            "cli_path": "/opt/homebrew/bin/op",
-            "signed_in": True,
-            "vaults": [],
-        },
-    },
 ]
 
 BACKENDS_KEYCHAIN_ONLY = [
@@ -70,14 +58,6 @@ BACKENDS_KEYCHAIN_ONLY = [
         "selected_by_default": True,
         "reason": None,
         "details": {"keyring_backend": "Keyring"},
-    },
-    {
-        "backend": "1password",
-        "display_name": "1Password",
-        "available": False,
-        "selected_by_default": False,
-        "reason": "The 1Password CLI (`op`) is not installed.",
-        "details": {"cli_path": None, "signed_in": False, "vaults": []},
     },
 ]
 
@@ -218,38 +198,6 @@ class ServiceTests(unittest.TestCase):
         keyring_mock.set_password.assert_called_once()
         self.assertEqual(payload["storage"], "keychain")
 
-    def test_configure_internal_integration_auto_preserves_existing_backend(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            save_project_session(
-                tmpdir,
-                {
-                    "storage": "1password",
-                    "op_item_id": "existing-item",
-                    "op_ref": "op://vault/existing-item/password",
-                },
-            )
-            with mock.patch(
-                "labbook.auth._available_storage_backends",
-                return_value=BACKENDS_BOTH,
-            ):
-                with mock.patch("labbook.auth.NotionClient.get_me", return_value={}):
-                    with mock.patch(
-                        "labbook.auth.op_store_token",
-                        return_value={
-                            "op_item_id": "new-item",
-                            "op_ref": "op://vault/new-item/password",
-                        },
-                    ) as store_mock:
-                        payload = configure_internal_integration(
-                            secret="secret_test_token",
-                            project_root=tmpdir,
-                        )
-
-        store_mock.assert_called_once()
-        self.assertEqual(payload["storage"], "1password")
-
     def test_configure_internal_integration_stores_secret_in_keyring_and_session(
         self,
     ) -> None:
@@ -286,42 +234,6 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(session_payload["storage"], "keychain")
         self.assertEqual(session_payload["workspace_name"], "Workspace One")
         self.assertEqual(session_payload["bot_id"], "bot-user-id")
-
-    def test_configure_internal_integration_stores_secret_in_onepassword(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            onepassword_metadata = {
-                "op_item_id": "item-123",
-                "op_item_title": "Notion Agent Labbook",
-                "op_vault": "Private",
-                "op_vault_id": "vault-123",
-                "op_ref": "op://vault-123/item-123/password",
-            }
-            with mock.patch(
-                "labbook.auth._available_storage_backends",
-                return_value=BACKENDS_BOTH,
-            ):
-                with mock.patch(
-                    "labbook.auth.op_store_token",
-                    return_value=onepassword_metadata,
-                ) as store_mock:
-                    with mock.patch(
-                        "labbook.auth.NotionClient.get_me",
-                        return_value={"id": "bot-user-id", "bot": {}},
-                    ):
-                        payload = configure_internal_integration(
-                            secret="secret_test_token",
-                            project_root=tmpdir,
-                            storage="1password",
-                            op_vault="Private",
-                        )
-                        session_payload = load_project_session(tmpdir)
-
-        store_mock.assert_called_once()
-        self.assertEqual(payload["token_source"], "1password")
-        self.assertEqual(payload["storage"], "1password")
-        self.assertIsNotNone(session_payload)
-        self.assertEqual(session_payload["storage"], "1password")
-        self.assertEqual(session_payload["op_item_id"], "item-123")
 
     def test_search_resources_normalizes_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -601,29 +513,6 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["workspace_name"], "Workspace One")
         self.assertEqual(len(payload["bound_resources"]), 1)
 
-    def test_get_api_context_reads_secret_from_onepassword(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            save_project_session(
-                tmpdir,
-                {
-                    "storage": "1password",
-                    "workspace_name": "Workspace One",
-                    "workspace_id": "workspace-id",
-                    "bot_id": "bot-id",
-                    "op_item_id": "item-123",
-                    "op_vault_id": "vault-123",
-                    "op_ref": "op://vault-123/item-123/password",
-                },
-            )
-            with mock.patch(
-                "labbook.storage.op_command", return_value=("secret_op_token", None)
-            ):
-                payload = get_api_context(tmpdir)
-
-        self.assertEqual(payload["token_source"], "1password")
-        self.assertEqual(payload["storage"], "1password")
-        self.assertEqual(payload["access_token"], "secret_op_token")
-
     def test_status_recommends_current_configured_backend_when_it_is_working(
         self,
     ) -> None:
@@ -631,10 +520,9 @@ class ServiceTests(unittest.TestCase):
             save_project_session(
                 tmpdir,
                 {
-                    "storage": "1password",
-                    "op_item_id": "item-123",
-                    "op_vault_id": "vault-123",
-                    "op_ref": "op://vault-123/item-123/password",
+                    "storage": "keychain",
+                    "keyring_service": KEYRING_SERVICE_NAME,
+                    "keyring_account": "project-root:/tmp/example",
                 },
             )
             with mock.patch(
@@ -642,12 +530,12 @@ class ServiceTests(unittest.TestCase):
                 return_value=BACKENDS_BOTH,
             ):
                 with mock.patch(
-                    "labbook.storage.op_command",
-                    return_value=("secret_op_token", None),
+                    "labbook.storage.keyring.get_password",
+                    return_value="secret_keychain_token",
                 ):
                     payload = status(tmpdir)
 
-        self.assertEqual(payload["token_source"], "1password")
+        self.assertEqual(payload["token_source"], "keychain")
 
     def test_clear_project_auth_deletes_keyring_secret_and_bindings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -681,25 +569,6 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(payload["bindings_cleared"])
         self.assertIsNone(remaining_session)
         self.assertIsNone(remaining_bindings)
-
-    def test_clear_project_auth_deletes_onepassword_item(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            save_project_session(
-                tmpdir,
-                {
-                    "storage": "1password",
-                    "op_item_id": "item-123",
-                    "op_vault_id": "vault-123",
-                },
-            )
-            with mock.patch(
-                "labbook.storage.op_command", return_value=("", None)
-            ) as op_mock:
-                payload = clear_project_auth(project_root=tmpdir)
-
-        op_mock.assert_called_once()
-        self.assertEqual(payload["storage"], "1password")
-        self.assertTrue(payload["stored_secret_deleted"])
 
     def test_search_page_size_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -11,7 +11,7 @@ No OAuth, no hosted broker, no cloud worker. You connect Notion once, store the 
 
 ## What It Does
 
-- Stores your Notion Internal Integration secret in the system keychain or 1Password
+- Stores your Notion Internal Integration secret in the local system keychain
 - Lets an MCP client search, discover, and bind specific Notion pages or data sources
 - Returns API headers and bound resource IDs for direct Notion API calls
 - Provides a browser-based resource chooser for desktop environments
@@ -36,12 +36,6 @@ Recommended on a workstation:
 uvx agent-labbook configure-secret --storage keychain
 ```
 
-Optional 1Password flow:
-
-```bash
-uvx agent-labbook configure-secret --storage 1password --op-vault Private
-```
-
 CI or temporary override:
 
 ```bash
@@ -51,7 +45,6 @@ export NOTION_AGENT_LABBOOK_TOKEN=secret_xxx
 Default policy:
 
 - `keychain` is the default local backend
-- `1password` is opt-in
 - `NOTION_AGENT_LABBOOK_TOKEN` is for CI or temporary overrides
 
 ## 3. Install The MCP Server
@@ -126,7 +119,7 @@ Typical flow:
 | `notion_open_binding_browser` | Start a local browser-based chooser for selecting Notion roots. | No | No |
 | `notion_list_bindings` | List the Notion resources currently bound to this project. | Yes | No |
 | `notion_get_api_context` | Return the Internal Integration secret, official Notion API headers, and bound resource IDs for direct API calls. | Yes | No |
-| `notion_clear_project_auth` | Remove the saved project-local session and delete the stored keychain or 1Password secret. | No | Yes |
+| `notion_clear_project_auth` | Remove the saved project-local session and delete the stored keychain secret. | No | Yes |
 
 ### Resources (3)
 
@@ -155,7 +148,7 @@ Typical flow:
 | Command | Description |
 |---------|-------------|
 | `agent-labbook mcp` | Run the MCP stdio server. |
-| `agent-labbook configure-secret` | Prompt for the Notion Internal Integration secret and store it locally. Supports `--storage`, `--op-vault`, `--op-item-title`. |
+| `agent-labbook configure-secret` | Prompt for the Notion Internal Integration secret and store it locally. Supports `--storage`. |
 | `agent-labbook doctor` | Inspect local Notion Agent Labbook state and print diagnostics as JSON. |
 | `agent-labbook print-mcp-config` | Print a reusable `uvx`-based MCP server config snippet. |
 

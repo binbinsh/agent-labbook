@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,10 +32,6 @@ from .storage import (
     keychain_delete_token,
     keychain_retrieve_token,
     keychain_store_token,
-    op_backend_status,
-    op_delete_token,
-    op_retrieve_token,
-    op_store_token,
 )
 
 logger = logging.getLogger("labbook.auth")
@@ -48,7 +45,7 @@ DEFAULT_NOTION_INTEGRATIONS_URL = "https://www.notion.so/my-integrations"
 NOTION_INTEGRATION_GUIDE_URL = (
     "https://developers.notion.com/guides/get-started/create-a-notion-integration"
 )
-SUPPORTED_STORAGE_BACKENDS = ("keychain", "1password")
+SUPPORTED_STORAGE_BACKENDS = ("keychain",)
 DEFAULT_PERSISTENT_STORAGE = "keychain"
 
 
@@ -67,15 +64,13 @@ def setup_guide() -> str:
             "4. Call `notion_get_api_context` only when you are ready to use the official Notion API.",
             "",
             "Default workstation path: keychain.",
-            "Use `--storage 1password` only when you explicitly want 1Password.",
             f"Use `{TOKEN_ENV_VAR}` only for CI or temporary overrides.",
             "",
             "## Security Notes",
             "",
             "- `NOTION_AGENT_LABBOOK_TOKEN` takes precedence over any locally stored secret for the current process and is intended for CI or temporary overrides.",
             "- `agent-labbook configure-secret` uses a local hidden prompt so the secret does not need to be pasted into chat or shell history.",
-            "- When you choose `keychain`, the secret is stored in the local system credential store through Python `keyring`.",
-            "- When you choose `1password`, the secret is stored as a 1Password Password item and retrieved later with `op read`.",
+            "- The secret is stored in the local system credential store through Python `keyring`.",
             "- Treat the integration secret like a password. Do not paste it into chat transcripts, logs, or committed files.",
             "",
             "## Notion Resources",
@@ -115,11 +110,6 @@ def _session_payload(
         "bot_owner_type": bot_owner_type,
         "keyring_service": kw.get("keyring_service"),
         "keyring_account": kw.get("keyring_account"),
-        "op_item_id": kw.get("op_item_id"),
-        "op_item_title": kw.get("op_item_title"),
-        "op_vault": kw.get("op_vault"),
-        "op_vault_id": kw.get("op_vault_id"),
-        "op_ref": kw.get("op_ref"),
         "configured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "notion_version": DEFAULT_NOTION_VERSION,
     }
@@ -131,12 +121,51 @@ def _session_payload(
 
 
 def _available_storage_backends() -> list[dict[str, Any]]:
-    backends = [keychain_backend_status(), op_backend_status()]
+    """Probe keychain availability without blocking the MCP loop.
+
+    The probe runs in a daemon thread and is fenced by the configured
+    probe-timeout budget (``LABBOOK_PROBE_TIMEOUT_SECONDS``) plus a small
+    headroom, so a locked Secret Service / keychain daemon can never stall
+    a ``tools/call`` long enough for the client to close the stdio transport.
+    """
+    from .storage import _probe_timeout_default  # local import to avoid cycles
+
+    timeout = _probe_timeout_default()
+    join_budget = max(0.5, timeout + 1.0)
+
+    result: dict[str, dict[str, Any]] = {}
+
+    def _run_keychain() -> None:
+        try:
+            result["keychain"] = keychain_backend_status(probe_timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 - defensive: never raise past join
+            result["keychain"] = {
+                "backend": "keychain",
+                "display_name": "System Keychain",
+                "available": False,
+                "selected_by_default": False,
+                "reason": f"Keychain probe crashed: {exc}",
+                "details": {"keyring_backend": "unknown"},
+            }
+
+    thread = threading.Thread(
+        target=_run_keychain, name="labbook-probe-keychain", daemon=True
+    )
+    thread.start()
+    thread.join(timeout=join_budget)
+
+    keychain_entry = result.get("keychain") or {
+        "backend": "keychain",
+        "display_name": "System Keychain",
+        "available": False,
+        "selected_by_default": False,
+        "reason": f"System Keychain probe did not finish within {join_budget:.1f}s.",
+        "details": {"probe_timed_out": True},
+    }
+    backends = [keychain_entry]
     available = [b["backend"] for b in backends if b.get("available")]
     recommended = (
-        DEFAULT_PERSISTENT_STORAGE
-        if DEFAULT_PERSISTENT_STORAGE in available
-        else ("1password" if "1password" in available else None)
+        DEFAULT_PERSISTENT_STORAGE if DEFAULT_PERSISTENT_STORAGE in available else None
     )
     for b in backends:
         b["selected_by_default"] = b.get("backend") == recommended
@@ -154,17 +183,12 @@ def _resolve_storage_backend(
     clean = str(requested or "auto").strip().lower() or "auto"
     current = str(current_backend or "").strip().lower() or None
     if clean not in {"auto", *SUPPORTED_STORAGE_BACKENDS}:
-        raise LabbookError("storage must be one of: auto, keychain, 1password.")
+        raise LabbookError("storage must be one of: auto, keychain.")
     if clean == "auto":
         if current in available:
             return current, backends
-        rec = (
-            DEFAULT_PERSISTENT_STORAGE
-            if DEFAULT_PERSISTENT_STORAGE in available
-            else ("1password" if "1password" in available else None)
-        )
-        if rec:
-            return rec, backends
+        if DEFAULT_PERSISTENT_STORAGE in available:
+            return DEFAULT_PERSISTENT_STORAGE, backends
         raise LabbookError(
             f"No supported secret storage backends are available. Set {TOKEN_ENV_VAR} instead."
         )
@@ -182,7 +206,7 @@ def _configured_storage(session_payload: dict[str, Any] | None) -> str | None:
     if not isinstance(session_payload, dict):
         return None
     v = str(session_payload.get("storage") or "").strip().lower()
-    return v if v in {"keychain", "1password"} else None
+    return v if v in set(SUPPORTED_STORAGE_BACKENDS) else None
 
 
 # ---------------------------------------------------------------------------
@@ -204,18 +228,14 @@ def _token_context(project_root: str | Path | None = None) -> dict[str, Any]:
             "storage": backend,
             "env_token_present": True,
             "keyring_error": None,
-            "onepassword_error": None,
             "storage_error": None,
         }
-    keyring_error = onepassword_error = None
+    keyring_error: str | None = None
     token: str | None = None
     token_source: str | None = None
     if backend == "keychain":
         token, keyring_error = keychain_retrieve_token(session)
         token_source = "keychain" if token else None
-    elif backend == "1password":
-        token, onepassword_error = op_retrieve_token(session)
-        token_source = "1password" if token else None
     return {
         "project_root": root,
         "session": session,
@@ -224,8 +244,7 @@ def _token_context(project_root: str | Path | None = None) -> dict[str, Any]:
         "storage": backend,
         "env_token_present": False,
         "keyring_error": keyring_error,
-        "onepassword_error": onepassword_error,
-        "storage_error": keyring_error or onepassword_error,
+        "storage_error": keyring_error,
     }
 
 
@@ -258,20 +277,12 @@ def _secret_plan(
     token_source = token_context.get("token_source")
     env_token_present = bool(token_context.get("env_token_present"))
 
-    if configured_storage in {"keychain", "1password"} and token_source == configured_storage:
-        if configured_storage == "keychain":
-            return {
-                "mode": "keychain",
-                "reason": (
-                    "This project is already using the local system keychain successfully, "
-                    "so keeping that backend is the least disruptive option."
-                ),
-            }
+    if configured_storage == "keychain" and token_source == "keychain":
         return {
-            "mode": "1password",
+            "mode": "keychain",
             "reason": (
-                "This project is already using 1Password successfully, so keeping that "
-                "backend is the least disruptive option."
+                "This project is already using the local system keychain successfully, "
+                "so keeping that backend is the least disruptive option."
             ),
         }
 
@@ -286,18 +297,6 @@ def _secret_plan(
                 "better long-lived default."
             )
         return {"mode": "keychain", "reason": reason}
-
-    if storage_default == "1password":
-        reason = (
-            "1Password is the only supported local secret backend detected, so it is "
-            "the best persistent option here."
-        )
-        if env_token_present:
-            reason += (
-                f" The current process is using {TOKEN_ENV_VAR}, but 1Password is the "
-                "better long-lived default."
-            )
-        return {"mode": "1password", "reason": reason}
 
     return {
         "mode": "env",
@@ -320,9 +319,7 @@ def prepare_internal_integration(
     storage_options = _available_storage_backends()
     available = [b["backend"] for b in storage_options if b.get("available")]
     storage_default = (
-        DEFAULT_PERSISTENT_STORAGE
-        if DEFAULT_PERSISTENT_STORAGE in available
-        else ("1password" if "1password" in available else None)
+        DEFAULT_PERSISTENT_STORAGE if DEFAULT_PERSISTENT_STORAGE in available else None
     )
     cmd = (
         f"uvx agent-labbook configure-secret --storage {storage_default}"
@@ -345,7 +342,7 @@ def prepare_internal_integration(
             "Create a Notion Internal Integration and share the target pages or data sources with it.",
             f"Run `{cmd}` for a local hidden prompt."
             if cmd
-            else f"If no local secret backend is available, use NOTION_AGENT_LABBOOK_TOKEN as a process-scoped override.",
+            else "If no local secret backend is available, use NOTION_AGENT_LABBOOK_TOKEN as a process-scoped override.",
             "Bind the resources you want to use.",
             "Call notion_get_api_context only when you are ready to use the official Notion API.",
         ],
@@ -359,8 +356,6 @@ def configure_internal_integration(
     secret: str,
     project_root: str | Path | None = None,
     storage: str | None = None,
-    op_vault: str | None = None,
-    op_item_title: str | None = None,
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     clean_secret = str(secret or "").strip()
@@ -390,15 +385,6 @@ def configure_internal_integration(
         ks, ka = keychain_store_token(project_root=root, token=clean_secret)
         kw["keyring_service"] = ks
         kw["keyring_account"] = ka
-    elif resolved_backend == "1password":
-        kw.update(
-            op_store_token(
-                project_root=root,
-                token=clean_secret,
-                vault=op_vault,
-                item_title=op_item_title,
-            )
-        )
     else:
         raise LabbookError(f"Unsupported storage backend: {resolved_backend}")
     save_project_session(root, _session_payload(**kw))
@@ -414,8 +400,6 @@ def configure_internal_integration(
         "bot_owner_type": bot_owner_type,
         "storage_options": storage_options,
         "recommended_next_action": "notion_search_resources",
-        "op_vault": kw.get("op_vault"),
-        "op_item_title": kw.get("op_item_title"),
         "keyring_backend": keychain_backend_name(),
     }
 
@@ -434,9 +418,7 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
     storage_options = _available_storage_backends()
     available = [b["backend"] for b in storage_options if b.get("available")]
     storage_default = (
-        DEFAULT_PERSISTENT_STORAGE
-        if DEFAULT_PERSISTENT_STORAGE in available
-        else ("1password" if "1password" in available else None)
+        DEFAULT_PERSISTENT_STORAGE if DEFAULT_PERSISTENT_STORAGE in available else None
     )
     secret_plan = _secret_plan(token_context=tc, storage_default=storage_default)
     authenticated = bool(tc["token"])
@@ -457,7 +439,6 @@ def status(project_root: str | Path | None = None) -> dict[str, Any]:
         "env_token_present": tc["env_token_present"],
         "keyring_backend": keychain_backend_name(),
         "keyring_error": tc["keyring_error"],
-        "onepassword_error": tc["onepassword_error"],
         "storage_error": tc["storage_error"],
         "storage_options": storage_options,
         "storage_default": storage_default,
@@ -506,8 +487,6 @@ def clear_project_auth(
     deleted = False
     if storage == "keychain":
         deleted = keychain_delete_token(session)
-    elif storage == "1password":
-        deleted = op_delete_token(session)
     session_cleared = clear_project_session(root)
     bindings_cleared = clear_project_bindings(root) if clear_bindings else False
     return {

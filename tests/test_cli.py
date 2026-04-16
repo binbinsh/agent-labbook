@@ -87,8 +87,6 @@ class CliTests(unittest.TestCase):
                 "secret": "secret_test_token",
                 "project_root": mock.ANY,
                 "storage": "keychain",
-                "op_vault": None,
-                "op_item_title": None,
             },
         )
         payload = json.loads(stdout.getvalue())

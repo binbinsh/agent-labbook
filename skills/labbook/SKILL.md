@@ -24,7 +24,7 @@ It is not a general Notion wrapper or task-management layer.
 
 1. Call `notion_status` or read `labbook://agent-labbook/project/status`.
 2. If the project is not authenticated, call `notion_prepare_internal_integration`.
-3. Default to `agent-labbook configure-secret --storage keychain` on a workstation. Use `--storage 1password` only when the user explicitly wants 1Password.
+3. Use `agent-labbook configure-secret --storage keychain` on a workstation so the secret is captured via a local hidden prompt and stored in the system keychain.
 4. Use `notion_configure_internal_integration` only when the caller can safely provide the secret directly.
 5. Remind the user to share the target pages or data sources with the integration bot inside Notion.
 6. Prefer `notion_bind_resource_urls` for exact links, `notion_open_binding_browser` on desktop, or `notion_search_resources` plus `notion_discover_children` in headless environments.
@@ -45,4 +45,4 @@ It is not a general Notion wrapper or task-management layer.
 - Do not assume Notion is connected for the current project until `notion_status` confirms it.
 - Do not use `notion_get_api_context` as a health check; prefer `notion_status` and `notion_search_resources`.
 - Reuse aliases from `notion_list_bindings` so later sessions stay consistent.
-- Project-local state lives under `.labbook/` and should never be committed. The integration secret itself should come from system keychain, 1Password, or the process environment, not `.labbook/session.json`.
+- Project-local state lives under `.labbook/` and should never be committed. The integration secret itself should come from the system keychain or the process environment, not `.labbook/session.json`.

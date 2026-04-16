@@ -40,10 +40,9 @@ SERVER_INSTRUCTIONS = (
     "secret. It exposes read-only project context through MCP resources (status, bindings, setup guide) "
     "and mutating steps through tools (authenticate, configure secret, search Notion pages and databases, "
     "discover children, bind resources, open binding browser, get API context, clear auth). "
-    "Use the status and bindings resources before calling tools. Default to the local system keychain "
-    "when it is available, use 1Password only when the user explicitly prefers it or keychain is "
-    "unavailable, and treat environment variables as CI or temporary overrides. Do not echo the "
-    "integration secret back to the user."
+    "Use the status and bindings resources before calling tools. Store the secret in the local system "
+    "keychain whenever it is available, and treat environment variables as CI or temporary overrides. "
+    "Do not echo the integration secret back to the user."
 )
 server = Server(SERVER_NAME, version=__version__, instructions=SERVER_INSTRUCTIONS)
 
@@ -180,9 +179,8 @@ def _tool_definitions() -> list[types.Tool]:
             title="Configure Internal Integration",
             description=(
                 "Validate and store a Notion Internal Integration secret for this project. "
-                "storage='auto' prefers the local system keychain and falls back to 1Password "
-                "when keychain is unavailable. Pass storage='1password' only when you explicitly "
-                f"want 1Password. Use {TOKEN_ENV_VAR} instead when you prefer an environment-only override."
+                "storage='auto' selects the local system keychain when it is available. "
+                f"Use {TOKEN_ENV_VAR} instead when you prefer an environment-only override."
             ),
             properties={
                 "project_root": _PROJECT_ROOT_PROP,
@@ -192,16 +190,8 @@ def _tool_definitions() -> list[types.Tool]:
                 },
                 "storage": {
                     "type": "string",
-                    "enum": ["auto", "keychain", "1password"],
+                    "enum": ["auto", "keychain"],
                     "description": "Where to store the secret. Defaults to 'auto'.",
-                },
-                "op_vault": {
-                    "type": "string",
-                    "description": "1Password vault name. Only used when storage is '1password'.",
-                },
-                "op_item_title": {
-                    "type": "string",
-                    "description": "Custom title for the 1Password item.",
                 },
             },
             required=["secret"],
@@ -390,7 +380,7 @@ def _tool_definitions() -> list[types.Tool]:
         _tool(
             name="notion_clear_project_auth",
             title="Clear Project Auth",
-            description="Remove the saved project-local session and delete the stored keychain or 1Password secret.",
+            description="Remove the saved project-local session and delete the stored keychain secret.",
             properties={
                 "project_root": _PROJECT_ROOT_PROP,
                 "clear_bindings": {
@@ -450,8 +440,6 @@ def _build_handlers() -> dict[str, ToolHandler]:
                 project_root=args.get("project_root"),
                 secret=str(args.get("secret") or ""),
                 storage=args.get("storage"),
-                op_vault=args.get("op_vault"),
-                op_item_title=args.get("op_item_title"),
             )
         ),
         "notion_search_resources": lambda args: search_resources(
@@ -701,7 +689,7 @@ async def handle_get_prompt(
                 suffix,
                 f"1. Read {STATUS_RESOURCE_URI} or call notion_status.",
                 "2. If the project is not authenticated, call notion_prepare_internal_integration.",
-                "3. Prefer agent-labbook configure-secret on the same machine. Default to keychain. Use 1Password only when explicitly requested.",
+                "3. Prefer agent-labbook configure-secret on the same machine to store the secret in the local system keychain.",
                 "4. Remind the user to share the target pages or data sources with the integration bot inside Notion.",
                 "5. Prefer notion_bind_resource_urls for exact links, notion_open_binding_browser on desktop, or notion_search_resources plus notion_discover_children in headless environments.",
                 "6. Call notion_get_api_context only when you are ready to use the official Notion API.",
