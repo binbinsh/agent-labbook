@@ -289,7 +289,8 @@ class BindingBrowserCsrfTests(unittest.TestCase):
                     f"{session.local_url}notion-bindings/", timeout=5
                 )
                 html = response.read().decode("utf-8")
-                self.assertIn("Choose Notion Content", html)
+                self.assertIn('id="labbook-config"', html)
+                self.assertIn('src="./assets/binding_chooser_app.js"', html)
 
                 req = urlrequest.Request(
                     f"{session.local_url}notion-bindings/api/shutdown",

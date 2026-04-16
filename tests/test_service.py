@@ -611,6 +611,14 @@ class ServiceTests(unittest.TestCase):
                                         .read()
                                         .decode("utf-8")
                                     )
+                                    app_js = (
+                                        urlrequest.urlopen(
+                                            f"{session.chooser_url}assets/binding_chooser_app.js",
+                                            timeout=5,
+                                        )
+                                        .read()
+                                        .decode("utf-8")
+                                    )
                                     search_payload = json.loads(
                                         urlrequest.urlopen(
                                             f"{session.chooser_url}api/search?page_size=7",
@@ -648,7 +656,9 @@ class ServiceTests(unittest.TestCase):
                                 finally:
                                     session.stop()
 
-        self.assertIn("Choose Notion Content", root_html)
+        self.assertIn('id="labbook-config"', root_html)
+        self.assertIn('src="./assets/binding_chooser_app.js"', root_html)
+        self.assertIn("projectTreeState", app_js)
         self.assertEqual(search_payload["result_count"], 1)
         self.assertEqual(bind_response["resource_count"], 1)
         bind_mock.assert_called_once()

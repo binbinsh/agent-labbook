@@ -34,9 +34,12 @@ logger = logging.getLogger("labbook.binding_server")
 DEFAULT_BINDING_SERVER_TIMEOUT_SECONDS = 1800
 DEFAULT_BINDING_SERVER_PAGE_SIZE = 25
 _HEADLESS_ENV_VARS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "CI")
-_TEMPLATE_PATH = Path(__file__).parent / "templates" / "binding_chooser.html"
+_TEMPLATE_DIR = Path(__file__).parent / "templates"
+_TEMPLATE_PATH = _TEMPLATE_DIR / "binding_chooser.html"
+_CHOOSER_APP_PATH = _TEMPLATE_DIR / "binding_chooser_app.js"
 _PLACEHOLDER = "/*__LABBOOK_CONFIG_JSON__*/null"
 _cached_template: str | None = None
+_cached_chooser_app_script: str | None = None
 
 
 def likely_headless_environment(environ: Mapping[str, str] | None = None) -> bool:
@@ -54,6 +57,13 @@ def _load_template() -> str:
     if _cached_template is None:
         _cached_template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     return _cached_template
+
+
+def _load_chooser_app_script() -> str:
+    global _cached_chooser_app_script
+    if _cached_chooser_app_script is None:
+        _cached_chooser_app_script = _CHOOSER_APP_PATH.read_text(encoding="utf-8")
+    return _cached_chooser_app_script
 
 
 def _inline_json(value: Any) -> str:
@@ -441,6 +451,19 @@ def _serve_root(
     )
 
 
+def _serve_chooser_app_script(
+    handler: BaseHTTPRequestHandler,
+    _session: BindingServerSession,
+    _query: dict[str, list[str]],
+) -> None:
+    _send(
+        handler,
+        _load_chooser_app_script().encode("utf-8"),
+        content_type="text/javascript; charset=utf-8",
+        extra_headers={"Cache-Control": "no-store"},
+    )
+
+
 def _serve_status(
     handler: BaseHTTPRequestHandler,
     session: BindingServerSession,
@@ -578,6 +601,7 @@ def _serve_shutdown(
 
 _GET_ROUTES: dict[str, _RouteHandler] = {
     "/": _serve_root,
+    "/assets/binding_chooser_app.js": _serve_chooser_app_script,
     "/api/status": _serve_status,
     "/api/search": _serve_search,
     "/api/children": _serve_children,

@@ -1,10 +1,14 @@
-"""Tests for binding chooser page — template loading, XSS-safe JSON, render."""
+"""Tests for binding chooser template shell and chooser app script."""
 
 from __future__ import annotations
 
 import unittest
 
-from labbook.binding_server import _inline_json, render_chooser_page
+from labbook.binding_server import (
+    _inline_json,
+    _load_chooser_app_script,
+    render_chooser_page,
+)
 
 
 class InlineJsonTests(unittest.TestCase):
@@ -50,6 +54,8 @@ class RenderChooserPageTests(unittest.TestCase):
         self.assertIn("Agent Labbook Binding Chooser", html)
         self.assertIn("/tmp/test", html)
         self.assertIn("25", html)
+        self.assertIn('id="labbook-config"', html)
+        self.assertIn('src="./assets/binding_chooser_app.js"', html)
 
     def test_placeholder_is_replaced(self) -> None:
         html = render_chooser_page({"key": "value"})
@@ -62,46 +68,63 @@ class RenderChooserPageTests(unittest.TestCase):
         self.assertNotIn('<script>alert("xss")</script>', html)
         self.assertIn("\\u003cscript\\u003e", html)
 
-    def test_no_innerhtml_with_user_data(self) -> None:
-        """Verify the rendered template does not use innerHTML for dynamic data."""
+    def test_html_shell_keeps_config_non_executable(self) -> None:
         html = render_chooser_page({"project_root": "/tmp/test"})
-        # The only innerHTML usages should be:
-        # 1. escapeHtml() reading innerHTML for output
-        # 2. app.innerHTML = "" to clear the container
-        lines_with_innerhtml = [
-            line.strip() for line in html.splitlines() if "innerHTML" in line
-        ]
-        for line in lines_with_innerhtml:
-            self.assertTrue(
-                "return div.innerHTML" in line or 'innerHTML = ""' in line,
-                f"Unexpected innerHTML usage: {line}",
-            )
+        self.assertIn('<script id="labbook-config" type="application/json">', html)
+        self.assertNotIn("window.__LABBOOK_CONFIG__", html)
+        self.assertNotIn("<script type=\"module\">", html)
 
     def test_template_caching(self) -> None:
-        """Second call should use cached template (no file re-read)."""
         html1 = render_chooser_page({"a": 1})
         html2 = render_chooser_page({"b": 2})
-        # Both should be valid HTML
         self.assertIn("<!doctype html>", html1)
         self.assertIn("<!doctype html>", html2)
-        # Each should have its own config
         self.assertIn('"a"', html1)
         self.assertIn('"b"', html2)
 
-    def test_checkbox_checked_state_does_not_depend_on_tailwind_palette(self) -> None:
-        html = render_chooser_page({})
-        self.assertNotIn("colors: { stone: undefined }", html)
-        self.assertIn('backgroundColor: checked ? "#1c1917" : "#ffffff"', html)
-        self.assertIn('borderColor: checked ? "#1c1917" : "#d6d3d1"', html)
 
-    def test_search_mode_still_respects_manual_tree_collapse(self) -> None:
-        html = render_chooser_page({})
-        self.assertIn("if (searchActive) return !collapsedIds.has(rid);", html)
+class ChooserAppScriptTests(unittest.TestCase):
+    def test_checkbox_checked_state_does_not_depend_on_tailwind_palette(self) -> None:
+        script = _load_chooser_app_script()
+        self.assertNotIn("colors: { stone: undefined }", script)
+        self.assertIn('backgroundColor: checked ? "#1c1917" : "#ffffff"', script)
+        self.assertIn('borderColor: checked ? "#1c1917" : "#d6d3d1"', script)
+
+    def test_tree_projection_uses_single_helper(self) -> None:
+        script = _load_chooser_app_script()
+        self.assertIn("function projectTreeState({", script)
+        self.assertIn("const treeState = projectTreeState({", script)
+        self.assertNotIn("function reduceToSearchRoots(matchIds, graph)", script)
+        self.assertNotIn("function buildVisibleRows({", script)
+
+    def test_tree_projection_preserves_search_lineage_and_subtree(self) -> None:
+        script = _load_chooser_app_script()
+        self.assertIn("addLineage(rid);", script)
+        self.assertIn(
+            "walkSubtree(rid, (childId) => visibleIds.add(childId));", script
+        )
+        self.assertIn("if (matchIds.has(current)) {", script)
+
+    def test_manual_tree_collapse_still_controls_expansion(self) -> None:
+        script = _load_chooser_app_script()
+        self.assertIn(
+            "if (!hasKnownChildren && !hasBeenFetched) return false;", script
+        )
+        self.assertIn("return !collapsedIds.has(rid);", script)
 
     def test_success_state_renders_completion_view(self) -> None:
-        html = render_chooser_page({})
-        self.assertIn("Binding Complete", html)
-        self.assertIn("You can close this tab.", html)
+        script = _load_chooser_app_script()
+        self.assertIn("Binding Complete", script)
+        self.assertIn("You can close this tab.", script)
+
+    def test_module_reads_json_config_instead_of_global_assignment(self) -> None:
+        script = _load_chooser_app_script()
+        self.assertIn(
+            'document.getElementById("labbook-config")?.textContent', script
+        )
+        self.assertNotIn("window.__LABBOOK_CONFIG__", script)
+        self.assertNotIn("useRef", script)
+        self.assertNotIn("Fragment", script)
 
 
 if __name__ == "__main__":
