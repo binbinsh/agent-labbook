@@ -418,11 +418,12 @@ def bindings_output() -> dict[str, Any]:
     return obj(
         {
             "project_root": string(),
+            "bindings_path": string(),
             "default_resource_alias": nullable(string()),
             "resource_count": integer(),
             "resources": array(binding_resource()),
         },
-        required=["project_root", "resource_count", "resources"],
+        required=["project_root", "bindings_path", "resource_count", "resources"],
     )
 
 

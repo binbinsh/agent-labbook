@@ -9,7 +9,7 @@ from unittest import mock
 from urllib import request as urlrequest
 
 from labbook.binding_ui import start_binding_browser
-from labbook.state import LabbookError
+from labbook.state import LabbookError, bindings_path, load_project_bindings
 
 
 class BindingBrowserCsrfTests(unittest.TestCase):
@@ -213,6 +213,87 @@ class BindingBrowserGetEndpointTests(unittest.TestCase):
                 self.assertIn("resources", payload)
             finally:
                 session.stop()
+
+
+class BindingBrowserBindEndpointTests(unittest.TestCase):
+    @mock.patch(
+        "labbook.binding_ui.status",
+        return_value={
+            "authenticated": True,
+            "workspace_name": "Test",
+            "binding_recommendation": None,
+            "binding_options": [],
+            "binding_question": None,
+        },
+    )
+    def test_bind_persists_bindings_file(
+        self, _status_mock: mock.Mock
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            expected_bindings_path = str(bindings_path(tmpdir))
+            fake_client = mock.Mock()
+            fake_client.retrieve_resource.return_value = {
+                "object": "page",
+                "id": "01234567-89ab-cdef-0123-456789abcdef",
+                "url": "https://www.notion.so/project-home-0123456789abcdef0123456789abcdef",
+                "properties": {
+                    "Name": {
+                        "type": "title",
+                        "title": [{"plain_text": "Project Home"}],
+                    }
+                },
+            }
+            session = start_binding_browser(
+                project_root=tmpdir,
+                open_browser=False,
+                timeout_seconds=60,
+                page_size=7,
+            )
+            try:
+                with mock.patch(
+                    "labbook.auth_flow.notion_client_for_project",
+                    side_effect=lambda project_root=None: (
+                        fake_client,
+                        {"project_root": str(project_root)},
+                    ),
+                ):
+                    request_payload = json.dumps(
+                        {
+                            "resource_refs": [
+                                {
+                                    "resource_id_or_url": "https://www.notion.so/project-home-0123456789abcdef0123456789abcdef",
+                                    "selection_scope": "subtree",
+                                }
+                            ]
+                        }
+                    ).encode("utf-8")
+                    response = urlrequest.urlopen(
+                        urlrequest.Request(
+                            f"{session.chooser_url}api/bind",
+                            data=request_payload,
+                            headers={
+                                "Content-Type": "application/json",
+                                "Origin": session.chooser_url.rstrip("/"),
+                            },
+                            method="POST",
+                        ),
+                        timeout=5,
+                    )
+                    payload = json.loads(response.read().decode("utf-8"))
+            finally:
+                session.stop()
+
+            saved_payload = load_project_bindings(tmpdir)
+            bindings_file_exists = bindings_path(tmpdir).exists()
+
+        self.assertEqual(payload["resource_count"], 1)
+        self.assertEqual(payload["bindings_path"], expected_bindings_path)
+        self.assertTrue(bindings_file_exists)
+        self.assertIsNotNone(saved_payload)
+        self.assertEqual(saved_payload["bindings_path"], expected_bindings_path)
+        self.assertEqual(len(saved_payload["resources"]), 1)
+        self.assertEqual(saved_payload["resources"][0]["title"], "Project Home")
+        self.assertEqual(saved_payload["resources"][0]["selection_scope"], "subtree")
 
 
 if __name__ == "__main__":

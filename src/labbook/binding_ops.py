@@ -13,6 +13,7 @@ from .binding_discovery import (
 from .notion_api import NOTION_API_BASE, NotionClient
 from .state import (
     LabbookError,
+    bindings_path,
     load_project_bindings,
     normalize_notion_id,
     resolve_project_root,
@@ -253,6 +254,7 @@ def _bindings_payload(
     """Build the canonical bindings payload for persistence."""
     return {
         "project_root": str(project_root),
+        "bindings_path": str(bindings_path(project_root)),
         "default_resource_alias": _default_resource_alias(resources),
         "resources": _sorted_bindings(resources),
     }
@@ -446,6 +448,7 @@ def build_bind_resources_payload(
     save_project_bindings(root, payload)
     return {
         "project_root": str(root),
+        "bindings_path": payload["bindings_path"],
         "default_resource_alias": payload["default_resource_alias"],
         "resource_count": len(final_resources),
         "resources": final_resources,
@@ -492,6 +495,7 @@ def build_list_bindings_payload(
         resources = []
     return {
         "project_root": str(root),
+        "bindings_path": payload.get("bindings_path") or str(bindings_path(root)),
         "default_resource_alias": payload.get("default_resource_alias"),
         "resource_count": len(resources),
         "resources": resources,

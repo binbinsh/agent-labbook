@@ -383,6 +383,7 @@ function SelectionApp() {
   const [remoteSearchIds, setRemoteSearchIds] = useState(new Set());
   const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [bindStatus, setBindStatus] = useState("");
+  const [savedBindingsPath, setSavedBindingsPath] = useState("");
 
   const deferredQuery = useDeferredValue(inputValue.trim().toLowerCase());
 
@@ -584,10 +585,15 @@ function SelectionApp() {
     if (!finalBundle.length) return;
     setBindStatus("binding");
     try {
-      await apiPost("/api/bind", { resource_refs: finalBundle });
+      const payload = await apiPost("/api/bind", { resource_refs: finalBundle });
+      setSavedBindingsPath(String(payload.bindings_path || ""));
       setBindStatus("success");
       setSelectedRootIds(new Set());
+      setTimeout(() => {
+        apiPost("/api/shutdown", {}).catch(() => {});
+      }, 250);
     } catch (err) {
+      setSavedBindingsPath("");
       setBindStatus("error: " + err.message);
     }
   }
@@ -681,7 +687,10 @@ function SelectionApp() {
               searchingCatalog ? "Searching Notion..."
                 : loadingRootIds.size ? "Loading nested content..."
                 : bindStatus === "binding" ? "Binding resources..."
-                : bindStatus === "success" ? "Bindings saved successfully."
+                : bindStatus === "success"
+                  ? (savedBindingsPath
+                      ? "Bindings saved to " + savedBindingsPath + "."
+                      : "Bindings saved successfully.")
                 : bindStatus.startsWith("error") ? bindStatus
                 : finalBundle.length + " root" + (finalBundle.length === 1 ? "" : "s") + " selected"),
           ),
