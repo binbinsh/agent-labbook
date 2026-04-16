@@ -27,7 +27,7 @@ It is not a general Notion wrapper or task-management layer.
 3. Use `agent-labbook configure-secret --storage keychain` on a workstation so the secret is captured via a local hidden prompt and stored in the system keychain.
 4. Use `notion_configure_internal_integration` only when the caller can safely provide the secret directly.
 5. Remind the user to share the target pages or data sources with the integration bot inside Notion.
-6. Prefer `notion_bind_resource_urls` for exact links, `notion_open_binding_browser` on desktop, or `notion_search_resources` plus `notion_discover_children` in headless environments.
+6. Prefer `notion_bind_resource_urls` for exact links, `notion_start_binding_server` to hand the user a chooser URL, or `notion_search_resources` plus `notion_discover_children` in headless environments.
 7. Read `labbook://agent-labbook/project/bindings` or call `notion_list_bindings` when you need the current explicit roots and aliases.
 8. Call `notion_get_api_context` only when you are ready to use the official Notion API.
 9. Before making direct API calls, read [references/notion-api.md](references/notion-api.md) for the current Notion API shape that matters to this skill.

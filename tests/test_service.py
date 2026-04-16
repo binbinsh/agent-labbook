@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
 from urllib import request as urlrequest
 
 
-from labbook.browser_ui import start_binding_browser, BrowserLaunchPolicy
+from labbook.binding_server import start_binding_server
 from labbook.auth import (
     DEFAULT_NOTION_INTEGRATIONS_URL,
     NOTION_INTEGRATION_GUIDE_URL,
@@ -84,26 +83,21 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["secret_plan"]["mode"], "keychain")
         self.assertIn("default recommendation", payload["secret_plan"]["reason"])
 
-    def test_prepare_internal_integration_opens_browser_and_reports_backends(
+    def test_prepare_internal_integration_returns_integrations_url(
         self,
     ) -> None:
         with mock.patch(
             "labbook.auth._available_storage_backends", return_value=BACKENDS_BOTH
         ):
-            with mock.patch(
-                "labbook.browser_ui.webbrowser.open", return_value=True
-            ) as open_mock:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    payload = prepare_internal_integration(
-                        project_root=tmpdir, open_browser=True
-                    )
+            with tempfile.TemporaryDirectory() as tmpdir:
+                payload = prepare_internal_integration(project_root=tmpdir)
 
-        open_mock.assert_called_once_with(DEFAULT_NOTION_INTEGRATIONS_URL, new=2)
         self.assertEqual(
             payload["notion_integrations_url"], DEFAULT_NOTION_INTEGRATIONS_URL
         )
         self.assertEqual(payload["notion_docs_url"], NOTION_INTEGRATION_GUIDE_URL)
-        self.assertTrue(payload["browser_opened"])
+        self.assertNotIn("browser_opened", payload)
+        self.assertNotIn("open_browser_attempted", payload)
         self.assertEqual(payload["storage_default"], "keychain")
         self.assertFalse(payload["storage_choice_required"])
         self.assertEqual(
@@ -114,43 +108,6 @@ class ServiceTests(unittest.TestCase):
             payload["recommended_next_action"],
             "notion_configure_internal_integration",
         )
-
-    def test_prepare_internal_integration_skips_browser_by_default_in_headless_env(
-        self,
-    ) -> None:
-        with mock.patch(
-            "labbook.auth._available_storage_backends", return_value=BACKENDS_BOTH
-        ):
-            with mock.patch(
-                "labbook.browser_ui.webbrowser.open", return_value=True
-            ) as open_mock:
-                with mock.patch.dict(os.environ, {"CI": "1"}, clear=False):
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        payload = prepare_internal_integration(project_root=tmpdir)
-
-        open_mock.assert_not_called()
-        self.assertFalse(payload["browser_opened"])
-        self.assertFalse(payload["open_browser_attempted"])
-
-    def test_browser_launch_policy_times_out_when_launcher_blocks(self) -> None:
-        def _slow_open(_url: str, new: int = 0) -> bool:
-            time.sleep(0.25)
-            return True
-
-        with mock.patch(
-            "labbook.browser_ui.webbrowser.open",
-            side_effect=_slow_open,
-        ):
-            started = time.monotonic()
-            launch_result = BrowserLaunchPolicy(
-                should_attempt=True,
-                timeout_seconds=0.05,
-            ).launch("https://example.com")
-            elapsed = time.monotonic() - started
-
-        self.assertTrue(launch_result.attempted)
-        self.assertFalse(launch_result.opened)
-        self.assertLess(elapsed, 0.2)
 
     def test_status_prefers_environment_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -641,9 +598,8 @@ class ServiceTests(unittest.TestCase):
                                     ],
                                 },
                             ) as bind_mock:
-                                session = start_binding_browser(
+                                session = start_binding_server(
                                     project_root=tmpdir,
-                                    open_browser=False,
                                     timeout_seconds=60,
                                     page_size=7,
                                 )

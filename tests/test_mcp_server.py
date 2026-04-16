@@ -46,7 +46,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("notion_discover_children", tool_names)
         self.assertIn("notion_bind_resource_urls", tool_names)
         self.assertIn("notion_bind_resources", tool_names)
-        self.assertIn("notion_open_binding_browser", tool_names)
+        self.assertIn("notion_start_binding_server", tool_names)
 
         status_tool = next(tool for tool in tools.tools if tool.name == "notion_status")
         self.assertIsNotNone(status_tool.annotations)
@@ -101,7 +101,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
                     await session.initialize()
                     result = await session.call_tool(
                         "notion_prepare_internal_integration",
-                        {"project_root": tmpdir, "open_browser": False},
+                        {"project_root": tmpdir},
                     )
 
         self.assertFalse(result.isError)
@@ -163,7 +163,7 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("keychain", prompt.messages[0].content.text)
         self.assertIn("configure-secret", prompt.messages[0].content.text)
         self.assertIn("notion_bind_resource_urls", prompt.messages[0].content.text)
-        self.assertIn("notion_open_binding_browser", prompt.messages[0].content.text)
+        self.assertIn("notion_start_binding_server", prompt.messages[0].content.text)
         self.assertIn("Never echo the secret back", prompt.messages[0].content.text)
         self.assertIn(
             "POST /v1/pages with markdown", use_bound_prompt.messages[0].content.text

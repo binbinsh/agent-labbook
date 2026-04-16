@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .browser_ui import BrowserLaunchPolicy, likely_headless_environment
+from .binding_server import likely_headless_environment
 from .notion import NOTION_API_BASE, NotionClient, build_list_bindings_payload
 from .state import (
     DEFAULT_NOTION_VERSION,
@@ -313,7 +313,7 @@ def _secret_plan(
 
 
 def prepare_internal_integration(
-    *, project_root: str | Path | None = None, open_browser: bool | None = None
+    *, project_root: str | Path | None = None
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     storage_options = _available_storage_backends()
@@ -326,14 +326,10 @@ def prepare_internal_integration(
         if storage_default
         else None
     )
-    launch_policy = BrowserLaunchPolicy.from_preference(open_browser)
-    launch_result = launch_policy.launch(DEFAULT_NOTION_INTEGRATIONS_URL)
     return {
         "project_root": str(root),
         "notion_integrations_url": DEFAULT_NOTION_INTEGRATIONS_URL,
         "notion_docs_url": NOTION_INTEGRATION_GUIDE_URL,
-        "browser_opened": launch_result.opened,
-        "open_browser_attempted": launch_result.attempted,
         "storage_options": storage_options,
         "storage_default": storage_default,
         "storage_choice_required": False,

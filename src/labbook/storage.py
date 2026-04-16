@@ -16,7 +16,7 @@ from .state import KEYRING_SERVICE_NAME, TOKEN_ENV_VAR, LabbookError
 logger = logging.getLogger("labbook.storage")
 
 # Default timeout for probing whether the keychain backend is usable. Probes
-# run on every `notion_status` / `notion_open_binding_browser` /
+# run on every `notion_status` / `notion_start_binding_server` /
 # `notion_search_resources` call, so they must stay snappy even when the
 # underlying Secret Service / keychain daemon is unhealthy. A hang here would
 # otherwise let a Codex MCP client close the stdio transport before we reply.

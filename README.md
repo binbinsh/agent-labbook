@@ -99,7 +99,7 @@ uvx agent-labbook print-mcp-config
 Typical flow:
 
 1. Call `notion_status` to check the current project state.
-2. Bind resources with `notion_bind_resource_urls` for exact links, `notion_open_binding_browser` on desktop, or `notion_search_resources` plus `notion_discover_children` in headless environments.
+2. Bind resources with `notion_bind_resource_urls` for exact links, `notion_start_binding_server` to hand the user a chooser URL, or `notion_search_resources` plus `notion_discover_children` in headless environments.
 3. Call `notion_get_api_context` only when you are ready to use the official Notion API.
 
 ## MCP Surface Reference
@@ -116,7 +116,7 @@ Typical flow:
 | `notion_discover_children` | Inspect the immediate child pages or entries beneath a specific page or data source. | Yes | No |
 | `notion_bind_resource_urls` | Bind one or more Notion page or data source URLs directly. | No | No |
 | `notion_bind_resources` | Bind one or more Notion pages or data sources by reference. | No | No |
-| `notion_open_binding_browser` | Start a local browser-based chooser for selecting Notion roots. | No | No |
+| `notion_start_binding_server` | Start a local binding chooser HTTP server (agent shares the URL; never launches a browser). | No | No |
 | `notion_list_bindings` | List the Notion resources currently bound to this project. | Yes | No |
 | `notion_get_api_context` | Return the Internal Integration secret, official Notion API headers, and bound resource IDs for direct API calls. | Yes | No |
 | `notion_clear_project_auth` | Remove the saved project-local session and delete the stored keychain secret. | No | Yes |

@@ -39,7 +39,7 @@ SERVER_INSTRUCTIONS = (
     "Notion Agent Labbook connects a local project to Notion through a Notion Internal Integration "
     "secret. It exposes read-only project context through MCP resources (status, bindings, setup guide) "
     "and mutating steps through tools (authenticate, configure secret, search Notion pages and databases, "
-    "discover children, bind resources, open binding browser, get API context, clear auth). "
+    "discover children, bind resources, start binding chooser server, get API context, clear auth). "
     "Use the status and bindings resources before calling tools. Store the secret in the local system "
     "keychain whenever it is available, and treat environment variables as CI or temporary overrides. "
     "Do not echo the integration secret back to the user."
@@ -161,13 +161,9 @@ def _tool_definitions() -> list[types.Tool]:
         _tool(
             name="notion_prepare_internal_integration",
             title="Prepare Internal Integration Setup",
-            description="Open the Notion integrations dashboard and detect available local storage backends before collecting the Internal Integration Secret.",
+            description="Return the Notion integrations dashboard URL and detect available local storage backends before collecting the Internal Integration Secret.",
             properties={
                 "project_root": _PROJECT_ROOT_PROP,
-                "open_browser": {
-                    "type": "boolean",
-                    "description": "Whether to automatically open the Notion integrations dashboard in the system browser.",
-                },
             },
             ro=False,
             dest=False,
@@ -317,15 +313,16 @@ def _tool_definitions() -> list[types.Tool]:
             ow=True,
         ),
         _tool(
-            name="notion_open_binding_browser",
-            title="Open Binding Browser",
-            description="Start a browser-based chooser for selecting Notion roots.",
+            name="notion_start_binding_server",
+            title="Start Binding Chooser Server",
+            description=(
+                "Start a local HTTP server that serves the binding chooser UI. "
+                "This tool never launches a browser itself; share chooser_url "
+                "(or one of lan_urls on headless hosts) with the user so they "
+                "can open it in their own browser."
+            ),
             properties={
                 "project_root": _PROJECT_ROOT_PROP,
-                "open_browser": {
-                    "type": "boolean",
-                    "description": "Whether to automatically open the system browser.",
-                },
                 "timeout_seconds": {
                     "type": "integer",
                     "description": "Chooser server timeout in seconds. Defaults to 1800.",
@@ -410,7 +407,7 @@ def _build_handlers() -> dict[str, ToolHandler]:
         setup_guide,
         status,
     )
-    from .browser_ui import start_binding_browser
+    from .binding_server import start_binding_server
     from .notion import (
         bind_resource_urls,
         bind_resources,
@@ -432,7 +429,6 @@ def _build_handlers() -> dict[str, ToolHandler]:
         "notion_prepare_internal_integration": lambda args: (
             prepare_internal_integration(
                 project_root=args.get("project_root"),
-                open_browser=args.get("open_browser"),
             )
         ),
         "notion_configure_internal_integration": lambda args: (
@@ -465,9 +461,8 @@ def _build_handlers() -> dict[str, ToolHandler]:
             resource_refs=list(args.get("resource_refs") or []),
             default_alias=args.get("default_alias"),
         ),
-        "notion_open_binding_browser": lambda args: start_binding_browser(
+        "notion_start_binding_server": lambda args: start_binding_server(
             project_root=args.get("project_root"),
-            open_browser=args.get("open_browser"),
             timeout_seconds=int(args.get("timeout_seconds") or 1800),
             page_size=int(args.get("page_size") or DEFAULT_SEARCH_PAGE_SIZE),
             host=args.get("host"),
@@ -513,14 +508,13 @@ async def handle_list_tools() -> list[types.Tool]:
 
 
 # Hard timeouts for tool handlers that must never block the MCP stdio transport.
-# The binding browser handler synchronously binds an HTTP socket and may attempt
-# to spawn a system browser (xdg-open, etc.), which has historically hung long
-# enough for the Codex MCP client to close stdio. We cap the handler wall-clock
-# so the transport stays responsive even if a future regression reintroduces a
-# blocking call inside start_binding_browser. The chooser HTTP server keeps
-# running in its daemon thread regardless of this timeout.
+# The binding chooser handler synchronously binds an HTTP socket; we cap the
+# handler wall-clock so the transport stays responsive even if a future
+# regression reintroduces a blocking call inside start_binding_server. The
+# chooser HTTP server keeps running in its daemon thread regardless of this
+# timeout.
 _TOOL_HARD_TIMEOUT_SECONDS: dict[str, float] = {
-    "notion_open_binding_browser": 8.0,
+    "notion_start_binding_server": 8.0,
 }
 
 
@@ -724,7 +718,7 @@ async def handle_get_prompt(
                 "2. If the project is not authenticated, call notion_prepare_internal_integration.",
                 "3. Prefer agent-labbook configure-secret on the same machine to store the secret in the local system keychain.",
                 "4. Remind the user to share the target pages or data sources with the integration bot inside Notion.",
-                "5. Prefer notion_bind_resource_urls for exact links, notion_open_binding_browser on desktop, or notion_search_resources plus notion_discover_children in headless environments.",
+                "5. Prefer notion_bind_resource_urls for exact links, notion_start_binding_server to hand the user a chooser URL, or notion_search_resources plus notion_discover_children for agent-driven selection.",
                 "6. Call notion_get_api_context only when you are ready to use the official Notion API.",
                 "7. Never echo the secret back to the user or store it in project files.",
             ]

@@ -1,4 +1,4 @@
-"""Tests for browser_ui — CSRF protection, HTTP error handling, endpoints."""
+"""Tests for binding_server — CSRF protection, HTTP error handling, endpoints."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 from urllib import request as urlrequest
 
-from labbook.browser_ui import start_binding_browser
+from labbook.binding_server import start_binding_server
 from labbook.state import LabbookError, bindings_path, load_project_bindings
 
 
@@ -16,10 +16,9 @@ class BindingBrowserCsrfTests(unittest.TestCase):
     """Test CSRF origin validation on POST endpoints."""
 
     def _start_session(self, tmpdir: str) -> mock.Mock:
-        """Start a binding browser session with mocked dependencies."""
-        return start_binding_browser(
+        """Start a binding chooser server session with mocked dependencies."""
+        return start_binding_server(
             project_root=tmpdir,
-            open_browser=False,
             timeout_seconds=60,
             page_size=7,
         )
@@ -232,9 +231,8 @@ class BindingBrowserCsrfTests(unittest.TestCase):
     )
     def test_missing_csrf_token_rejected(self, *_mocks: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            session = start_binding_browser(
+            session = start_binding_server(
                 project_root=tmpdir,
-                open_browser=False,
                 timeout_seconds=60,
                 page_size=7,
             )
@@ -279,9 +277,8 @@ class BindingBrowserCsrfTests(unittest.TestCase):
     )
     def test_remote_public_base_url_origin_accepted(self, *_mocks: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            session = start_binding_browser(
+            session = start_binding_server(
                 project_root=tmpdir,
-                open_browser=False,
                 timeout_seconds=60,
                 page_size=7,
                 host="0.0.0.0",
@@ -336,9 +333,8 @@ class BindingBrowserCsrfTests(unittest.TestCase):
         self, *_mocks: mock.Mock
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            session = start_binding_browser(
+            session = start_binding_server(
                 project_root=tmpdir,
-                open_browser=False,
                 timeout_seconds=60,
                 page_size=7,
                 host="0.0.0.0",
@@ -381,39 +377,10 @@ class BindingBrowserUnauthenticatedTests(unittest.TestCase):
     def test_unauthenticated_project_raises(self, _status_mock: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaises(LabbookError) as ctx:
-                start_binding_browser(
+                start_binding_server(
                     project_root=tmpdir,
-                    open_browser=False,
                 )
             self.assertIn("not authenticated", str(ctx.exception))
-
-
-class BindingBrowserStartTests(unittest.TestCase):
-    @mock.patch(
-        "labbook.auth.status",
-        return_value={"authenticated": True, "likely_headless": True},
-    )
-    def test_headless_default_skips_auto_browser_open(
-        self,
-        _status_mock: mock.Mock,
-    ) -> None:
-        with mock.patch(
-            "labbook.browser_ui.webbrowser.open",
-            return_value=True,
-        ) as open_mock:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                session = start_binding_browser(
-                    project_root=tmpdir,
-                    timeout_seconds=60,
-                    page_size=7,
-                )
-                try:
-                    self.assertFalse(session.open_browser_attempted)
-                    self.assertFalse(session.browser_opened)
-                finally:
-                    session.stop()
-
-        open_mock.assert_not_called()
 
 
 class BindingBrowserGetEndpointTests(unittest.TestCase):
@@ -443,9 +410,8 @@ class BindingBrowserGetEndpointTests(unittest.TestCase):
     )
     def test_get_404_for_unknown_path(self, *_mocks: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            session = start_binding_browser(
+            session = start_binding_server(
                 project_root=tmpdir,
-                open_browser=False,
                 timeout_seconds=60,
                 page_size=7,
             )
@@ -486,9 +452,8 @@ class BindingBrowserGetEndpointTests(unittest.TestCase):
     )
     def test_get_bindings_endpoint(self, *_mocks: mock.Mock) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            session = start_binding_browser(
+            session = start_binding_server(
                 project_root=tmpdir,
-                open_browser=False,
                 timeout_seconds=60,
                 page_size=7,
             )
@@ -531,9 +496,8 @@ class BindingBrowserBindEndpointTests(unittest.TestCase):
                 },
                 "page",
             )
-            session = start_binding_browser(
+            session = start_binding_server(
                 project_root=tmpdir,
-                open_browser=False,
                 timeout_seconds=60,
                 page_size=7,
             )
