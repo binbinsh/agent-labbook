@@ -631,6 +631,28 @@ function SelectionApp() {
   const workspaceLabel = config.workspace_name || config.project_root || "workspace";
   const catalogNotice = "Search queries run against Notion search for the shared workspace. If something is missing, share it with the integration in Notion first, then click Refresh.";
 
+  if (bindStatus === "success") {
+    return h("div", { className: "mx-auto flex min-h-screen w-full max-w-3xl items-center px-3 py-6 sm:px-5 sm:py-8" },
+      h(Card, { className: "w-full border-stone-200 shadow-sm" },
+        h(CardHeader, { className: "gap-2" },
+          h(CardTitle, { className: "text-xl" }, "Binding Complete"),
+          h(CardDescription, null,
+            "The selected Notion roots were saved for this project. You can close this tab."),
+        ),
+        h(CardContent, { className: "space-y-4" },
+          h("div", { className: "rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700" },
+            savedBindingsPath
+              ? "Bindings saved to " + savedBindingsPath + "."
+              : "Bindings saved successfully."),
+          h("div", { className: "flex flex-wrap gap-2" },
+            h(Button, {
+              onClick: () => window.close(),
+            }, "Close Tab")),
+        ),
+      ),
+    );
+  }
+
   return h("div", { className: "mx-auto min-h-screen w-full max-w-3xl px-3 py-6 sm:px-5 sm:py-8" },
     h("div", { className: "space-y-4 pb-28" },
 

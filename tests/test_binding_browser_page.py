@@ -102,6 +102,11 @@ class RenderBindingBrowserPageTests(unittest.TestCase):
         html = render_binding_browser_page({})
         self.assertIn("if (searchActive) return !collapsedIds.has(rid);", html)
 
+    def test_success_state_renders_completion_view(self) -> None:
+        html = render_binding_browser_page({})
+        self.assertIn("Binding Complete", html)
+        self.assertIn("You can close this tab.", html)
+
 
 if __name__ == "__main__":
     unittest.main()
