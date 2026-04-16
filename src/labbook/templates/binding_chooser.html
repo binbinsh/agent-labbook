@@ -247,6 +247,10 @@ function dedupSort(items) {
       ...item,
       resource_id: rid,
       resource_type: normalizeResourceType(item.resource_type),
+      parent_id: normalizeNotionIdLike(item.parent_id),
+      parent_database_id: normalizeNotionIdLike(item.parent_database_id),
+      discovered_parent_id: normalizeNotionIdLike(item.discovered_parent_id),
+      discovered_root_id: normalizeNotionIdLike(item.discovered_root_id),
     };
     byId.set(rid, { ...(byId.get(rid) || norm), ...norm });
   }
@@ -527,8 +531,9 @@ function SelectionApp() {
   }
 
   function isExpanded(rid) {
-    const hasKnown = Boolean((childIndex.get(rid) || []).length);
-    if (!hasKnown && !discoveredByRoot.has(rid)) return false;
+    const hasKnownChildren = Boolean((childIndex.get(rid) || []).length);
+    const hasBeenFetched = discoveredByRoot.has(rid);
+    if (!hasKnownChildren && !hasBeenFetched) return false;
     if (searchActive) return true;
     return !collapsedIds.has(rid);
   }
@@ -651,7 +656,7 @@ function SelectionApp() {
             ? h("div", { className: "rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-10 text-center text-sm text-stone-500" },
                 "Loading available pages and data sources...")
             : visibleRows.length
-              ? h("div", { className: "space-y-0.5" },
+              ? h("div", { className: "space-y-2" },
                   visibleRows.map(({ resource, depth }) => {
                     const ss = selectedRootIds.has(resource.resource_id) ? "explicit"
                       : autoIncludedIds.has(resource.resource_id) ? "descendant" : "none";
@@ -697,7 +702,7 @@ function SelectionApp() {
           h(Button, {
             disabled: !finalBundle.length || bindStatus === "binding",
             onClick: () => finishBinding(),
-          }, "Bind Selected"),
+          }, "Connect Selected"),
         ),
       ),
     ),
