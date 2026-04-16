@@ -484,17 +484,20 @@ class BindingBrowserBindEndpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             expected_bindings_path = str(bindings_path(tmpdir))
             fake_client = mock.Mock()
-            fake_client.retrieve_resource.return_value = {
-                "object": "page",
-                "id": "01234567-89ab-cdef-0123-456789abcdef",
-                "url": "https://www.notion.so/project-home-0123456789abcdef0123456789abcdef",
-                "properties": {
-                    "Name": {
-                        "type": "title",
-                        "title": [{"plain_text": "Project Home"}],
+            fake_client.resolve_bindable_resource.return_value = (
+                {
+                    "object": "page",
+                    "id": "01234567-89ab-cdef-0123-456789abcdef",
+                    "url": "https://www.notion.so/project-home-0123456789abcdef0123456789abcdef",
+                    "properties": {
+                        "Name": {
+                            "type": "title",
+                            "title": [{"plain_text": "Project Home"}],
+                        }
                     }
                 },
-            }
+                "page",
+            )
             session = start_binding_browser(
                 project_root=tmpdir,
                 open_browser=False,

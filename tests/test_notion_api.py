@@ -17,6 +17,7 @@ from labbook.notion_api import (
     _decode_payload,
     _parse_retry_after,
 )
+from labbook.state import LabbookError
 
 
 class DecodePayloadTests(unittest.TestCase):
@@ -331,6 +332,90 @@ class NotionClientRetrieveResourceTests(unittest.TestCase):
             with self.assertRaises(NotionApiError) as ctx:
                 client.retrieve_resource("01234567-89ab-cdef-0123-456789abcdef")
         self.assertEqual(ctx.exception.status_code, 500)
+
+    def test_resolve_bindable_resource_uses_page_path_for_unknown_type(self) -> None:
+        client = NotionClient(token="secret_test_token")
+        with mock.patch.object(
+            client,
+            "retrieve_resource",
+            return_value={
+                "object": "page",
+                "id": "01234567-89ab-cdef-0123-456789abcdef",
+                "title": [],
+            },
+        ) as mock_resource:
+            result, resource_type = client.resolve_bindable_resource(
+                "01234567-89ab-cdef-0123-456789abcdef"
+            )
+        mock_resource.assert_called_once()
+        self.assertEqual(resource_type, "page")
+        self.assertEqual(result["object"], "page")
+
+    def test_resolve_bindable_data_source_resolves_database_container(self) -> None:
+        client = NotionClient(token="secret_test_token")
+        with mock.patch.object(
+            client,
+            "retrieve_data_source",
+            side_effect=[
+                NotionApiError("Not found", status_code=404),
+                {
+                    "object": "data_source",
+                    "id": "11111111-2222-3333-4444-555555555555",
+                    "name": "Projects",
+                },
+            ],
+        ) as mock_ds:
+            with mock.patch.object(
+                client,
+                "retrieve_database",
+                return_value={
+                    "object": "database",
+                    "id": "01234567-89ab-cdef-0123-456789abcdef",
+                    "data_sources": [
+                        {
+                            "id": "11111111-2222-3333-4444-555555555555",
+                            "name": "Projects",
+                        }
+                    ],
+                },
+            ) as mock_db:
+                result = client.resolve_bindable_data_source(
+                    "01234567-89ab-cdef-0123-456789abcdef"
+                )
+        mock_db.assert_called_once()
+        self.assertEqual(mock_ds.call_count, 2)
+        self.assertEqual(result["object"], "data_source")
+
+    def test_resolve_bindable_data_source_rejects_ambiguous_database(self) -> None:
+        client = NotionClient(token="secret_test_token")
+        with mock.patch.object(
+            client,
+            "retrieve_data_source",
+            side_effect=NotionApiError("Not found", status_code=404),
+        ):
+            with mock.patch.object(
+                client,
+                "retrieve_database",
+                return_value={
+                    "object": "database",
+                    "id": "01234567-89ab-cdef-0123-456789abcdef",
+                    "data_sources": [
+                        {
+                            "id": "11111111-2222-3333-4444-555555555555",
+                            "name": "Projects",
+                        },
+                        {
+                            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                            "name": "Archive",
+                        },
+                    ],
+                },
+            ):
+                with self.assertRaises(LabbookError) as ctx:
+                    client.resolve_bindable_data_source(
+                        "01234567-89ab-cdef-0123-456789abcdef"
+                    )
+        self.assertIn("multiple data sources", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -398,7 +398,7 @@ def build_bind_resources_payload(
         if not isinstance(raw_item, dict):
             raise LabbookError("Each item in resource_refs must be an object.")
         normalized_input = _normalize_resource_input(raw_item)
-        resource = client.retrieve_resource(
+        resource, resolved_resource_type = client.resolve_bindable_resource(
             normalized_input["resource_id"] or "",
             normalized_input["resource_type"],
         )
@@ -415,8 +415,7 @@ def build_bind_resources_payload(
         previous = by_resource_id.get(normalized_resource["resource_id"])
         by_resource_id[normalized_resource["resource_id"]] = _normalize_binding_entry(
             resource_id=normalized_resource["resource_id"],
-            resource_type=normalized_input["resource_type"]
-            or normalized_resource["resource_type"],
+            resource_type=resolved_resource_type or normalized_resource["resource_type"],
             resource_url=normalized_input["resource_url"]
             or normalized_resource["resource_url"],
             title=normalized_input["title"] or normalized_resource["title"],

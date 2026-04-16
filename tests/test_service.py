@@ -27,9 +27,11 @@ from labbook.binding_ops import (
     discover_children,
     search_resources,
 )
+from labbook.notion_api import NotionApiError
 from labbook.state import (
     KEYRING_SERVICE_NAME,
     TOKEN_ENV_VAR,
+    LabbookError,
     load_project_bindings,
     load_project_session,
     save_project_bindings,
@@ -389,6 +391,100 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(payload["resource_count"], 1)
         self.assertEqual(payload["resources"][0]["selection_scope"], "subtree")
+
+    def test_bind_resources_resolves_database_container_to_single_data_source(
+        self,
+    ) -> None:
+        database_id = "31d067f5-6067-8026-98d4-d1bc97f22287"
+        data_source_id = "41d067f5-6067-8026-98d4-d1bc97f22287"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict(
+                os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+            ):
+                with mock.patch(
+                    "labbook.binding_ops.NotionClient.retrieve_data_source"
+                ) as retrieve_data_source:
+                    with mock.patch(
+                        "labbook.binding_ops.NotionClient.retrieve_database"
+                    ) as retrieve_database:
+                        retrieve_data_source.side_effect = [
+                            NotionApiError(
+                                f"Notion API 404: Could not find database with ID: {database_id}",
+                                status_code=404,
+                            ),
+                            {
+                                "object": "data_source",
+                                "id": data_source_id,
+                                "url": "https://www.notion.so/data-source",
+                                "name": "Projects",
+                            },
+                        ]
+                        retrieve_database.return_value = {
+                            "object": "database",
+                            "id": database_id,
+                            "data_sources": [
+                                {"id": data_source_id, "name": "Projects"}
+                            ],
+                        }
+
+                        payload = bind_resources(
+                            project_root=tmpdir,
+                            resource_refs=[
+                                {
+                                    "resource_id": database_id,
+                                    "resource_type": "data_source",
+                                    "selection_scope": "subtree",
+                                }
+                            ],
+                        )
+
+        self.assertEqual(payload["resource_count"], 1)
+        self.assertEqual(payload["resources"][0]["resource_id"], data_source_id)
+        self.assertEqual(payload["resources"][0]["resource_type"], "data_source")
+
+    def test_bind_resources_rejects_database_with_multiple_data_sources(self) -> None:
+        database_id = "31d067f5-6067-8026-98d4-d1bc97f22287"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.dict(
+                os.environ, {TOKEN_ENV_VAR: "secret_env_token"}, clear=False
+            ):
+                with mock.patch(
+                    "labbook.binding_ops.NotionClient.retrieve_data_source",
+                    side_effect=NotionApiError(
+                        f"Notion API 404: Could not find database with ID: {database_id}",
+                        status_code=404,
+                    ),
+                ):
+                    with mock.patch(
+                        "labbook.binding_ops.NotionClient.retrieve_database",
+                        return_value={
+                            "object": "database",
+                            "id": database_id,
+                            "data_sources": [
+                                {
+                                    "id": "41d067f5-6067-8026-98d4-d1bc97f22287",
+                                    "name": "Projects",
+                                },
+                                {
+                                    "id": "51d067f5-6067-8026-98d4-d1bc97f22287",
+                                    "name": "Archive",
+                                },
+                            ],
+                        },
+                    ):
+                        with self.assertRaises(LabbookError) as ctx:
+                            bind_resources(
+                                project_root=tmpdir,
+                                resource_refs=[
+                                    {
+                                        "resource_id": database_id,
+                                        "resource_type": "data_source",
+                                        "selection_scope": "subtree",
+                                    }
+                                ],
+                            )
+
+        self.assertIn("multiple data sources", str(ctx.exception))
 
     def test_discover_children_finds_child_pages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -258,3 +258,90 @@ class NotionClient:
             if exc.status_code not in {400, 404}:
                 raise
         return self.retrieve_data_source(normalized_id)
+
+    def resolve_bindable_data_source(self, resource_id: str) -> dict[str, Any]:
+        """Resolve *resource_id* to a concrete bindable data-source payload.
+
+        The provided ID may already be a data-source ID, or it may be an older
+        database container ID returned by search / block APIs. When the latter
+        maps to exactly one data-source, resolve it automatically.
+        """
+        normalized_id = normalize_notion_id(resource_id)
+        try:
+            return self.retrieve_data_source(normalized_id)
+        except NotionApiError as exc:
+            if exc.status_code not in {400, 404}:
+                raise
+            database_payload = self.retrieve_database(normalized_id)
+
+        data_sources = (
+            database_payload.get("data_sources")
+            if isinstance(database_payload.get("data_sources"), list)
+            else []
+        )
+        resolved_sources: list[tuple[str, str]] = []
+        for item in data_sources:
+            if not isinstance(item, dict):
+                continue
+            raw_id = str(item.get("id") or "").strip()
+            if not raw_id:
+                continue
+            try:
+                data_source_id = normalize_notion_id(raw_id)
+            except LabbookError:
+                continue
+            title = str(item.get("name") or "").strip() or (
+                f"Data source {data_source_id[:8]}"
+            )
+            resolved_sources.append((data_source_id, title))
+
+        if not resolved_sources:
+            raise LabbookError(
+                f"Resource {normalized_id} is a database container with no bindable data sources. "
+                "Expand it in the chooser and select a concrete page or data source."
+            )
+
+        if len(resolved_sources) > 1:
+            raise LabbookError(
+                f"Resource {normalized_id} is a database container with multiple data sources. "
+                "Expand it in the chooser and select the specific data source you want to bind."
+            )
+
+        data_source_id, data_source_title = resolved_sources[0]
+        try:
+            return self.retrieve_data_source(data_source_id)
+        except NotionApiError as exc:
+            if exc.status_code not in {400, 404}:
+                raise
+            return {
+                "object": "data_source",
+                "id": data_source_id,
+                "name": data_source_title,
+                "url": None,
+            }
+
+    def resolve_bindable_resource(
+        self,
+        resource_id: str,
+        resource_type: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        """Resolve a user-selected binding target to a page or data source."""
+        normalized_type = str(resource_type or "").strip().lower()
+        if normalized_type == "database":
+            normalized_type = "data_source"
+
+        if normalized_type == "page":
+            return self.retrieve_page(resource_id), "page"
+
+        if normalized_type == "data_source":
+            return self.resolve_bindable_data_source(resource_id), "data_source"
+
+        resource = self.retrieve_resource(resource_id, resource_type)
+        from .binding_discovery import normalize_notion_resource
+
+        normalized_resource = normalize_notion_resource(resource)
+        if normalized_resource is None:
+            raise LabbookError(
+                f"Resource {normalize_notion_id(resource_id)} is not a page or data source."
+            )
+        return resource, str(normalized_resource["resource_type"])
