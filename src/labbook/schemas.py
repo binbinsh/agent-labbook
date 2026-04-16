@@ -432,6 +432,10 @@ def binding_browser_output() -> dict[str, Any]:
         {
             "project_root": string(),
             "chooser_url": string(),
+            "local_url": string(),
+            "public_base_url": nullable(string()),
+            "bind_host": string(),
+            "bind_port": integer(),
             "browser_opened": boolean(),
             "open_browser_attempted": boolean(),
             "timeout_seconds": integer(),
@@ -443,6 +447,9 @@ def binding_browser_output() -> dict[str, Any]:
         required=[
             "project_root",
             "chooser_url",
+            "local_url",
+            "bind_host",
+            "bind_port",
             "browser_opened",
             "open_browser_attempted",
             "timeout_seconds",

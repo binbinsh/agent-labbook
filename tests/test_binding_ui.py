@@ -24,6 +24,14 @@ class BindingBrowserCsrfTests(unittest.TestCase):
             page_size=7,
         )
 
+    @staticmethod
+    def _csrf_headers(session, **extra: str) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "X-Labbook-CSRF-Token": session.csrf_token,
+            **extra,
+        }
+
     @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
     @mock.patch(
         "labbook.binding_ui.notion_client_for_project",
@@ -56,10 +64,9 @@ class BindingBrowserCsrfTests(unittest.TestCase):
                 req = urlrequest.Request(
                     f"{session.chooser_url}api/shutdown",
                     data=b"{}",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Origin": "https://evil.example.com",
-                    },
+                    headers=self._csrf_headers(
+                        session, Origin="https://evil.example.com"
+                    ),
                     method="POST",
                 )
                 try:
@@ -101,10 +108,191 @@ class BindingBrowserCsrfTests(unittest.TestCase):
                 req = urlrequest.Request(
                     f"{session.chooser_url}api/shutdown",
                     data=b"{}",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Origin": session.chooser_url.rstrip("/"),
-                    },
+                    headers=self._csrf_headers(
+                        session, Origin=session.chooser_url.rstrip("/")
+                    ),
+                    method="POST",
+                )
+                response = urlrequest.urlopen(req, timeout=5)
+                payload = json.loads(response.read().decode("utf-8"))
+                self.assertTrue(payload.get("ok"))
+            finally:
+                session.stop()
+
+    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch(
+        "labbook.binding_ui.notion_client_for_project",
+        return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
+    )
+    @mock.patch(
+        "labbook.binding_ui.build_search_resources_payload",
+        return_value={
+            "results": [],
+            "result_count": 0,
+            "page_size": 7,
+            "project_root": "/tmp",
+        },
+    )
+    @mock.patch(
+        "labbook.binding_ui.status",
+        return_value={
+            "authenticated": True,
+            "workspace_name": "Test",
+            "binding_recommendation": None,
+            "binding_options": [],
+            "binding_question": None,
+        },
+    )
+    def test_loopback_alias_origin_post_accepted(self, *_mocks: mock.Mock) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = self._start_session(tmpdir)
+            local_origin = session.chooser_url.rstrip("/").replace("127.0.0.1", "localhost")
+            try:
+                req = urlrequest.Request(
+                    f"{session.chooser_url}api/shutdown",
+                    data=b"{}",
+                    headers=self._csrf_headers(session, Origin=local_origin),
+                    method="POST",
+                )
+                response = urlrequest.urlopen(req, timeout=5)
+                payload = json.loads(response.read().decode("utf-8"))
+                self.assertTrue(payload.get("ok"))
+            finally:
+                session.stop()
+
+    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch(
+        "labbook.binding_ui.notion_client_for_project",
+        return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
+    )
+    @mock.patch(
+        "labbook.binding_ui.build_search_resources_payload",
+        return_value={
+            "results": [],
+            "result_count": 0,
+            "page_size": 7,
+            "project_root": "/tmp",
+        },
+    )
+    @mock.patch(
+        "labbook.binding_ui.status",
+        return_value={
+            "authenticated": True,
+            "workspace_name": "Test",
+            "binding_recommendation": None,
+            "binding_options": [],
+            "binding_question": None,
+        },
+    )
+    def test_null_origin_with_same_referer_post_accepted(
+        self, *_mocks: mock.Mock
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = self._start_session(tmpdir)
+            try:
+                req = urlrequest.Request(
+                    f"{session.chooser_url}api/shutdown",
+                    data=b"{}",
+                    headers=self._csrf_headers(
+                        session, Origin="null", Referer=session.chooser_url
+                    ),
+                    method="POST",
+                )
+                response = urlrequest.urlopen(req, timeout=5)
+                payload = json.loads(response.read().decode("utf-8"))
+                self.assertTrue(payload.get("ok"))
+            finally:
+                session.stop()
+
+    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch(
+        "labbook.binding_ui.notion_client_for_project",
+        return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
+    )
+    @mock.patch(
+        "labbook.binding_ui.build_search_resources_payload",
+        return_value={
+            "results": [],
+            "result_count": 0,
+            "page_size": 7,
+            "project_root": "/tmp",
+        },
+    )
+    @mock.patch(
+        "labbook.binding_ui.status",
+        return_value={
+            "authenticated": True,
+            "workspace_name": "Test",
+            "binding_recommendation": None,
+            "binding_options": [],
+            "binding_question": None,
+        },
+    )
+    def test_missing_csrf_token_rejected(self, *_mocks: mock.Mock) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = self._start_session(tmpdir)
+            try:
+                req = urlrequest.Request(
+                    f"{session.chooser_url}api/shutdown",
+                    data=b"{}",
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    urlrequest.urlopen(req, timeout=5)
+                    self.fail("Expected HTTP 403")
+                except Exception as exc:
+                    self.assertIn("403", str(exc))
+            finally:
+                session.stop()
+
+    @mock.patch("labbook.binding_ui.list_bindings", return_value={"resources": []})
+    @mock.patch(
+        "labbook.binding_ui.notion_client_for_project",
+        return_value=(mock.Mock(), {"project_root": "/tmp/test"}),
+    )
+    @mock.patch(
+        "labbook.binding_ui.build_search_resources_payload",
+        return_value={
+            "results": [],
+            "result_count": 0,
+            "page_size": 7,
+            "project_root": "/tmp",
+        },
+    )
+    @mock.patch(
+        "labbook.binding_ui.status",
+        return_value={
+            "authenticated": True,
+            "workspace_name": "Test",
+            "binding_recommendation": None,
+            "binding_options": [],
+            "binding_question": None,
+        },
+    )
+    def test_remote_public_base_url_origin_accepted(self, *_mocks: mock.Mock) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = start_binding_browser(
+                project_root=tmpdir,
+                open_browser=False,
+                timeout_seconds=60,
+                page_size=7,
+                host="0.0.0.0",
+                public_base_url="https://remote.example.com/notion-bindings/",
+            )
+            try:
+                response = urlrequest.urlopen(
+                    f"{session.local_url}notion-bindings/", timeout=5
+                )
+                html = response.read().decode("utf-8")
+                self.assertIn("Choose Notion Content", html)
+
+                req = urlrequest.Request(
+                    f"{session.local_url}notion-bindings/api/shutdown",
+                    data=b"{}",
+                    headers=self._csrf_headers(
+                        session, Origin="https://remote.example.com"
+                    ),
                     method="POST",
                 )
                 response = urlrequest.urlopen(req, timeout=5)
@@ -274,6 +462,7 @@ class BindingBrowserBindEndpointTests(unittest.TestCase):
                             headers={
                                 "Content-Type": "application/json",
                                 "Origin": session.chooser_url.rstrip("/"),
+                                "X-Labbook-CSRF-Token": session.csrf_token,
                             },
                             method="POST",
                         ),

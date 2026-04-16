@@ -697,7 +697,8 @@ class ServiceTests(unittest.TestCase):
                                                 f"{session.chooser_url}api/bind",
                                                 data=request_payload,
                                                 headers={
-                                                    "Content-Type": "application/json"
+                                                    "Content-Type": "application/json",
+                                                    "X-Labbook-CSRF-Token": session.csrf_token,
                                                 },
                                                 method="POST",
                                             ),

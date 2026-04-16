@@ -348,8 +348,9 @@ def _binding_tool_definitions() -> list[types.Tool]:
             name="notion_open_binding_browser",
             title="Open Binding Browser",
             description=(
-                "Start a local browser-based chooser for selecting Notion roots. "
-                "Use this on desktop machines; in headless environments use MCP search, discovery, and URL binding instead."
+                "Start a browser-based chooser for selecting Notion roots. "
+                "For remote access or reverse proxies, set host/port plus public_base_url so the chooser "
+                "can validate browser origins correctly."
             ),
             properties={
                 "project_root": _PROJECT_ROOT_PROP,
@@ -366,6 +367,34 @@ def _binding_tool_definitions() -> list[types.Tool]:
                     "description": (
                         f"Number of Notion resources to show per page in the chooser. "
                         f"Defaults to {DEFAULT_SEARCH_PAGE_SIZE}."
+                    ),
+                },
+                "host": {
+                    "type": "string",
+                    "description": (
+                        "Network interface to bind the chooser server to. Defaults to 127.0.0.1. "
+                        "Use 0.0.0.0 or :: when the chooser must be reachable remotely."
+                    ),
+                },
+                "port": {
+                    "type": "integer",
+                    "description": (
+                        "TCP port to bind to. Defaults to 0 for an ephemeral port."
+                    ),
+                },
+                "public_base_url": {
+                    "type": "string",
+                    "description": (
+                        "External base URL used by browsers to reach the chooser, including any path prefix. "
+                        "Example: https://example.com/notion-chooser/."
+                    ),
+                },
+                "allowed_origins": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Additional trusted browser origins for POST requests. "
+                        "Use this only when you explicitly trust the remote origin."
                     ),
                 },
             },
@@ -509,6 +538,10 @@ def _build_handlers() -> dict[str, ToolHandler]:
             open_browser=bool(args.get("open_browser", True)),
             timeout_seconds=int(args.get("timeout_seconds") or 1800),
             page_size=int(args.get("page_size") or DEFAULT_SEARCH_PAGE_SIZE),
+            host=str(args.get("host") or "127.0.0.1"),
+            port=int(args.get("port") or 0),
+            public_base_url=args.get("public_base_url"),
+            allowed_origins=list(args.get("allowed_origins") or []),
         ).payload(),
         "notion_list_bindings": lambda args: list_bindings(
             project_root=args.get("project_root"),

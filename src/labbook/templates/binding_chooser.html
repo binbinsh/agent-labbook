@@ -296,17 +296,32 @@ function buildChildIndex(items) {
   return index;
 }
 
+function apiUrl(path) {
+  const clean = String(path || "").replace(/^\//, "");
+  const base = String(config.api_base_url || config.chooser_url || window.location.href);
+  try {
+    return new URL(clean, base).toString();
+  } catch {
+    return path;
+  }
+}
+
 async function api(path) {
-  const resp = await fetch(path, { headers: { "Content-Type": "application/json" } });
+  const resp = await fetch(apiUrl(path), {
+    headers: { "Content-Type": "application/json" },
+  });
   const data = await resp.json().catch(() => ({ error: "Invalid JSON" }));
   if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
   return data;
 }
 
 async function apiPost(path, body) {
-  const resp = await fetch(path, {
+  const resp = await fetch(apiUrl(path), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Labbook-CSRF-Token": String(config.csrf_token || ""),
+    },
     body: JSON.stringify(body),
   });
   const data = await resp.json().catch(() => ({ error: "Invalid JSON" }));
