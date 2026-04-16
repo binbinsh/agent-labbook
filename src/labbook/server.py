@@ -336,7 +336,7 @@ def _tool_definitions() -> list[types.Tool]:
                 },
                 "host": {
                     "type": "string",
-                    "description": "Network interface. Defaults to 127.0.0.1.",
+                    "description": "Network interface. Defaults to 0.0.0.0 on headless/SSH hosts (so remote browsers can reach http://<remote-ip>:<port>/ directly) and 127.0.0.1 otherwise. Pass '127.0.0.1' to force loopback-only binding.",
                 },
                 "port": {
                     "type": "integer",
@@ -470,7 +470,7 @@ def _build_handlers() -> dict[str, ToolHandler]:
             open_browser=args.get("open_browser"),
             timeout_seconds=int(args.get("timeout_seconds") or 1800),
             page_size=int(args.get("page_size") or DEFAULT_SEARCH_PAGE_SIZE),
-            host=str(args.get("host") or "127.0.0.1"),
+            host=args.get("host"),
             port=int(args.get("port") or 0),
             public_base_url=args.get("public_base_url"),
             allowed_origins=list(args.get("allowed_origins") or []),
@@ -512,6 +512,18 @@ async def handle_list_tools() -> list[types.Tool]:
     return _tool_definitions()
 
 
+# Hard timeouts for tool handlers that must never block the MCP stdio transport.
+# The binding browser handler synchronously binds an HTTP socket and may attempt
+# to spawn a system browser (xdg-open, etc.), which has historically hung long
+# enough for the Codex MCP client to close stdio. We cap the handler wall-clock
+# so the transport stays responsive even if a future regression reintroduces a
+# blocking call inside start_binding_browser. The chooser HTTP server keeps
+# running in its daemon thread regardless of this timeout.
+_TOOL_HARD_TIMEOUT_SECONDS: dict[str, float] = {
+    "notion_open_binding_browser": 8.0,
+}
+
+
 @server.call_tool()
 async def handle_call_tool(
     name: str, arguments: dict[str, Any] | None
@@ -522,7 +534,28 @@ async def handle_call_tool(
         return tool_result({"error": f"Unknown tool: {name}"}, is_error=True)
     try:
         logger.debug("Calling tool %s", name)
-        result = await asyncio.to_thread(handler, arguments or {})
+        call = asyncio.to_thread(handler, arguments or {})
+        hard_timeout = _TOOL_HARD_TIMEOUT_SECONDS.get(name)
+        if hard_timeout is not None:
+            result = await asyncio.wait_for(call, timeout=hard_timeout)
+        else:
+            result = await call
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Tool %s exceeded hard timeout of %.1fs; returning error to keep MCP stdio alive.",
+            name,
+            hard_timeout,
+        )
+        return tool_result(
+            {
+                "error": (
+                    f"Tool {name} did not complete within {hard_timeout:.0f} seconds. "
+                    "The operation may still be running in the background; retry or "
+                    "fall back to a headless-friendly tool (e.g. notion_bind_resource_urls)."
+                )
+            },
+            is_error=True,
+        )
     except LabbookError as exc:
         logger.warning("Tool %s failed: %s", name, exc)
         return tool_result({"error": str(exc)}, is_error=True)

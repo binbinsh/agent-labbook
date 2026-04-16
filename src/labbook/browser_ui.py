@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
 import secrets
+import socket
 import threading
 import time
 import webbrowser
@@ -265,6 +267,48 @@ def _display_host_for_bind_host(host: str) -> str:
     return "127.0.0.1" if clean in {"0.0.0.0", "::", ""} else clean
 
 
+def _is_wildcard_bind_host(host: str) -> bool:
+    return str(host or "").strip() in {"0.0.0.0", "::", ""}
+
+
+def _enumerate_lan_hosts() -> list[str]:
+    """Return non-loopback/link-local IPv4 addresses attached to this host.
+
+    Used when ``start_binding_browser`` binds a wildcard interface on a headless
+    machine so the payload can tell the agent (and the user) concrete URLs they
+    can open from an SSH client without port-forwarding. Best-effort: any
+    failure returns an empty list.
+    """
+
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET)
+    except OSError:
+        infos = []
+    hosts: list[str] = []
+    seen: set[str] = set()
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+        raw = str(sockaddr[0] or "").strip()
+        if not raw or raw in seen:
+            continue
+        try:
+            addr = ipaddress.ip_address(raw)
+        except ValueError:
+            continue
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+            continue
+        seen.add(raw)
+        hosts.append(raw)
+    return hosts
+
+
+def _build_lan_urls(port: int, route_prefix: str) -> list[str]:
+    suffix = (route_prefix + "/") if route_prefix else "/"
+    return [f"http://{host}:{port}{suffix}" for host in _enumerate_lan_hosts()]
+
+
 def _first_forwarded_value(raw: str | None) -> str | None:
     clean = str(raw or "").strip()
     if not clean:
@@ -304,6 +348,9 @@ class BindingBrowserSession:
     _cache_lock: threading.Lock = field(default_factory=threading.Lock)
     _search_cache: dict[tuple, dict[str, Any]] = field(default_factory=dict)
     _children_cache: dict[tuple, dict[str, Any]] = field(default_factory=dict)
+    lan_urls: list[str] = field(default_factory=list)
+    wildcard_bind: bool = False
+    security_notes: list[str] = field(default_factory=list)
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -313,6 +360,8 @@ class BindingBrowserSession:
             "public_base_url": self.public_base_url,
             "bind_host": self.bind_host,
             "bind_port": self.bind_port,
+            "wildcard_bind": self.wildcard_bind,
+            "lan_urls": list(self.lan_urls),
             "browser_opened": self.browser_opened,
             "open_browser_attempted": self.open_browser_attempted,
             "timeout_seconds": self.timeout_seconds,
@@ -321,8 +370,9 @@ class BindingBrowserSession:
             "binding_recommendation": self.binding_recommendation,
             "binding_options": self.binding_options,
             "binding_question": self.binding_question,
+            "security_notes": list(self.security_notes),
             "recommended_next_action": "Use the browser chooser to select roots, then verify the result with notion_list_bindings.",
-            "headless_flow_hint": "In headless environments, use notion_bind_resource_urls when the user can paste exact Notion links. Otherwise combine notion_search_resources, notion_discover_children, and notion_bind_resources.",
+            "headless_flow_hint": "In headless environments, share one of the lan_urls with the user so they can open the chooser from their local browser without SSH port-forwarding. Otherwise fall back to notion_bind_resource_urls or notion_search_resources + notion_discover_children.",
         }
 
     def stop(self) -> None:
@@ -661,7 +711,7 @@ def start_binding_browser(
     open_browser: bool | None = None,
     timeout_seconds: int = DEFAULT_BINDING_BROWSER_TIMEOUT_SECONDS,
     page_size: int = DEFAULT_BINDING_BROWSER_PAGE_SIZE,
-    host: str = "127.0.0.1",
+    host: str | None = None,
     port: int = 0,
     public_base_url: str | None = None,
     allowed_origins: list[str] | None = None,
@@ -674,22 +724,59 @@ def start_binding_browser(
         raise LabbookError(
             "This project is not authenticated yet. Configure the Internal Integration secret before opening the binding chooser."
         )
-    likely_headless = status_payload.get("likely_headless")
+    likely_headless_value = status_payload.get("likely_headless")
+    likely_headless = (
+        bool(likely_headless_value)
+        if likely_headless_value is not None
+        else likely_headless_environment()
+    )
     launch_policy = BrowserLaunchPolicy.from_preference(
         open_browser,
-        likely_headless=bool(likely_headless) if likely_headless is not None else None,
+        likely_headless=likely_headless,
     )
-    bind_host = str(host or "127.0.0.1").strip() or "127.0.0.1"
+    # Bind host policy:
+    #   - Explicit host argument wins (including "127.0.0.1" or "0.0.0.0").
+    #   - Otherwise default to 0.0.0.0 on headless hosts so SSH clients can
+    #     reach the chooser without port-forwarding, and 127.0.0.1 on desktops.
+    host_was_explicit = host is not None
+    raw_host = str(host).strip() if host is not None else ""
+    if host_was_explicit and raw_host:
+        bind_host = raw_host
+    elif likely_headless:
+        bind_host = "0.0.0.0"
+    else:
+        bind_host = "127.0.0.1"
     bind_port = max(0, int(port or 0))
     server = ThreadingHTTPServer((bind_host, bind_port), BaseHTTPRequestHandler)
     actual_port = int(server.server_address[1])
     local_url = f"http://{_display_host_for_bind_host(bind_host)}:{actual_port}/"
     chooser_url = _normalize_base_url(public_base_url) if public_base_url else local_url
     route_prefix = _route_prefix_from_url(public_base_url)
+    wildcard_bind = _is_wildcard_bind_host(bind_host)
+    lan_urls = _build_lan_urls(actual_port, route_prefix) if wildcard_bind else []
+    security_notes: list[str] = []
+    if wildcard_bind:
+        security_notes.append(
+            "Chooser is bound to a wildcard interface and is reachable from any host "
+            "that can route to this machine on the LAN. Share lan_urls only on trusted "
+            "networks."
+        )
+        security_notes.append(
+            "Authentication uses a per-session CSRF token delivered via the "
+            "X-Labbook-CSRF-Token request header; no browser cookies are set or "
+            "required, so the token cannot leak across ports on the same host."
+        )
     normalized_origins: set[str] = set()
     for candidate in [chooser_url, local_url, *(allowed_origins or [])]:
         if candidate:
             normalized_origins.add(str(candidate).rstrip("/"))
+    # When we bind a wildcard interface without an explicit public_base_url, also
+    # trust the LAN-reachable URLs so the agent can hand them to the user and the
+    # browser's Origin header (e.g. "http://192.168.1.10:PORT") still passes the
+    # same-origin check.
+    if wildcard_bind and not public_base_url:
+        for lan_url in lan_urls:
+            normalized_origins.add(str(lan_url).rstrip("/"))
     session = BindingBrowserSession(
         session_id=f"chooser-{time.time_ns()}",
         project_root=str(root),
@@ -706,6 +793,9 @@ def start_binding_browser(
         binding_recommendation=status_payload.get("binding_recommendation"),
         binding_options=list(status_payload.get("binding_options") or []),
         binding_question=status_payload.get("binding_question"),
+        lan_urls=lan_urls,
+        wildcard_bind=wildcard_bind,
+        security_notes=security_notes,
         csrf_token=secrets.token_urlsafe(32),
         _server=server,
         _thread=threading.Thread(target=server.serve_forever, daemon=True),
